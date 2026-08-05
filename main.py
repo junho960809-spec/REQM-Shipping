@@ -76,7 +76,7 @@ DEFAULT_CONFIG = {
     },
 }
 ADMIN_USER_ID = "c7937d51-1a14-47aa-987e-6254c6c79014"
-APP_VERSION = "1.0.28"
+APP_VERSION = "1.0.29"
 UPDATE_BASE_URL = "https://jcslohuraqclhryeqxoc.supabase.co/storage/v1/object/public/reqm-updates"
 UPDATE_MANIFEST_URL = f"{UPDATE_BASE_URL}/manifest.json"
 RECENT_WORK_PATH = Path(os.getenv("LOCALAPPDATA", str(Path.home()))) / "REQM" / "recent_work.json"
@@ -1021,6 +1021,88 @@ class LoginWorker(QThread):
             self.failed.emit(str(exc))
 
 
+class StartupLoginDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.worker = None
+        self.catalog = None
+        self.item_count = 0
+        self.setObjectName("startupLogin")
+        self.setWindowTitle("REQM 로그인")
+        self.setFixedSize(470, 330)
+        self.setModal(True)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(36, 30, 36, 28)
+        layout.setSpacing(13)
+        title = QLabel("REQM 로그인")
+        title.setObjectName("dashboardTitle")
+        subtitle = QLabel("등록된 프로그램 계정으로 로그인해 주세요.")
+        subtitle.setObjectName("dashboardHint")
+        self.email = QLineEdit()
+        self.email.setPlaceholderText("이메일")
+        self.password = QLineEdit()
+        self.password.setPlaceholderText("비밀번호")
+        self.password.setEchoMode(QLineEdit.EchoMode.Password)
+        self.message = QLabel("로그인 후 물류 대시보드를 사용할 수 있습니다.")
+        self.message.setObjectName("dashboardHint")
+        self.message.setWordWrap(True)
+        self.login_button = QPushButton("로그인")
+        self.login_button.setObjectName("primaryButton")
+        self.login_button.setFixedHeight(46)
+        cancel_button = QPushButton("종료")
+        cancel_button.clicked.connect(self.reject)
+        self.login_button.clicked.connect(self.start_login)
+        self.email.returnPressed.connect(self.start_login)
+        self.password.returnPressed.connect(self.start_login)
+
+        layout.addWidget(title)
+        layout.addWidget(subtitle)
+        layout.addSpacing(6)
+        layout.addWidget(self.email)
+        layout.addWidget(self.password)
+        layout.addWidget(self.message)
+        layout.addStretch(1)
+        buttons = QHBoxLayout()
+        buttons.addWidget(cancel_button)
+        buttons.addWidget(self.login_button, 1)
+        layout.addLayout(buttons)
+
+    def start_login(self) -> None:
+        email = self.email.text().strip()
+        password = self.password.text()
+        if not email or not password:
+            self.message.setText("이메일과 비밀번호를 모두 입력해 주세요.")
+            return
+        self.login_button.setEnabled(False)
+        self.email.setEnabled(False)
+        self.password.setEnabled(False)
+        self.message.setText("로그인 및 품목 DB 확인 중...")
+        self.worker = LoginWorker(email, password)
+        self.worker.succeeded.connect(self.login_succeeded)
+        self.worker.failed.connect(self.login_failed)
+        self.worker.start()
+
+    def login_succeeded(self, count: int, catalog: dict) -> None:
+        self.item_count = count
+        self.catalog = catalog
+        self.accept()
+
+    def login_failed(self, message: str) -> None:
+        self.login_button.setEnabled(True)
+        self.email.setEnabled(True)
+        self.password.setEnabled(True)
+        self.password.clear()
+        self.password.setFocus()
+        self.message.setText(f"로그인에 실패했습니다. 계정 정보를 확인해 주세요.\n{message}")
+
+    def reject(self) -> None:
+        if self.worker and self.worker.isRunning():
+            self.message.setText("로그인 확인이 끝날 때까지 잠시 기다려 주세요.")
+            return
+        super().reject()
+
+
 class FileDropZone(QFrame):
     filesDropped = Signal(list)
 
@@ -1413,6 +1495,7 @@ class MainWindow(QMainWindow):
             QLabel#dashboardSection { color: #111111; font-size: 19px; font-weight: 850; padding-top: 8px; }
             QLabel#dashboardHint { color: #71736f; font-size: 13px; }
             QDialog#miniWidget { background: #f7f7f3; color: #151515; font-family: '맑은 고딕'; }
+            QDialog#startupLogin { background: #f7f7f3; color: #151515; font-family: '맑은 고딕'; }
             QLabel#widgetTitle { color: #111111; font-size: 20px; font-weight: 900; }
             QListWidget#widgetEventList { background: #ffffff; border: 1px solid #dfdfda; border-radius: 16px; padding: 7px; }
             QListWidget#widgetEventList::item { padding: 11px 9px; border-bottom: 1px solid #eeeeea; font-size: 13px; }
@@ -1615,6 +1698,15 @@ class MainWindow(QMainWindow):
         self.table.cellDoubleClicked.connect(self.edit_match)
         self.refresh_location_combo()
         self.refresh_output_formats()
+
+    def require_startup_login(self) -> bool:
+        dialog = StartupLoginDialog(self)
+        if dialog.exec() != QDialog.DialogCode.Accepted or not dialog.catalog:
+            return False
+        self.email.setText(dialog.email.text().strip())
+        self.password.setText(dialog.password.text())
+        self.on_success(dialog.item_count, dialog.catalog)
+        return True
 
     def dashboard_card(self, title: str, description: str) -> QPushButton:
         button = QPushButton(title)
@@ -2624,5 +2716,7 @@ if __name__ == "__main__":
     remove_legacy_transfer_credentials()
     app = QApplication(sys.argv)
     window = MainWindow()
+    if not window.require_startup_login():
+        sys.exit(0)
     window.show()
     sys.exit(app.exec())
