@@ -2,22 +2,27 @@ import json
 import sys
 import hashlib
 import os
+import shutil
 import subprocess
 import uuid
 import urllib.request
+from datetime import datetime
 from urllib.parse import quote
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QThread, Signal
-from PySide6.QtGui import QColor
+from PySide6.QtCore import QDate, Qt, QThread, Signal
+from PySide6.QtGui import QColor, QPainter, QTextCharFormat
 from PySide6.QtWidgets import (
     QApplication,
+    QCalendarWidget,
     QComboBox,
     QDialog,
     QDialogButtonBox,
+    QDateEdit,
     QFileDialog,
     QFormLayout,
     QFrame,
+    QGridLayout,
     QHBoxLayout,
     QHeaderView,
     QInputDialog,
@@ -28,8 +33,10 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMessageBox,
     QPushButton,
+    QStackedWidget,
     QTableWidget,
     QTableWidgetItem,
+    QTextEdit,
     QAbstractItemView,
     QVBoxLayout,
     QWidget,
@@ -69,9 +76,57 @@ DEFAULT_CONFIG = {
     },
 }
 ADMIN_USER_ID = "c7937d51-1a14-47aa-987e-6254c6c79014"
-APP_VERSION = "1.0.27"
+APP_VERSION = "1.0.28"
 UPDATE_BASE_URL = "https://jcslohuraqclhryeqxoc.supabase.co/storage/v1/object/public/reqm-updates"
 UPDATE_MANIFEST_URL = f"{UPDATE_BASE_URL}/manifest.json"
+RECENT_WORK_PATH = Path(os.getenv("LOCALAPPDATA", str(Path.home()))) / "REQM" / "recent_work.json"
+CALENDAR_EVENT_PATH = Path(os.getenv("LOCALAPPDATA", str(Path.home()))) / "REQM" / "calendar_events.json"
+WIDGET_SETTINGS_PATH = Path(os.getenv("LOCALAPPDATA", str(Path.home()))) / "REQM" / "widget_settings.json"
+
+
+def load_recent_work() -> list[dict]:
+    try:
+        data = json.loads(RECENT_WORK_PATH.read_text(encoding="utf-8"))
+        return data if isinstance(data, list) else []
+    except (OSError, ValueError, TypeError):
+        return []
+
+
+def save_recent_work(rows: list[dict]) -> None:
+    RECENT_WORK_PATH.parent.mkdir(parents=True, exist_ok=True)
+    RECENT_WORK_PATH.write_text(
+        json.dumps(rows[:30], ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+
+
+def load_calendar_events() -> list[dict]:
+    try:
+        data = json.loads(CALENDAR_EVENT_PATH.read_text(encoding="utf-8"))
+        return data if isinstance(data, list) else []
+    except (OSError, ValueError, TypeError):
+        return []
+
+
+def save_calendar_events(rows: list[dict]) -> None:
+    CALENDAR_EVENT_PATH.parent.mkdir(parents=True, exist_ok=True)
+    CALENDAR_EVENT_PATH.write_text(
+        json.dumps(rows, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+
+
+def load_widget_target() -> str:
+    try:
+        target = str(json.loads(WIDGET_SETTINGS_PATH.read_text(encoding="utf-8")).get("target", "dashboard"))
+        return target if target in {"dashboard", "shipping", "inventory"} else "dashboard"
+    except (OSError, ValueError, TypeError):
+        return "dashboard"
+
+
+def save_widget_target(target: str) -> None:
+    WIDGET_SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    WIDGET_SETTINGS_PATH.write_text(
+        json.dumps({"target": target}, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
 
 
 def remove_legacy_transfer_credentials() -> None:
@@ -994,11 +1049,330 @@ class FileDropZone(QFrame):
         event.acceptProposedAction()
 
 
+class CalendarDropWidget(QCalendarWidget):
+    filesDropped = Signal(list)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAcceptDrops(True)
+        self.event_titles: dict[str, list[str]] = {}
+        self.setGridVisible(True)
+        self.setNavigationBarVisible(False)
+        self.setVerticalHeaderFormat(QCalendarWidget.VerticalHeaderFormat.NoVerticalHeader)
+        for child in self.findChildren(QWidget):
+            child.setAcceptDrops(False)
+
+    def set_event_titles(self, event_titles: dict[str, list[str]]) -> None:
+        self.event_titles = event_titles
+        self.updateCells()
+
+    def paintCell(self, painter: QPainter, rect, date: QDate) -> None:
+        titles = self.event_titles.get(date.toString("yyyy-MM-dd"), [])
+        painter.save()
+        is_selected = date == self.selectedDate()
+        is_other_month = date.month() != self.monthShown()
+        if is_selected:
+            background = QColor("#48aaa3")
+        elif titles:
+            background = QColor("#c9efeb")
+        elif is_other_month:
+            background = QColor("#f6f6f3")
+        else:
+            background = QColor("#ffffff")
+        painter.fillRect(rect, background)
+        painter.setPen(QColor("#d8d8d3"))
+        painter.drawRect(rect.adjusted(0, 0, -1, -1))
+
+        date_font = painter.font()
+        date_font.setPointSize(max(8, date_font.pointSize()))
+        date_font.setBold(False)
+        painter.setFont(date_font)
+        if is_selected:
+            date_color = QColor("#ffffff")
+        elif date.dayOfWeek() in {6, 7}:
+            date_color = QColor("#e34b4b")
+        elif is_other_month:
+            date_color = QColor("#a0a19e")
+        else:
+            date_color = QColor("#252525")
+        painter.setPen(date_color)
+        painter.drawText(
+            rect.adjusted(8, 5, -4, -4),
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop,
+            str(date.day()),
+        )
+
+        if titles:
+            display = titles[0] if len(titles) == 1 else f"{titles[0]} 외 {len(titles) - 1}건"
+            title_font = painter.font()
+            title_font.setPointSize(max(10, title_font.pointSize() + 1))
+            title_font.setBold(True)
+            painter.setFont(title_font)
+            painter.setPen(QColor("#ffffff") if is_selected else QColor("#174d49"))
+            text_rect = rect.adjusted(7, 24, -7, -5)
+            display = painter.fontMetrics().elidedText(
+                display, Qt.TextElideMode.ElideRight, text_rect.width()
+            )
+            painter.drawText(
+                text_rect,
+                Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                display,
+            )
+        painter.restore()
+
+    def dragEnterEvent(self, event):
+        paths = [url.toLocalFile() for url in event.mimeData().urls()]
+        allowed = {".pdf", ".xls", ".xlsx", ".csv"}
+        if paths and all(Path(path).suffix.lower() in allowed for path in paths):
+            event.acceptProposedAction()
+            return
+        super().dragEnterEvent(event)
+
+    def dropEvent(self, event):
+        paths = [url.toLocalFile() for url in event.mimeData().urls()]
+        if paths:
+            self.filesDropped.emit(paths)
+            event.acceptProposedAction()
+            return
+        super().dropEvent(event)
+
+
+class CalendarEventDialog(QDialog):
+    def __init__(self, event_data: dict | None = None, default_date: QDate | None = None, parent=None):
+        super().__init__(parent)
+        self.event_data = event_data or {}
+        self.deleted = False
+        self.setWindowTitle("캘린더 일정 입력")
+        self.setFixedSize(470, 360)
+        layout = QVBoxLayout(self)
+        form = QFormLayout()
+        self.date_edit = QDateEdit()
+        self.date_edit.setCalendarPopup(True)
+        saved_date = QDate.fromString(str(self.event_data.get("date", "")), "yyyy-MM-dd")
+        self.date_edit.setDate(saved_date if saved_date.isValid() else (default_date or QDate.currentDate()))
+        self.title_edit = QLineEdit(str(self.event_data.get("title", "")))
+        self.title_edit.setPlaceholderText("예: 8월 면세점 출고 예정")
+        self.info_edit = QTextEdit()
+        self.info_edit.setPlaceholderText("일정에 표시할 간단한 정보를 입력하세요.")
+        self.info_edit.setPlainText(str(self.event_data.get("info", "")))
+        self.file_list = QListWidget()
+        saved_paths = self.event_data.get("file_paths") or [self.event_data.get("file_path", "")]
+        for path in saved_paths:
+            if path:
+                item = QListWidgetItem(Path(str(path)).name)
+                item.setData(Qt.ItemDataRole.UserRole, str(path))
+                self.file_list.addItem(item)
+        self.file_list.itemDoubleClicked.connect(self.open_attachment)
+        attachment_buttons = QHBoxLayout()
+        add_file_button = QPushButton("파일 추가")
+        remove_file_button = QPushButton("선택 제거")
+        open_file_button = QPushButton("선택 열기")
+        add_file_button.clicked.connect(self.add_files)
+        remove_file_button.clicked.connect(self.remove_selected_file)
+        open_file_button.clicked.connect(self.open_selected_file)
+        attachment_buttons.addWidget(add_file_button)
+        attachment_buttons.addWidget(remove_file_button)
+        attachment_buttons.addWidget(open_file_button)
+        attachment_box = QWidget()
+        attachment_layout = QVBoxLayout(attachment_box)
+        attachment_layout.setContentsMargins(0, 0, 0, 0)
+        attachment_layout.addWidget(self.file_list)
+        attachment_layout.addLayout(attachment_buttons)
+        form.addRow("날짜", self.date_edit)
+        form.addRow("제목", self.title_edit)
+        form.addRow("정보", self.info_edit)
+        form.addRow("첨부 파일", attachment_box)
+        layout.addLayout(form)
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        if self.event_data.get("id"):
+            delete_button = buttons.addButton("일정 삭제", QDialogButtonBox.ButtonRole.DestructiveRole)
+            delete_button.clicked.connect(self.delete_event)
+        layout.addWidget(buttons)
+
+    def delete_event(self) -> None:
+        self.deleted = True
+        self.accept()
+
+    def add_files(self) -> None:
+        paths, _ = QFileDialog.getOpenFileNames(
+            self, "첨부 파일 추가", "", "문서 파일 (*.pdf *.xls *.xlsx *.csv)"
+        )
+        existing = {
+            self.file_list.item(index).data(Qt.ItemDataRole.UserRole)
+            for index in range(self.file_list.count())
+        }
+        for path in paths:
+            if path in existing:
+                continue
+            item = QListWidgetItem(Path(path).name)
+            item.setData(Qt.ItemDataRole.UserRole, path)
+            self.file_list.addItem(item)
+            existing.add(path)
+
+    def remove_selected_file(self) -> None:
+        for item in self.file_list.selectedItems():
+            self.file_list.takeItem(self.file_list.row(item))
+
+    def open_selected_file(self) -> None:
+        item = self.file_list.currentItem()
+        if item:
+            self.open_attachment(item)
+
+    def open_attachment(self, item: QListWidgetItem) -> None:
+        path = str(item.data(Qt.ItemDataRole.UserRole) or "")
+        if not path or not Path(path).exists():
+            QMessageBox.warning(self, "첨부 파일", "이 PC에서 첨부 파일을 찾을 수 없습니다.")
+            return
+        os.startfile(path)
+
+    def values(self) -> dict:
+        file_paths = [
+            str(self.file_list.item(index).data(Qt.ItemDataRole.UserRole) or "")
+            for index in range(self.file_list.count())
+        ]
+        return {
+            "id": str(self.event_data.get("id") or uuid.uuid4()),
+            "date": self.date_edit.date().toString("yyyy-MM-dd"),
+            "title": self.title_edit.text().strip(),
+            "info": self.info_edit.toPlainText().strip(),
+            "file_paths": [path for path in file_paths if path],
+        }
+
+
+class MiniWidgetDialog(QDialog):
+    def __init__(self, main_window):
+        super().__init__(None)
+        self.main_window = main_window
+        self.setStyleSheet(main_window.styleSheet())
+        self.setObjectName("miniWidget")
+        self.setWindowTitle("REQM 미니 위젯")
+        self.setWindowFlags(
+            Qt.WindowType.Tool
+            | Qt.WindowType.WindowStaysOnTopHint
+            | Qt.WindowType.WindowTitleHint
+            | Qt.WindowType.WindowCloseButtonHint
+        )
+        self.setFixedSize(390, 310)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(18, 16, 18, 16)
+        layout.setSpacing(10)
+
+        header = QHBoxLayout()
+        title = QLabel("REQM 미니 위젯")
+        title.setObjectName("widgetTitle")
+        self.today_label = QLabel(QDate.currentDate().toString("yyyy년 M월 d일"))
+        self.today_label.setObjectName("dashboardHint")
+        header.addWidget(title)
+        header.addStretch(1)
+        header.addWidget(self.today_label)
+        layout.addLayout(header)
+
+        shortcut_row = QHBoxLayout()
+        shortcut_row.addWidget(QLabel("바로가기"))
+        self.target_combo = QComboBox()
+        self.target_combo.addItem("메인 대시보드", "dashboard")
+        self.target_combo.addItem("출고 파일 변환", "shipping")
+        self.target_combo.addItem("재고 확인", "inventory")
+        selected_index = self.target_combo.findData(load_widget_target())
+        self.target_combo.setCurrentIndex(max(0, selected_index))
+        self.target_combo.currentIndexChanged.connect(self.change_widget_target)
+        shortcut_row.addWidget(self.target_combo, 1)
+        layout.addLayout(shortcut_row)
+
+        self.event_list = QListWidget()
+        self.event_list.setObjectName("widgetEventList")
+        self.event_list.currentItemChanged.connect(self.update_attachment_button)
+        layout.addWidget(self.event_list, 1)
+
+        button_row = QHBoxLayout()
+        self.attachment_button = QPushButton("첨부 파일 다운로드")
+        self.attachment_button.setEnabled(False)
+        self.attachment_button.clicked.connect(self.download_selected_attachments)
+        self.open_main_button = QPushButton()
+        self.open_main_button.setObjectName("primaryButton")
+        self.open_main_button.clicked.connect(self.open_main_window)
+        button_row.addWidget(self.attachment_button)
+        button_row.addStretch(1)
+        button_row.addWidget(self.open_main_button)
+        layout.addLayout(button_row)
+        self.update_open_button_text()
+        self.refresh_events()
+
+    def refresh_events(self) -> None:
+        self.event_list.clear()
+        today_text = QDate.currentDate().toString("yyyy-MM-dd")
+        upcoming = sorted(
+            (row for row in self.main_window.calendar_events if str(row.get("date", "")) >= today_text),
+            key=lambda row: (str(row.get("date", "")), str(row.get("title", ""))),
+        )[:5]
+        if not upcoming:
+            item = QListWidgetItem("가까운 일정이 없습니다.")
+            item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEnabled)
+            self.event_list.addItem(item)
+            return
+        for row in upcoming:
+            info = str(row.get("info", "")).strip().replace("\n", " ")
+            text = f"{row.get('date', '')}  ·  {row.get('title', '')}"
+            if info:
+                text += f"\n{info}"
+            item = QListWidgetItem(text)
+            item.setData(Qt.ItemDataRole.UserRole, row.get("id"))
+            self.event_list.addItem(item)
+        self.event_list.setCurrentRow(0)
+
+    def selected_event(self) -> dict | None:
+        item = self.event_list.currentItem()
+        event_id = item.data(Qt.ItemDataRole.UserRole) if item else None
+        return next(
+            (row for row in self.main_window.calendar_events if row.get("id") == event_id), None
+        )
+
+    def update_attachment_button(self, current=None, previous=None) -> None:
+        event_row = self.selected_event()
+        paths = (event_row or {}).get("file_paths") or [(event_row or {}).get("file_path", "")]
+        self.attachment_button.setEnabled(any(paths))
+
+    def download_selected_attachments(self) -> None:
+        event_row = self.selected_event()
+        if event_row:
+            self.main_window.download_event_attachments(event_row)
+
+    def open_main_window(self) -> None:
+        target = str(self.target_combo.currentData() or "dashboard")
+        self.main_window.showNormal()
+        if target == "shipping":
+            self.main_window.show_shipping_workspace()
+        else:
+            self.main_window.show_dashboard()
+        self.main_window.raise_()
+        self.main_window.activateWindow()
+        self.close()
+        if target == "inventory":
+            self.main_window.open_inventory_check()
+
+    def change_widget_target(self) -> None:
+        save_widget_target(str(self.target_combo.currentData() or "dashboard"))
+        self.update_open_button_text()
+
+    def update_open_button_text(self) -> None:
+        labels = {
+            "dashboard": "메인 화면 열기",
+            "shipping": "출고 화면 열기",
+            "inventory": "재고 확인 열기",
+        }
+        self.open_main_button.setText(labels.get(str(self.target_combo.currentData()), "메인 화면 열기"))
+
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.worker = None
         self.update_worker = None
+        self.mini_widget = None
         self.matcher = None
         self.supabase_client = None
         self.catalog: dict = {}
@@ -1033,6 +1407,19 @@ class MainWindow(QMainWindow):
             QPushButton#exportButton { background: #121212; color: #ffffff; border: none; padding: 14px 28px; font-size: 16px; }
             QPushButton#exportButton:hover { background: #2f6662; }
             QPushButton#adminButton { background: #ffffff; color: #151515; border-color: #cfcfca; padding: 9px 16px; }
+            QPushButton#dashboardCard { background: #ffffff; color: #151515; border: 1px solid #dfdfda; border-radius: 22px; padding: 22px; font-size: 17px; text-align: left; }
+            QPushButton#dashboardCard:hover { background: #e9f8f6; border: 2px solid #48bdb7; }
+            QLabel#dashboardTitle { color: #111111; font-size: 34px; font-weight: 900; }
+            QLabel#dashboardSection { color: #111111; font-size: 19px; font-weight: 850; padding-top: 8px; }
+            QLabel#dashboardHint { color: #71736f; font-size: 13px; }
+            QDialog#miniWidget { background: #f7f7f3; color: #151515; font-family: '맑은 고딕'; }
+            QLabel#widgetTitle { color: #111111; font-size: 20px; font-weight: 900; }
+            QListWidget#widgetEventList { background: #ffffff; border: 1px solid #dfdfda; border-radius: 16px; padding: 7px; }
+            QListWidget#widgetEventList::item { padding: 11px 9px; border-bottom: 1px solid #eeeeea; font-size: 13px; }
+            QListWidget#widgetEventList::item:selected { background: #e9f8f6; color: #151515; border-radius: 8px; }
+            QListWidget#recentWork { background: #ffffff; border: 1px solid #dfdfda; border-radius: 18px; padding: 8px; }
+            QListWidget#recentWork::item { padding: 12px 10px; border-bottom: 1px solid #eeeeea; font-size: 15px; }
+            QListWidget#recentWork::item:selected { background: #ffffff; color: #151515; border-radius: 9px; }
             QTableWidget { background: #ffffff; alternate-background-color: #fafaf7; border: 1px solid #deded9; border-radius: 16px; gridline-color: #ecece8; selection-background-color: #d9f3f0; selection-color: #111111; }
             QHeaderView::section { background: #ecece8; color: #1b1b1b; border: none; border-right: 1px solid #dadad5; border-bottom: 1px solid #d6d6d1; padding: 11px; font-weight: 800; }
             QScrollBar:vertical { background: #ecece8; width: 22px; margin: 2px; border-radius: 10px; }
@@ -1079,6 +1466,9 @@ class MainWindow(QMainWindow):
         self.update_button = QPushButton("업데이트")
         self.update_button.setObjectName("adminButton")
         self.update_button.setMaximumWidth(105)
+        self.dashboard_button = QPushButton("←  메인으로")
+        self.dashboard_button.setObjectName("adminButton")
+        self.dashboard_button.setMaximumWidth(125)
         self.export_button = QPushButton("택배 출고용 변환")
         self.export_button.setObjectName("exportButton")
         self.export_button.setEnabled(False)
@@ -1126,6 +1516,7 @@ class MainWindow(QMainWindow):
         title_block.setLayout(title_line)
         self.header_row.addWidget(title_block)
         self.header_row.addStretch(1)
+        self.header_row.addWidget(self.dashboard_button)
         self.header_row.addWidget(self.db_button)
         self.header_row.addWidget(self.update_button)
         self.header_row.addWidget(self.settings_button)
@@ -1199,7 +1590,13 @@ class MainWindow(QMainWindow):
         container = QWidget()
         container.setObjectName("mainContainer")
         container.setLayout(layout)
-        self.setCentralWidget(container)
+        self.work_page = container
+        self.dashboard_page = self.build_dashboard_page()
+        self.page_stack = QStackedWidget()
+        self.page_stack.addWidget(self.dashboard_page)
+        self.page_stack.addWidget(self.work_page)
+        self.setCentralWidget(self.page_stack)
+        self.page_stack.setCurrentWidget(self.dashboard_page)
         self.login_button.clicked.connect(self.login)
         self.settings_button.clicked.connect(self.open_account_settings)
         self.update_button.clicked.connect(self.check_for_updates)
@@ -1214,9 +1611,350 @@ class MainWindow(QMainWindow):
         self.output_format_manage_button.clicked.connect(self.manage_output_formats)
         self.location_manage_button.clicked.connect(self.manage_locations)
         self.location_apply_button.clicked.connect(self.apply_location)
+        self.dashboard_button.clicked.connect(self.show_dashboard)
         self.table.cellDoubleClicked.connect(self.edit_match)
         self.refresh_location_combo()
         self.refresh_output_formats()
+
+    def dashboard_card(self, title: str, description: str) -> QPushButton:
+        button = QPushButton(title)
+        button.setObjectName("dashboardCard")
+        button.setFixedHeight(118)
+        return button
+
+    def build_dashboard_page(self) -> QWidget:
+        page = QWidget()
+        page.setObjectName("mainContainer")
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(34, 28, 34, 28)
+        layout.setSpacing(14)
+
+        header = QHBoxLayout()
+        title_box = QVBoxLayout()
+        title = QLabel("REQM 물류 대시보드")
+        title.setObjectName("dashboardTitle")
+        hint = QLabel("필요한 업무를 선택하면 해당 작업 화면이 열립니다.")
+        hint.setObjectName("dashboardHint")
+        title_box.addWidget(title)
+        title_box.addWidget(hint)
+        header.addLayout(title_box)
+        header.addStretch(1)
+        self.dashboard_db_button = QPushButton("DB 관리")
+        self.dashboard_db_button.setObjectName("adminButton")
+        self.dashboard_db_button.setFixedSize(92, 38)
+        self.dashboard_db_button.setEnabled(False)
+        self.dashboard_db_button.clicked.connect(self.open_db_manager)
+        self.dashboard_update_button = QPushButton("업데이트")
+        self.dashboard_update_button.setObjectName("adminButton")
+        self.dashboard_update_button.setFixedSize(92, 38)
+        self.dashboard_update_button.clicked.connect(self.check_for_updates)
+        self.dashboard_widget_button = QPushButton("미니 위젯")
+        self.dashboard_widget_button.setObjectName("adminButton")
+        self.dashboard_widget_button.setFixedSize(100, 38)
+        self.dashboard_widget_button.clicked.connect(self.open_mini_widget)
+        self.dashboard_version = QLabel(f"v{APP_VERSION}")
+        self.dashboard_version.setObjectName("versionLabel")
+        header.addWidget(self.dashboard_widget_button, 0, Qt.AlignmentFlag.AlignTop)
+        header.addWidget(self.dashboard_db_button, 0, Qt.AlignmentFlag.AlignTop)
+        header.addWidget(self.dashboard_update_button, 0, Qt.AlignmentFlag.AlignTop)
+        header.addWidget(self.dashboard_version, 0, Qt.AlignmentFlag.AlignTop)
+        layout.addLayout(header)
+
+        cards = QGridLayout()
+        cards.setSpacing(16)
+        shipment = self.dashboard_card("📦  출고 파일 변환", "주문 파일 분석 · 품목 매칭 · 출고 양식 변환")
+        shipment.clicked.connect(self.show_shipping_workspace)
+        inventory = self.dashboard_card("▦  재고 확인", "상품별 실재고 조회 · 이카운트 API 연동 예정")
+        inventory.clicked.connect(self.open_inventory_check)
+        shipment.setMaximumWidth(430)
+        inventory.setMaximumWidth(430)
+        cards.addWidget(shipment, 0, 0)
+        cards.addWidget(inventory, 0, 1)
+        cards.setColumnStretch(0, 1)
+        cards.setColumnStretch(1, 1)
+        layout.addLayout(cards)
+
+        self.calendar_widget = CalendarDropWidget()
+        calendar_header = QHBoxLayout()
+        calendar_title = QLabel("업무 캘린더")
+        calendar_title.setObjectName("dashboardSection")
+        calendar_hint = QLabel("PDF 또는 엑셀 파일을 캘린더에 드래그하면 일정을 등록할 수 있습니다.")
+        calendar_hint.setObjectName("dashboardHint")
+        self.calendar_year_combo = QComboBox()
+        current_year = QDate.currentDate().year()
+        for year in range(current_year - 5, current_year + 7):
+            self.calendar_year_combo.addItem(f"{year}년", year)
+        self.calendar_year_combo.setCurrentIndex(5)
+        self.calendar_year_combo.setFixedWidth(105)
+        self.calendar_month_combo = QComboBox()
+        for month in range(1, 13):
+            self.calendar_month_combo.addItem(f"{month}월", month)
+        self.calendar_month_combo.setCurrentIndex(QDate.currentDate().month() - 1)
+        self.calendar_month_combo.setFixedWidth(80)
+        calendar_header.addWidget(calendar_title)
+        calendar_header.addWidget(self.calendar_year_combo)
+        calendar_header.addWidget(self.calendar_month_combo)
+        calendar_header.addStretch(1)
+        calendar_header.addWidget(calendar_hint)
+        layout.addLayout(calendar_header)
+
+        calendar_row = QHBoxLayout()
+        calendar_row.setSpacing(14)
+        self.calendar_widget.setMinimumHeight(310)
+        self.calendar_widget.filesDropped.connect(self.add_calendar_files)
+        self.calendar_widget.clicked.connect(self.refresh_calendar_event_list)
+        self.calendar_widget.currentPageChanged.connect(self.sync_calendar_month_controls)
+        self.calendar_year_combo.currentIndexChanged.connect(self.change_calendar_month)
+        self.calendar_month_combo.currentIndexChanged.connect(self.change_calendar_month)
+        self.calendar_event_list = QListWidget()
+        self.calendar_event_list.setObjectName("recentWork")
+        self.calendar_event_list.setFixedWidth(350)
+        self.calendar_event_list.itemDoubleClicked.connect(self.edit_calendar_event)
+        self.calendar_event_list.currentItemChanged.connect(self.update_calendar_download_button)
+        self.calendar_download_button = QPushButton("첨부 파일 다운로드")
+        self.calendar_download_button.setObjectName("primaryButton")
+        self.calendar_download_button.setEnabled(False)
+        self.calendar_download_button.clicked.connect(self.download_calendar_attachments)
+        event_panel = QWidget()
+        event_panel.setFixedWidth(350)
+        event_panel_layout = QVBoxLayout(event_panel)
+        event_panel_layout.setContentsMargins(0, 0, 0, 0)
+        event_panel_layout.setSpacing(8)
+        event_panel_layout.addWidget(self.calendar_event_list, 1)
+        event_panel_layout.addWidget(
+            self.calendar_download_button, 0, Qt.AlignmentFlag.AlignRight
+        )
+        calendar_row.addWidget(self.calendar_widget, 1)
+        calendar_row.addWidget(event_panel)
+        layout.addLayout(calendar_row, 1)
+        self.calendar_events = load_calendar_events()
+        self.highlighted_event_dates: set[str] = set()
+        self.refresh_calendar_display()
+        return page
+
+    def change_calendar_month(self) -> None:
+        year = int(self.calendar_year_combo.currentData() or QDate.currentDate().year())
+        month = int(self.calendar_month_combo.currentData() or QDate.currentDate().month())
+        self.calendar_widget.setCurrentPage(year, month)
+
+    def sync_calendar_month_controls(self, year: int, month: int) -> None:
+        year_index = self.calendar_year_combo.findData(year)
+        if year_index >= 0:
+            self.calendar_year_combo.blockSignals(True)
+            self.calendar_year_combo.setCurrentIndex(year_index)
+            self.calendar_year_combo.blockSignals(False)
+        self.calendar_month_combo.blockSignals(True)
+        self.calendar_month_combo.setCurrentIndex(month - 1)
+        self.calendar_month_combo.blockSignals(False)
+
+    def show_dashboard(self) -> None:
+        self.refresh_calendar_display()
+        self.page_stack.setCurrentWidget(self.dashboard_page)
+
+    def show_shipping_workspace(self) -> None:
+        self.page_stack.setCurrentWidget(self.work_page)
+
+    def open_mini_widget(self) -> None:
+        if self.mini_widget is not None:
+            self.mini_widget.close()
+        self.mini_widget = MiniWidgetDialog(self)
+        screen = QApplication.primaryScreen().availableGeometry()
+        self.mini_widget.move(
+            screen.right() - self.mini_widget.width() - 22,
+            screen.bottom() - self.mini_widget.height() - 22,
+        )
+        self.mini_widget.show()
+        self.showMinimized()
+
+    def open_inventory_check(self) -> None:
+        dialog = QDialog(self)
+        dialog.setWindowTitle("재고 확인")
+        dialog.setFixedSize(520, 260)
+        layout = QVBoxLayout(dialog)
+        title = QLabel("이카운트 실재고 확인")
+        title.setObjectName("sectionTitle")
+        message = QLabel(
+            "대시보드 화면 구성을 먼저 확인하기 위한 테스트 메뉴입니다.\n"
+            "다음 단계에서 이카운트 API를 연결하면 품목코드별 실재고를 조회할 수 있습니다."
+        )
+        message.setObjectName("statusCard")
+        message.setWordWrap(True)
+        back_button = QPushButton("←  메인으로")
+        back_button.setObjectName("primaryButton")
+        back_button.clicked.connect(dialog.accept)
+        layout.addWidget(title)
+        layout.addWidget(message)
+        layout.addStretch(1)
+        layout.addWidget(back_button, 0, Qt.AlignmentFlag.AlignRight)
+        dialog.exec()
+
+    def refresh_recent_work(self) -> None:
+        if not hasattr(self, "recent_work_list"):
+            return
+        self.recent_work_list.clear()
+        rows = load_recent_work()
+        if not rows:
+            item = QListWidgetItem("아직 저장된 출고 작업이 없습니다.")
+            item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEnabled)
+            self.recent_work_list.addItem(item)
+            return
+        for row in rows[:10]:
+            self.recent_work_list.addItem(
+                f"{row.get('created_at', '')}   |   {row.get('format', '')}   |   "
+                f"{int(row.get('rows', 0)):,}건   |   {row.get('file_name', '')}"
+            )
+
+    def record_recent_work(self, file_path: str, profile_name: str) -> None:
+        rows = load_recent_work()
+        rows.insert(0, {
+            "created_at": datetime.now().strftime("%Y-%m-%d %H:%M"),
+            "format": profile_name,
+            "rows": len(self.current_orders),
+            "file_name": Path(file_path).name,
+        })
+        save_recent_work(rows)
+        self.refresh_recent_work()
+
+    def add_calendar_files(self, paths: list[str]) -> None:
+        if not paths:
+            return
+        draft = {
+            "title": Path(paths[0]).stem,
+            "file_paths": paths,
+        }
+        dialog = CalendarEventDialog(draft, self.calendar_widget.selectedDate(), self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        values = dialog.values()
+        if not values["title"]:
+            QMessageBox.warning(self, "일정 제목", "캘린더에 표시할 제목을 입력하세요.")
+            return
+        self.calendar_events.append(values)
+        save_calendar_events(self.calendar_events)
+        self.refresh_calendar_display()
+
+    def refresh_calendar_display(self) -> None:
+        if not hasattr(self, "calendar_widget"):
+            return
+        for date_text in self.highlighted_event_dates:
+            date = QDate.fromString(date_text, "yyyy-MM-dd")
+            if date.isValid():
+                self.calendar_widget.setDateTextFormat(date, QTextCharFormat())
+        self.highlighted_event_dates = {
+            str(row.get("date", "")) for row in self.calendar_events if row.get("date")
+        }
+        event_format = QTextCharFormat()
+        event_format.setBackground(QColor("#bfeae6"))
+        event_format.setForeground(QColor("#173c39"))
+        for date_text in self.highlighted_event_dates:
+            date = QDate.fromString(date_text, "yyyy-MM-dd")
+            if date.isValid():
+                self.calendar_widget.setDateTextFormat(date, event_format)
+        event_titles: dict[str, list[str]] = {}
+        for row in self.calendar_events:
+            date_text = str(row.get("date", ""))
+            title = str(row.get("title", "")).strip()
+            if date_text and title:
+                event_titles.setdefault(date_text, []).append(title)
+        self.calendar_widget.set_event_titles(event_titles)
+        self.refresh_calendar_event_list(self.calendar_widget.selectedDate())
+
+    def refresh_calendar_event_list(self, selected_date: QDate | None = None) -> None:
+        if not hasattr(self, "calendar_event_list"):
+            return
+        date = selected_date or self.calendar_widget.selectedDate()
+        date_text = date.toString("yyyy-MM-dd")
+        self.calendar_event_list.clear()
+        day_events = [row for row in self.calendar_events if row.get("date") == date_text]
+        if not day_events:
+            item = QListWidgetItem(f"{date_text}\n등록된 일정이 없습니다.")
+            item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEnabled)
+            self.calendar_event_list.addItem(item)
+            self.calendar_download_button.setEnabled(False)
+            return
+        for row in day_events:
+            title = str(row.get("title", "")).strip()
+            detail = str(row.get("info", "")).strip()
+            file_paths = row.get("file_paths") or [row.get("file_path", "")]
+            file_names = [Path(str(path)).name for path in file_paths if path]
+            if file_names:
+                attachment_text = f"첨부 파일 {len(file_names)}개 : {', '.join(file_names[:2])}"
+                if len(file_names) > 2:
+                    attachment_text += f" 외 {len(file_names) - 2}개"
+            else:
+                attachment_text = "첨부 파일 0개"
+            text = f"{title or '-'}\n\n{detail or '-'}\n\n{attachment_text}"
+            item = QListWidgetItem(text)
+            item.setData(Qt.ItemDataRole.UserRole, row.get("id"))
+            self.calendar_event_list.addItem(item)
+        self.calendar_event_list.setCurrentRow(0)
+
+    def update_calendar_download_button(self, current: QListWidgetItem | None, previous=None) -> None:
+        event_id = current.data(Qt.ItemDataRole.UserRole) if current else None
+        event_row = next((row for row in self.calendar_events if row.get("id") == event_id), None)
+        paths = (event_row or {}).get("file_paths") or [(event_row or {}).get("file_path", "")]
+        self.calendar_download_button.setEnabled(any(paths))
+
+    def download_calendar_attachments(self) -> None:
+        item = self.calendar_event_list.currentItem()
+        event_id = item.data(Qt.ItemDataRole.UserRole) if item else None
+        event_row = next((row for row in self.calendar_events if row.get("id") == event_id), None)
+        if not event_row:
+            return
+        self.download_event_attachments(event_row)
+
+    def download_event_attachments(self, event_row: dict) -> None:
+        paths = event_row.get("file_paths") or [event_row.get("file_path", "")]
+        paths = [str(path) for path in paths if path]
+        if not paths:
+            QMessageBox.information(self, "첨부 파일", "다운로드할 첨부 파일이 없습니다.")
+            return
+        target_dir = QFileDialog.getExistingDirectory(self, "첨부 파일을 저장할 폴더 선택")
+        if not target_dir:
+            return
+        saved = 0
+        missing: list[str] = []
+        for source_text in paths:
+            source = Path(source_text)
+            if not source.exists():
+                missing.append(source.name or source_text)
+                continue
+            target = Path(target_dir) / source.name
+            suffix_number = 1
+            while target.exists():
+                target = Path(target_dir) / f"{source.stem} ({suffix_number}){source.suffix}"
+                suffix_number += 1
+            shutil.copy2(source, target)
+            saved += 1
+        message = f"첨부 파일 {saved}개를 저장했습니다.\n{target_dir}"
+        if missing:
+            message += "\n\n이 PC에서 찾지 못한 파일: " + ", ".join(missing)
+        QMessageBox.information(self, "첨부 파일 다운로드", message)
+
+    def edit_calendar_event(self, item: QListWidgetItem) -> None:
+        event_id = item.data(Qt.ItemDataRole.UserRole)
+        event_row = next((row for row in self.calendar_events if row.get("id") == event_id), None)
+        if not event_row:
+            return
+        dialog = CalendarEventDialog(event_row, parent=self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        if dialog.deleted:
+            answer = QMessageBox.question(
+                self, "일정 삭제", f"'{event_row.get('title', '')}' 일정을 삭제할까요?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if answer == QMessageBox.StandardButton.Yes:
+                self.calendar_events = [row for row in self.calendar_events if row.get("id") != event_id]
+        else:
+            values = dialog.values()
+            if not values["title"]:
+                QMessageBox.warning(self, "일정 제목", "캘린더에 표시할 제목을 입력하세요.")
+                return
+            event_row.update(values)
+        save_calendar_events(self.calendar_events)
+        self.refresh_calendar_display()
 
     def refresh_output_formats(self, selected_id: str = "") -> None:
         selected_id = selected_id or str(self.output_format_combo.currentData() or "default_b2c")
@@ -1301,6 +2039,7 @@ class MainWindow(QMainWindow):
         self.catalog = catalog
         self.is_admin = catalog.get("app_role") == "admin"
         self.db_button.setEnabled(self.is_admin)
+        self.dashboard_db_button.setEnabled(self.is_admin)
         self.ecount_button.setEnabled(self.is_admin and bool(self.current_orders))
         self.matcher = ProductMatcher(catalog["items"], catalog["products"], catalog["components"], catalog["aliases"])
         self.login_row.removeWidget(self.login_button)
@@ -1340,6 +2079,7 @@ class MainWindow(QMainWindow):
         self.current_orders = []
         self.table.setRowCount(0)
         self.db_button.setEnabled(False)
+        self.dashboard_db_button.setEnabled(False)
         self.auto_button.setEnabled(False)
         self.b2c_button.setEnabled(False)
         self.b2b_button.setEnabled(False)
@@ -1858,6 +2598,7 @@ class MainWindow(QMainWindow):
                 self.supabase_client.table("shipment_history").upsert(history, on_conflict="duplicate_key").execute()
         except Exception as exc:
             QMessageBox.warning(self, "이력 저장 안내", f"Excel은 저장됐지만 중복 방지 이력을 Supabase에 기록하지 못했습니다.\n관리자용 SQL 적용 여부를 확인하세요.\n{exc}")
+        self.record_recent_work(file_path, str(profile.get("name", "출고 양식")))
         QMessageBox.information(self, "저장 완료", f"위킵 출고 파일을 저장했습니다.\n{file_path}")
 
     def open_ecount_transfer(self) -> None:
