@@ -178,15 +178,24 @@ def _find_header(rows: list[list[Any]], profile: dict[str, Any] | None = None) -
         for key, aliases in COLUMN_ALIASES.items()
         for alias in aliases
     }
+    alias_priority = {
+        (_normalize_header(alias), key): priority
+        for key, aliases in COLUMN_ALIASES.items()
+        for priority, alias in enumerate(aliases)
+    }
     best_row = -1
     best_map: dict[str, int] = {}
     # 상단 안내문이나 병합행이 늘어나는 변형 양식도 찾을 수 있도록 넉넉히 탐색한다.
     for row_index, row in enumerate(rows[:50]):
         current: dict[str, int] = {}
+        current_priority: dict[str, int] = {}
         for col_index, value in enumerate(row):
-            key = alias_lookup.get(_normalize_header(value))
-            if key and key not in current:
+            normalized = _normalize_header(value)
+            key = alias_lookup.get(normalized)
+            priority = alias_priority.get((normalized, key), len(row)) if key else len(row)
+            if key and (key not in current or priority < current_priority[key]):
                 current[key] = col_index
+                current_priority[key] = priority
         if len(current) > len(best_map):
             best_row, best_map = row_index, current
     missing = REQUIRED - set(best_map)
