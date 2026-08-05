@@ -76,7 +76,7 @@ DEFAULT_CONFIG = {
     },
 }
 ADMIN_USER_ID = "c7937d51-1a14-47aa-987e-6254c6c79014"
-APP_VERSION = "1.0.29"
+APP_VERSION = "1.0.30"
 UPDATE_BASE_URL = "https://jcslohuraqclhryeqxoc.supabase.co/storage/v1/object/public/reqm-updates"
 UPDATE_MANIFEST_URL = f"{UPDATE_BASE_URL}/manifest.json"
 RECENT_WORK_PATH = Path(os.getenv("LOCALAPPDATA", str(Path.home()))) / "REQM" / "recent_work.json"
@@ -1329,6 +1329,7 @@ class MiniWidgetDialog(QDialog):
     def __init__(self, main_window):
         super().__init__(None)
         self.main_window = main_window
+        self.opening_main_window = False
         self.setStyleSheet(main_window.styleSheet())
         self.setObjectName("miniWidget")
         self.setWindowTitle("REQM 미니 위젯")
@@ -1424,6 +1425,7 @@ class MiniWidgetDialog(QDialog):
             self.main_window.download_event_attachments(event_row)
 
     def open_main_window(self) -> None:
+        self.opening_main_window = True
         target = str(self.target_combo.currentData() or "dashboard")
         self.main_window.showNormal()
         if target == "shipping":
@@ -1435,6 +1437,14 @@ class MiniWidgetDialog(QDialog):
         self.close()
         if target == "inventory":
             self.main_window.open_inventory_check()
+
+    def closeEvent(self, event) -> None:
+        if not self.opening_main_window and self.main_window.isMinimized():
+            self.main_window.showNormal()
+            self.main_window.show_dashboard()
+            self.main_window.raise_()
+            self.main_window.activateWindow()
+        event.accept()
 
     def change_widget_target(self) -> None:
         save_widget_target(str(self.target_combo.currentData() or "dashboard"))
@@ -2244,9 +2254,20 @@ class MainWindow(QMainWindow):
             f"$pidToWait = {os.getpid()}\n"
             "$log = Join-Path (Split-Path -Parent $source) 'update.log'\n"
             "Set-Content -LiteralPath $log -Value ('Update started: ' + (Get-Date)) -Encoding UTF8\n"
-            "Wait-Process -Id $pidToWait -ErrorAction SilentlyContinue\n"
+            "for ($waitAttempt = 1; $waitAttempt -le 8; $waitAttempt++) {\n"
+            "    if (-not (Get-Process -Id $pidToWait -ErrorAction SilentlyContinue)) { break }\n"
+            "    Start-Sleep -Seconds 1\n"
+            "}\n"
+            "$targetName = Split-Path -Leaf $target\n"
+            "$lockingProcesses = Get-CimInstance Win32_Process -Filter (\"Name = '\" + $targetName + \"'\") -ErrorAction SilentlyContinue | "
+            "Where-Object { $_.ExecutablePath -eq $target }\n"
+            "foreach ($process in $lockingProcesses) {\n"
+            "    Stop-Process -Id $process.ProcessId -Force -ErrorAction SilentlyContinue\n"
+            "    Add-Content -LiteralPath $log -Value ('Stopped locking process: ' + $process.ProcessId) -Encoding UTF8\n"
+            "}\n"
+            "Start-Sleep -Seconds 1\n"
             "$copied = $false\n"
-            "for ($attempt = 1; $attempt -le 60; $attempt++) {\n"
+            "for ($attempt = 1; $attempt -le 30; $attempt++) {\n"
             "    try {\n"
             "        Copy-Item -LiteralPath $source -Destination $target -Force -ErrorAction Stop\n"
             "        $sourceHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $source).Hash\n"
@@ -2287,7 +2308,9 @@ class MainWindow(QMainWindow):
             ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden", "-File", str(script_path)],
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
-        QApplication.instance().quit()
+        QApplication.closeAllWindows()
+        QApplication.processEvents()
+        os._exit(0)
 
     def open_db_manager(self) -> None:
         if not self.is_admin:
