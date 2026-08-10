@@ -8,7 +8,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtWidgets import QApplication, QDialog
 
-from main import DutyFreeShippingDialog, MainWindow
+from main import DutyFreeShippingDialog, MainWindow, MiniWidgetDialog
 
 
 class DashboardNavigationTests(unittest.TestCase):
@@ -67,6 +67,35 @@ class DashboardNavigationTests(unittest.TestCase):
         self.window.open_ecount_transfer = Mock()
         self.window.dashboard_cards[2].click()
         self.window.open_ecount_transfer.assert_called_once_with()
+
+    def test_mini_widget_has_four_function_buttons_in_requested_order(self) -> None:
+        widget = MiniWidgetDialog(self.window)
+        self.assertEqual(
+            [button.property("widgetTarget") for button in widget.action_buttons],
+            ["shipping", "duty_free", "warehouse", "calendar"],
+        )
+        widget.close()
+
+    def test_mini_widget_buttons_route_to_each_function(self) -> None:
+        widget = MiniWidgetDialog(self.window)
+        widget.close = Mock()
+        self.window.show_shipping_workspace = Mock()
+        self.window.show_dashboard = Mock()
+        self.window.open_duty_free_shipping = Mock()
+        self.window.open_dashboard_warehouse_transfer = Mock()
+
+        widget.open_target("shipping")
+        self.window.show_shipping_workspace.assert_called_once_with()
+
+        widget.open_target("duty_free")
+        self.window.open_duty_free_shipping.assert_called_once_with()
+
+        widget.open_target("warehouse")
+        self.window.open_dashboard_warehouse_transfer.assert_called_once_with()
+
+        widget.open_target("calendar")
+        self.assertEqual(self.window.show_dashboard.call_count, 3)
+        widget.deleteLater()
 
 
 if __name__ == "__main__":

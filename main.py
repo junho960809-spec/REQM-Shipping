@@ -82,7 +82,7 @@ DEFAULT_CONFIG = {
     },
 }
 ADMIN_USER_ID = "c7937d51-1a14-47aa-987e-6254c6c79014"
-APP_VERSION = "1.0.35"
+APP_VERSION = "1.0.36"
 UPDATE_BASE_URL = "https://jcslohuraqclhryeqxoc.supabase.co/storage/v1/object/public/reqm-updates"
 UPDATE_MANIFEST_URL = f"{UPDATE_BASE_URL}/manifest.json"
 RECENT_WORK_PATH = Path(os.getenv("LOCALAPPDATA", str(Path.home()))) / "REQM" / "recent_work.json"
@@ -1682,10 +1682,10 @@ class MiniWidgetDialog(QDialog):
             | Qt.WindowType.WindowTitleHint
             | Qt.WindowType.WindowCloseButtonHint
         )
-        self.setFixedSize(390, 310)
+        self.setFixedSize(430, 360)
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(18, 16, 18, 16)
-        layout.setSpacing(10)
+        layout.setContentsMargins(18, 16, 18, 18)
+        layout.setSpacing(12)
 
         header = QHBoxLayout()
         title = QLabel("REQM 미니 위젯")
@@ -1697,65 +1697,64 @@ class MiniWidgetDialog(QDialog):
         header.addWidget(self.today_label)
         layout.addLayout(header)
 
-        shortcut_row = QHBoxLayout()
-        shortcut_row.addWidget(QLabel("바로가기"))
-        self.target_combo = QComboBox()
-        self.target_combo.addItem("메인 대시보드", "dashboard")
-        self.target_combo.addItem("출고 파일 변환", "shipping")
-        self.target_combo.addItem("재고 확인", "inventory")
-        selected_index = self.target_combo.findData(load_widget_target())
-        self.target_combo.setCurrentIndex(max(0, selected_index))
-        self.target_combo.currentIndexChanged.connect(self.change_widget_target)
-        shortcut_row.addWidget(self.target_combo, 1)
-        layout.addLayout(shortcut_row)
+        hint = QLabel("필요한 업무를 누르면 바로 실행됩니다.")
+        hint.setObjectName("widgetHint")
+        layout.addWidget(hint)
 
-        self.event_list = QListWidget()
-        self.event_list.setObjectName("widgetEventList")
-        self.event_list.currentItemChanged.connect(self.update_attachment_button)
-        layout.addWidget(self.event_list, 1)
+        action_grid = QGridLayout()
+        action_grid.setHorizontalSpacing(10)
+        action_grid.setVerticalSpacing(10)
+        action_specs = [
+            ("📦  출고 파일 변환\n일반 출고 파일 불러오기", "shipping"),
+            ("🏬  면세점 출고\nPDF · 엑셀 변환", "duty_free"),
+            ("↔  창고이동\n불러온 품목 전송", "warehouse"),
+            ("📅  일정\n대시보드 일정 관리", "calendar"),
+        ]
+        self.action_buttons = []
+        for index, (text, target) in enumerate(action_specs):
+            button = QPushButton(text)
+            button.setObjectName("widgetAction")
+            button.setProperty("widgetTarget", target)
+            button.setCursor(Qt.CursorShape.PointingHandCursor)
+            button.clicked.connect(
+                lambda checked=False, selected_target=target: self.open_target(selected_target)
+            )
+            action_grid.addWidget(button, index // 2, index % 2)
+            self.action_buttons.append(button)
+        layout.addLayout(action_grid)
 
-        button_row = QHBoxLayout()
-        self.attachment_button = QPushButton("첨부 파일 다운로드")
+        self.event_summary = QLabel()
+        self.event_summary.setObjectName("widgetEventSummary")
+        self.event_summary.setWordWrap(True)
+        layout.addWidget(self.event_summary)
+
+        self.attachment_button = QPushButton("일정 첨부 파일 다운로드")
+        self.attachment_button.setObjectName("widgetAttachment")
         self.attachment_button.setEnabled(False)
         self.attachment_button.clicked.connect(self.download_selected_attachments)
-        self.open_main_button = QPushButton()
-        self.open_main_button.setObjectName("primaryButton")
-        self.open_main_button.clicked.connect(self.open_main_window)
-        button_row.addWidget(self.attachment_button)
-        button_row.addStretch(1)
-        button_row.addWidget(self.open_main_button)
-        layout.addLayout(button_row)
-        self.update_open_button_text()
+        layout.addWidget(self.attachment_button, 0, Qt.AlignmentFlag.AlignRight)
         self.refresh_events()
 
     def refresh_events(self) -> None:
-        self.event_list.clear()
         today_text = QDate.currentDate().toString("yyyy-MM-dd")
         upcoming = sorted(
             (row for row in self.main_window.calendar_events if str(row.get("date", "")) >= today_text),
             key=lambda row: (str(row.get("date", "")), str(row.get("title", ""))),
-        )[:5]
+        )[:1]
         if not upcoming:
-            item = QListWidgetItem("가까운 일정이 없습니다.")
-            item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEnabled)
-            self.event_list.addItem(item)
+            self.upcoming_event = None
+            self.event_summary.setText("다음 일정  ·  가까운 일정이 없습니다.")
+            self.update_attachment_button()
             return
-        for row in upcoming:
-            info = str(row.get("info", "")).strip().replace("\n", " ")
-            text = f"{row.get('date', '')}  ·  {row.get('title', '')}"
-            if info:
-                text += f"\n{info}"
-            item = QListWidgetItem(text)
-            item.setData(Qt.ItemDataRole.UserRole, row.get("id"))
-            self.event_list.addItem(item)
-        self.event_list.setCurrentRow(0)
+        self.upcoming_event = upcoming[0]
+        self.event_summary.setText(
+            f"다음 일정  ·  {self.upcoming_event.get('date', '')}  "
+            f"{self.upcoming_event.get('title', '')}"
+        )
+        self.update_attachment_button()
 
     def selected_event(self) -> dict | None:
-        item = self.event_list.currentItem()
-        event_id = item.data(Qt.ItemDataRole.UserRole) if item else None
-        return next(
-            (row for row in self.main_window.calendar_events if row.get("id") == event_id), None
-        )
+        return self.upcoming_event
 
     def update_attachment_button(self, current=None, previous=None) -> None:
         event_row = self.selected_event()
@@ -1767,9 +1766,8 @@ class MiniWidgetDialog(QDialog):
         if event_row:
             self.main_window.download_event_attachments(event_row)
 
-    def open_main_window(self) -> None:
+    def open_target(self, target: str) -> None:
         self.opening_main_window = True
-        target = str(self.target_combo.currentData() or "dashboard")
         self.main_window.showNormal()
         if target == "shipping":
             self.main_window.show_shipping_workspace()
@@ -1778,8 +1776,13 @@ class MiniWidgetDialog(QDialog):
         self.main_window.raise_()
         self.main_window.activateWindow()
         self.close()
-        if target == "inventory":
-            self.main_window.open_inventory_check()
+        if target == "duty_free":
+            self.main_window.open_duty_free_shipping()
+        elif target == "warehouse":
+            self.main_window.open_dashboard_warehouse_transfer()
+
+    def open_main_window(self) -> None:
+        self.open_target("calendar")
 
     def closeEvent(self, event) -> None:
         if not self.opening_main_window and self.main_window.isMinimized():
@@ -1788,19 +1791,6 @@ class MiniWidgetDialog(QDialog):
             self.main_window.raise_()
             self.main_window.activateWindow()
         event.accept()
-
-    def change_widget_target(self) -> None:
-        save_widget_target(str(self.target_combo.currentData() or "dashboard"))
-        self.update_open_button_text()
-
-    def update_open_button_text(self) -> None:
-        labels = {
-            "dashboard": "메인 화면 열기",
-            "shipping": "출고 화면 열기",
-            "inventory": "재고 확인 열기",
-        }
-        self.open_main_button.setText(labels.get(str(self.target_combo.currentData()), "메인 화면 열기"))
-
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -1850,6 +1840,11 @@ class MainWindow(QMainWindow):
             QDialog#miniWidget { background: #f7f7f3; color: #151515; font-family: '맑은 고딕'; }
             QDialog#startupLogin { background: #f7f7f3; color: #151515; font-family: '맑은 고딕'; }
             QLabel#widgetTitle { color: #111111; font-size: 20px; font-weight: 900; }
+            QLabel#widgetHint { color: #71736f; font-size: 12px; }
+            QPushButton#widgetAction { background: #ffffff; color: #151515; border: 1px solid #dfdfda; border-radius: 16px; padding: 13px 14px; min-height: 54px; font-size: 13px; text-align: left; }
+            QPushButton#widgetAction:hover { background: #e9f8f6; border: 2px solid #48bdb7; }
+            QLabel#widgetEventSummary { background: #eef7f5; color: #315d59; border-radius: 11px; padding: 9px 11px; font-size: 12px; }
+            QPushButton#widgetAttachment { background: transparent; color: #5f6562; border: none; padding: 2px 4px; font-size: 11px; text-decoration: underline; }
             QListWidget#widgetEventList { background: #ffffff; border: 1px solid #dfdfda; border-radius: 16px; padding: 7px; }
             QListWidget#widgetEventList::item { padding: 11px 9px; border-bottom: 1px solid #eeeeea; font-size: 13px; }
             QListWidget#widgetEventList::item:selected { background: #e9f8f6; color: #151515; border-radius: 8px; }
