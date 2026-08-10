@@ -3,6 +3,7 @@ import re
 from typing import Any
 
 import openpyxl
+import pdfplumber
 
 
 def clean(value: Any) -> str:
@@ -66,6 +67,142 @@ def barcode_name_error(product_name: str, item: dict) -> str:
     if source_is_set and not db_is_set:
         return "파일은 세트 상품이지만 바코드는 DB 단품에 연결됨"
     return ""
+
+
+PRODUCT_HEADERS = {"상품명", "품명", "제품명", "상품", "itemname", "productname"}
+QUANTITY_HEADERS = {"수량", "입고수량", "발주수량", "qty", "quantity"}
+REF_HEADERS = {"refno", "바코드"}
+SKU_HEADERS = {"skuno", "sku", "상품코드", "품목코드"}
+
+
+def _header_index(row: list[Any], candidates: set[str]) -> int | None:
+    for index, value in enumerate(row):
+        key = norm(value)
+        if key in candidates:
+            return index
+    return None
+
+
+def _quantity(value: Any) -> str:
+    text = clean(value).replace(",", "")
+    try:
+        number = float(text)
+    except (TypeError, ValueError):
+        return ""
+    if number <= 0:
+        return ""
+    return str(int(number)) if number.is_integer() else str(number)
+
+
+def _detect_channel(text: str) -> str:
+    compact_text = norm(text)
+    for keyword, channel in (
+        ("롯데", "롯데면세점"),
+        ("신라", "신라면세점"),
+        ("신세계", "신세계면세점"),
+        ("현대", "현대면세점"),
+        ("시티", "시티면세점"),
+    ):
+        if keyword in compact_text:
+            return channel
+    return "면세점"
+
+
+def _simple_orders_from_rows(
+    rows: list[list[Any]], source_label: str, channel: str
+) -> list[dict[str, str]]:
+    """Read only product name and quantity from a fixed-layout table."""
+    for header_index, row in enumerate(rows[:40]):
+        product_col = _header_index(row, PRODUCT_HEADERS)
+        quantity_col = _header_index(row, QUANTITY_HEADERS)
+        if product_col is None or quantity_col is None:
+            continue
+        ref_col = _header_index(row, REF_HEADERS)
+        sku_col = _header_index(row, SKU_HEADERS)
+        result: list[dict[str, str]] = []
+        for row_offset, data in enumerate(rows[header_index + 1 :], start=header_index + 2):
+            product = clean(data[product_col]) if product_col < len(data) else ""
+            quantity = _quantity(data[quantity_col]) if quantity_col < len(data) else ""
+            if not product or not quantity:
+                continue
+            ref_no = clean(data[ref_col]) if ref_col is not None and ref_col < len(data) else ""
+            sku_no = clean(data[sku_col]) if sku_col is not None and sku_col < len(data) else ""
+            result.append(
+                {
+                    "source_row": f"{source_label} · {row_offset}",
+                    "order_number": "",
+                    "channel": channel,
+                    "product_name": re.sub(r"\s+", " ", product).strip(),
+                    "source_item_code": ref_no or sku_no,
+                    "ref_no": ref_no,
+                    "sku_no": sku_no,
+                    "options": "",
+                    "quantity": quantity,
+                    "recipient": "",
+                    "phone": "",
+                    "zipcode": "",
+                    "address": "",
+                    "message": "",
+                    "matched_name": product,
+                    "match_method": "name_or_code",
+                }
+            )
+        if result:
+            return result
+    return []
+
+
+def load_simple_duty_free(file_path: str) -> tuple[list[dict[str, str]], str]:
+    """Load a sparse duty-free document using its fixed table geometry.
+
+    Only product name and quantity are required in the source document. The UI
+    applies a saved destination after loading.
+    """
+    path = Path(file_path)
+    suffix = path.suffix.lower()
+    if suffix == ".pdf":
+        orders: list[dict[str, str]] = []
+        document_text: list[str] = [path.stem]
+        with pdfplumber.open(path) as document:
+            for page_number, page in enumerate(document.pages, start=1):
+                page_text = page.extract_text() or ""
+                document_text.append(page_text)
+                channel = _detect_channel(" ".join(document_text))
+                for table_number, table in enumerate(page.extract_tables() or [], start=1):
+                    parsed = _simple_orders_from_rows(
+                        table or [], f"PDF {page_number}쪽 표 {table_number}", channel
+                    )
+                    if parsed:
+                        orders.extend(parsed)
+                        break
+        if not orders:
+            raise ValueError("PDF에서 상품명과 수량이 있는 고정 표를 찾지 못했습니다.")
+        channel = _detect_channel(" ".join(document_text))
+        for order in orders:
+            order["channel"] = channel
+        return orders, channel
+
+    if suffix == ".xlsx":
+        workbook = openpyxl.load_workbook(path, read_only=True, data_only=True)
+        try:
+            sheet = workbook.active
+            rows = [list(row) for row in sheet.iter_rows(values_only=True)]
+        finally:
+            workbook.close()
+    elif suffix == ".xls":
+        import xlrd
+
+        workbook = xlrd.open_workbook(path)
+        sheet = workbook.sheet_by_index(0)
+        rows = [sheet.row_values(index) for index in range(sheet.nrows)]
+    else:
+        raise ValueError("면세점 출고 입력은 PDF, XLSX, XLS 파일을 지원합니다.")
+
+    channel = _detect_channel(path.stem + " " + " ".join(clean(value) for row in rows[:10] for value in row))
+    orders = _simple_orders_from_rows(rows, "Excel", channel)
+    if not orders:
+        raise ValueError("Excel에서 상품명과 수량 열을 찾지 못했습니다.")
+    return orders, channel
 
 
 def load_duty_free(file_path: str) -> tuple[list[dict[str, str]], str] | None:
