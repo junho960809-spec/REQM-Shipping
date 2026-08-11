@@ -23,7 +23,11 @@ def order_source_text(order: dict[str, Any]) -> str:
 
 
 class ProductMatcher:
-    def __init__(self, items: list[dict[str, Any]], products: list[dict[str, Any]], components: list[dict[str, Any]], aliases: list[dict[str, Any]] | None = None):
+    def __init__(
+        self, items: list[dict[str, Any]], products: list[dict[str, Any]],
+        components: list[dict[str, Any]], aliases: list[dict[str, Any]] | None = None,
+        barcodes: list[dict[str, Any]] | None = None,
+    ):
         self.items = [row for row in items if row.get("is_active", True)]
         self.products = [row for row in products if row.get("is_active", True)]
         self.components_by_product: dict[str, list[dict[str, Any]]] = defaultdict(list)
@@ -36,6 +40,11 @@ class ProductMatcher:
             item_code = str(item.get("item_code", "")).strip()
             if item_code:
                 self.items_by_code[item_code.casefold()] = item
+        self.item_code_by_barcode = {
+            str(row.get("barcode", "")).strip().casefold(): str(row.get("item_code", "")).strip()
+            for row in (barcodes or [])
+            if row.get("is_active", True) and row.get("barcode") and row.get("item_code")
+        }
         self.products_by_exact: dict[str, list[dict[str, Any]]] = defaultdict(list)
         for product in self.products:
             key = compact(str(product.get("normalized_name") or product.get("original_name", "")))
@@ -86,7 +95,28 @@ class ProductMatcher:
         return "similar", [candidates[0][1]], f"유사 품목 일치 {top_score:.0%}"
 
     def match(self, order: dict[str, str]) -> dict[str, str]:
-        source_item_code = str(order.get("source_item_code", "")).strip()
+        ref_no = str(order.get("ref_no", "")).strip()
+        if ref_no:
+            barcode_item_code = self.item_code_by_barcode.get(ref_no.casefold(), "")
+            item = self.items_by_code.get(barcode_item_code.casefold())
+            if item:
+                return {
+                    "status": "exact",
+                    "matched_product": str(item.get("standard_name", "")),
+                    "components": str(item.get("item_code", "")),
+                    "reason": f"REF NO 바코드 {ref_no} DB 정확 일치",
+                }
+        internal_item_code = str(order.get("internal_item_code", "")).strip()
+        if internal_item_code:
+            item = self.items_by_code.get(internal_item_code.casefold())
+            if item:
+                return {
+                    "status": "exact",
+                    "matched_product": str(item.get("standard_name", "")),
+                    "components": str(item.get("item_code", "")),
+                    "reason": f"REF NO {ref_no or order.get('source_item_code', '')} → 내부 품목코드 연결",
+                }
+        source_item_code = str(order.get("sku_no") or order.get("source_item_code", "")).strip()
         if source_item_code:
             item = self.items_by_code.get(source_item_code.casefold())
             if item:

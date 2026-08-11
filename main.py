@@ -48,9 +48,15 @@ from matcher import ProductMatcher
 from matcher import compact
 from matcher import order_source_text
 from shipping_export import export_with_format
-from duty_free_loader import load_duty_free, match_barcodes
+from duty_free_loader import load_duty_free, load_simple_duty_free, match_barcodes
+from duty_free_reference_store import find_reference_mapping
 from catalog_import import compare_catalog, load_item_catalog
-from location_store import load_locations, save_locations
+from location_store import (
+    load_locations,
+    local_to_remote,
+    save_locations,
+    sync_remote_locations,
+)
 from format_store import upsert_format
 from output_format_store import delete_output_format, load_output_formats, save_custom_output_format
 from direct_suggester import component_payload, components_text, suggest_direct_order
@@ -76,7 +82,7 @@ DEFAULT_CONFIG = {
     },
 }
 ADMIN_USER_ID = "c7937d51-1a14-47aa-987e-6254c6c79014"
-APP_VERSION = "1.0.30"
+APP_VERSION = "1.0.36"
 UPDATE_BASE_URL = "https://jcslohuraqclhryeqxoc.supabase.co/storage/v1/object/public/reqm-updates"
 UPDATE_MANIFEST_URL = f"{UPDATE_BASE_URL}/manifest.json"
 RECENT_WORK_PATH = Path(os.getenv("LOCALAPPDATA", str(Path.home()))) / "REQM" / "recent_work.json"
@@ -420,9 +426,10 @@ class DutyLocationDialog(QDialog):
         ("message", "배송 메모"),
     )
 
-    def __init__(self, locations: list[dict[str, str]], parent=None):
+    def __init__(self, locations: list[dict[str, str]], parent=None, client=None):
         super().__init__(parent)
         self.locations = [dict(row) for row in locations]
+        self.client = client
         self.current_id = ""
         self.setWindowTitle("면세점 출고지 정보 관리")
         self.resize(780, 520)
@@ -439,12 +446,14 @@ class DutyLocationDialog(QDialog):
             form.addRow(label, edit)
 
         new_button = QPushButton("새 출고지")
+        sync_button = QPushButton("DB 주소 동기화")
+        sync_button.setEnabled(self.client is not None)
         save_button = QPushButton("저장")
         save_button.setObjectName("primaryButton")
         delete_button = QPushButton("삭제")
         close_button = QPushButton("완료")
         buttons = QHBoxLayout()
-        for button in (new_button, save_button, delete_button, close_button):
+        for button in (new_button, sync_button, save_button, delete_button, close_button):
             buttons.addWidget(button)
 
         right = QVBoxLayout()
@@ -460,6 +469,7 @@ class DutyLocationDialog(QDialog):
 
         self.list_widget.currentRowChanged.connect(self.load_selected)
         new_button.clicked.connect(self.new_location)
+        sync_button.clicked.connect(self.sync_from_database)
         save_button.clicked.connect(self.save_current)
         delete_button.clicked.connect(self.delete_current)
         close_button.clicked.connect(self.accept)
@@ -511,6 +521,16 @@ class DutyLocationDialog(QDialog):
             self.locations.append(data)
         self.current_id = data["id"]
         save_locations(self.locations)
+        if self.client is not None:
+            try:
+                self.client.table("duty_free_locations").upsert(
+                    local_to_remote(data), on_conflict="location_id"
+                ).execute()
+            except Exception as exc:
+                QMessageBox.warning(
+                    self, "DB 동기화 안내",
+                    f"PC 주소록에는 저장했지만 DB 동기화에 실패했습니다.\n{exc}",
+                )
         self.refresh_list(self.current_id)
         QMessageBox.information(self, "저장 완료", f"'{data['name']}' 출고지를 저장했습니다.")
 
@@ -525,11 +545,36 @@ class DutyLocationDialog(QDialog):
         )
         if answer != QMessageBox.StandardButton.Yes:
             return
-        self.locations.pop(index)
+        deleted = self.locations.pop(index)
         self.current_id = ""
         save_locations(self.locations)
+        if self.client is not None:
+            try:
+                self.client.table("duty_free_locations").update({"is_active": False}).eq(
+                    "location_id", deleted.get("id", "")
+                ).execute()
+            except Exception as exc:
+                QMessageBox.warning(
+                    self, "DB 동기화 안내",
+                    f"PC 주소록에서는 삭제했지만 DB 동기화에 실패했습니다.\n{exc}",
+                )
         self.refresh_list()
         self.new_location()
+
+    def sync_from_database(self) -> None:
+        if self.client is None:
+            return
+        try:
+            response = self.client.table("duty_free_locations").select("*").execute()
+            self.locations, added = sync_remote_locations(list(response.data or []))
+        except Exception as exc:
+            QMessageBox.warning(self, "주소 동기화 실패", str(exc))
+            return
+        self.refresh_list(self.current_id)
+        QMessageBox.information(
+            self, "주소 동기화 완료",
+            f"DB 주소록을 불러왔습니다. 신규 복구 {added:,}건 · 전체 {len(self.locations):,}건",
+        )
 
 
 class AccountSettingsDialog(QDialog):
@@ -1131,6 +1176,304 @@ class FileDropZone(QFrame):
         event.acceptProposedAction()
 
 
+class DutyFreeShippingDialog(QDialog):
+    """Dedicated sparse PDF/Excel to duty-free shipping conversion workflow."""
+
+    def __init__(
+        self, matcher: ProductMatcher | None, locations: list[dict[str, str]],
+        parent=None, client=None, catalog_items=None, ecount_config=None,
+        completed_requests=None, is_admin=False,
+    ):
+        super().__init__(parent)
+        self.matcher = matcher
+        self.locations = [dict(row) for row in locations]
+        self.client = client
+        self.catalog_items = list(catalog_items or [])
+        self.ecount_config = dict(ecount_config or {})
+        self.completed_requests = completed_requests if completed_requests is not None else set()
+        self.is_admin = is_admin
+        self.orders: list[dict[str, str]] = []
+        self.source_path = ""
+        self.detected_channel = "면세점"
+        self.setWindowTitle("면세점 출고")
+        self.resize(760, 560)
+        self.setMinimumSize(680, 500)
+
+        title = QLabel("면세점 출고")
+        title.setObjectName("appTitle")
+        hint = QLabel("PDF 또는 Excel의 고정 표에서 품목명과 수량을 읽고 저장된 출고지를 자동으로 적용합니다.")
+        hint.setObjectName("appSubtitle")
+
+        self.file_label = QLabel("입력 파일을 선택하거나 아래 영역에 끌어다 놓으세요.")
+        self.file_label.setWordWrap(True)
+        choose_button = QPushButton("PDF / Excel 선택")
+        choose_button.setObjectName("fileButton")
+        choose_button.clicked.connect(self.select_file)
+        self.drop_zone = FileDropZone(
+            label_text="📄  면세점 입고 파일을 여기에 드래그 앤 드롭",
+            allowed_suffixes={".pdf", ".xls", ".xlsx"},
+        )
+        self.drop_zone.setFixedHeight(60)
+        self.drop_zone.filesDropped.connect(self.load_dropped_files)
+
+        file_card = QFrame()
+        file_card.setObjectName("fileCard")
+        file_layout = QVBoxLayout(file_card)
+        file_header = QHBoxLayout()
+        file_header.addWidget(QLabel("입력 파일  ·  PDF / Excel"))
+        file_header.addStretch(1)
+        file_header.addWidget(choose_button)
+        file_layout.addLayout(file_header)
+        file_layout.addWidget(self.file_label)
+        file_layout.addWidget(self.drop_zone)
+
+        self.location_combo = QComboBox()
+        self.location_combo.setMinimumWidth(220)
+        self.location_combo.currentIndexChanged.connect(self.apply_selected_location)
+        location_manage_button = QPushButton("출고지 정보 관리")
+        location_manage_button.clicked.connect(self.manage_locations)
+        location_row = QHBoxLayout()
+        location_row.addWidget(QLabel("📍  저장된 면세점 출고지"))
+        location_row.addWidget(self.location_combo)
+        location_row.addWidget(location_manage_button)
+        location_row.addStretch(1)
+
+        self.status = QLabel("파일을 불러오면 품목명·수량·출고지 결과를 먼저 보여드립니다.")
+        self.status.setObjectName("statusCard")
+        self.status.setWordWrap(True)
+
+        self.table = QTableWidget()
+        headers = ["상태", "품목명", "수량", "적용 출고지"]
+        self.table.setColumnCount(len(headers))
+        self.table.setHorizontalHeaderLabels(headers)
+        self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.table.setAlternatingRowColors(True)
+        self.table.verticalHeader().setVisible(False)
+        self.table.verticalHeader().setDefaultSectionSize(30)
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
+
+        self.output_format_combo = QComboBox()
+        for profile in load_output_formats():
+            self.output_format_combo.addItem(str(profile.get("name", "출고 양식")), str(profile.get("id", "")))
+        output_manage_button = QPushButton("출력 양식 관리")
+        output_manage_button.clicked.connect(self.manage_output_formats)
+        self.export_button = QPushButton("출고용 Excel 변환")
+        self.export_button.setObjectName("exportButton")
+        self.export_button.setEnabled(False)
+        self.export_button.clicked.connect(self.export_file)
+        self.transfer_button = QPushButton("이카운트 창고이동")
+        self.transfer_button.setEnabled(False)
+        self.transfer_button.clicked.connect(self.open_warehouse_transfer)
+        close_button = QPushButton("닫기")
+        close_button.clicked.connect(self.accept)
+        format_row = QHBoxLayout()
+        format_row.addWidget(QLabel("변환 출력 양식"))
+        format_row.addWidget(self.output_format_combo)
+        format_row.addWidget(output_manage_button)
+        format_row.addStretch(1)
+        action_row = QHBoxLayout()
+        action_row.addStretch(1)
+        action_row.addWidget(close_button)
+        action_row.addWidget(self.transfer_button)
+        action_row.addWidget(self.export_button)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(18, 14, 18, 14)
+        layout.setSpacing(8)
+        layout.addWidget(title)
+        layout.addWidget(hint)
+        layout.addWidget(file_card)
+        layout.addLayout(location_row)
+        layout.addWidget(self.status)
+        layout.addWidget(self.table, 1)
+        layout.addLayout(format_row)
+        layout.addLayout(action_row)
+        self.refresh_locations()
+
+    def refresh_locations(self, selected_id: str = "") -> None:
+        self.locations = load_locations() or self.locations
+        previous_id = selected_id or str(self.location_combo.currentData() or "")
+        self.location_combo.blockSignals(True)
+        self.location_combo.clear()
+        if not self.locations:
+            self.location_combo.addItem("저장된 출고지가 없습니다", "")
+        else:
+            for row in self.locations:
+                self.location_combo.addItem(row.get("name", "면세점 출고지"), row.get("id", ""))
+            selected_index = self.location_combo.findData(previous_id)
+            self.location_combo.setCurrentIndex(selected_index if selected_index >= 0 else 0)
+        self.location_combo.blockSignals(False)
+        self.apply_selected_location()
+
+    def selected_location(self) -> dict[str, str] | None:
+        location_id = str(self.location_combo.currentData() or "")
+        return next((row for row in self.locations if row.get("id") == location_id), None)
+
+    def manage_locations(self) -> None:
+        selected_id = str(self.location_combo.currentData() or "")
+        dialog = DutyLocationDialog(self.locations, self, client=self.client)
+        dialog.exec()
+        self.locations = load_locations()
+        self.refresh_locations(selected_id)
+
+    def manage_output_formats(self) -> None:
+        selected_id = str(self.output_format_combo.currentData() or "default_b2c")
+        dialog = OutputFormatManagerDialog(self)
+        dialog.exec()
+        self.output_format_combo.clear()
+        selected_index = 0
+        for index, profile in enumerate(load_output_formats()):
+            self.output_format_combo.addItem(str(profile.get("name", "출고 양식")), str(profile.get("id", "")))
+            if str(profile.get("id", "")) == selected_id:
+                selected_index = index
+        self.output_format_combo.setCurrentIndex(selected_index)
+
+    def select_file(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self, "면세점 입고 파일 선택", "", "면세점 입력 파일 (*.pdf *.xls *.xlsx)"
+        )
+        if path:
+            self.load_document(path)
+
+    def load_dropped_files(self, paths: list[str]) -> None:
+        if not paths:
+            return
+        if len(paths) > 1:
+            QMessageBox.information(self, "파일 한 개씩 처리", "첫 번째 파일만 불러옵니다.")
+        self.load_document(paths[0])
+
+    def load_document(self, path: str) -> None:
+        try:
+            orders, channel = load_simple_duty_free(path)
+            for order in orders:
+                order["order_number"] = Path(path).stem
+                reference_mapping = find_reference_mapping(channel, order.get("ref_no", ""))
+                if reference_mapping:
+                    order["internal_item_code"] = reference_mapping.get("item_code", "")
+                if self.matcher is not None:
+                    order.update(self.matcher.match(order))
+                else:
+                    order.update(
+                        {
+                            "status": "exact",
+                            "matched_product": order.get("product_name", ""),
+                            "components": order.get("source_item_code", ""),
+                            "reason": "면세점 고정 표 인식",
+                        }
+                    )
+        except Exception as exc:
+            QMessageBox.critical(self, "면세점 파일 분석 실패", str(exc))
+            return
+        self.orders = orders
+        self.source_path = path
+        self.detected_channel = channel
+        self.file_label.setText(f"{Path(path).name}  ·  {len(orders):,}개 품목 인식")
+        self.apply_selected_location()
+
+    def apply_selected_location(self) -> None:
+        location = self.selected_location()
+        if location:
+            for order in self.orders:
+                order["channel"] = location.get("channel") or self.detected_channel
+                order["recipient"] = location.get("recipient", "")
+                order["phone"] = location.get("phone", "")
+                order["zipcode"] = location.get("zipcode", "")
+                order["address"] = location.get("address", "")
+                order["message"] = location.get("message", "")
+        else:
+            for order in self.orders:
+                for key in ("recipient", "phone", "zipcode", "address", "message"):
+                    order[key] = ""
+        self.populate_table()
+        ready = bool(self.orders and location and location.get("address"))
+        self.export_button.setEnabled(ready)
+        self.transfer_button.setEnabled(bool(self.orders))
+        if self.orders:
+            if ready:
+                self.status.setText(
+                    f"{self.detected_channel} · {len(self.orders):,}개 품목 · "
+                    f"'{location.get('name', '')}' 출고지 자동 적용 완료"
+                )
+            else:
+                self.status.setText(
+                    f"{self.detected_channel} · {len(self.orders):,}개 품목 인식 완료 · 저장된 출고지를 선택하거나 등록하세요."
+                )
+
+    def populate_table(self) -> None:
+        labels = {
+            "exact": "정확", "similar": "유사", "alias": "별칭적용", "manual": "수동확정",
+            "ambiguous": "확인필요", "missing": "미등록", "barcode_error": "바코드오류",
+        }
+        colors = {
+            "exact": QColor("#d9ead3"), "similar": QColor("#fff2cc"),
+            "alias": QColor("#d9d2e9"), "manual": QColor("#cfe2f3"),
+            "ambiguous": QColor("#fce5cd"), "missing": QColor("#f4cccc"),
+            "barcode_error": QColor("#e06666"),
+        }
+        location = self.selected_location() or {}
+        location_text = ""
+        if location:
+            location_text = f"{location.get('name', '')} · {location.get('address', '')}".strip(" ·")
+        self.table.setRowCount(len(self.orders))
+        for row_index, order in enumerate(self.orders):
+            status = str(order.get("status", ""))
+            values = [
+                labels.get(status, status),
+                order.get("product_name", ""),
+                order.get("quantity", ""),
+                location_text,
+            ]
+            for column_index, value in enumerate(values):
+                item = QTableWidgetItem(str(value))
+                item.setBackground(colors.get(status, QColor("white")))
+                if column_index == 3:
+                    item.setToolTip(location_text)
+                self.table.setItem(row_index, column_index, item)
+
+    def export_file(self) -> None:
+        location = self.selected_location()
+        if not self.orders or not location or not location.get("address"):
+            QMessageBox.warning(self, "변환 준비 필요", "파일과 저장된 면세점 출고지를 먼저 선택하세요.")
+            return
+        file_path, _ = QFileDialog.getSaveFileName(
+            self, "면세점 출고 파일 저장", "면세점_출고.xlsx", "Excel 파일 (*.xlsx)"
+        )
+        if not file_path:
+            return
+        if not file_path.lower().endswith(".xlsx"):
+            file_path += ".xlsx"
+        try:
+            selected_id = str(self.output_format_combo.currentData() or "default_b2c")
+            formats = load_output_formats()
+            profile = next((row for row in formats if str(row.get("id")) == selected_id), formats[0])
+            export_with_format(self.orders, file_path, profile)
+        except Exception as exc:
+            QMessageBox.critical(self, "Excel 저장 실패", str(exc))
+            return
+        QMessageBox.information(self, "저장 완료", f"면세점 출고 파일을 저장했습니다.\n{file_path}")
+
+    def open_warehouse_transfer(self) -> None:
+        if not self.is_admin:
+            QMessageBox.warning(self, "권한 없음", "이카운트 창고이동은 관리자만 실행할 수 있습니다.")
+            return
+        if not self.orders:
+            QMessageBox.warning(self, "품목 없음", "먼저 면세점 입고 파일을 분석하세요.")
+            return
+        dialog = EcountTransferDialog(
+            self.orders,
+            self.catalog_items,
+            self.ecount_config,
+            self.completed_requests,
+            self,
+        )
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self.status.setText(
+                f"이카운트 창고이동 완료 · {dialog.transfer_scope} · 집계 품목 {len(dialog.items):,}개"
+            )
+
+
 class CalendarDropWidget(QCalendarWidget):
     filesDropped = Signal(list)
 
@@ -1339,10 +1682,10 @@ class MiniWidgetDialog(QDialog):
             | Qt.WindowType.WindowTitleHint
             | Qt.WindowType.WindowCloseButtonHint
         )
-        self.setFixedSize(390, 310)
+        self.setFixedSize(430, 360)
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(18, 16, 18, 16)
-        layout.setSpacing(10)
+        layout.setContentsMargins(18, 16, 18, 18)
+        layout.setSpacing(12)
 
         header = QHBoxLayout()
         title = QLabel("REQM 미니 위젯")
@@ -1354,65 +1697,64 @@ class MiniWidgetDialog(QDialog):
         header.addWidget(self.today_label)
         layout.addLayout(header)
 
-        shortcut_row = QHBoxLayout()
-        shortcut_row.addWidget(QLabel("바로가기"))
-        self.target_combo = QComboBox()
-        self.target_combo.addItem("메인 대시보드", "dashboard")
-        self.target_combo.addItem("출고 파일 변환", "shipping")
-        self.target_combo.addItem("재고 확인", "inventory")
-        selected_index = self.target_combo.findData(load_widget_target())
-        self.target_combo.setCurrentIndex(max(0, selected_index))
-        self.target_combo.currentIndexChanged.connect(self.change_widget_target)
-        shortcut_row.addWidget(self.target_combo, 1)
-        layout.addLayout(shortcut_row)
+        hint = QLabel("필요한 업무를 누르면 바로 실행됩니다.")
+        hint.setObjectName("widgetHint")
+        layout.addWidget(hint)
 
-        self.event_list = QListWidget()
-        self.event_list.setObjectName("widgetEventList")
-        self.event_list.currentItemChanged.connect(self.update_attachment_button)
-        layout.addWidget(self.event_list, 1)
+        action_grid = QGridLayout()
+        action_grid.setHorizontalSpacing(10)
+        action_grid.setVerticalSpacing(10)
+        action_specs = [
+            ("📦  출고 파일 변환\n일반 출고 파일 불러오기", "shipping"),
+            ("🏬  면세점 출고\nPDF · 엑셀 변환", "duty_free"),
+            ("↔  창고이동\n불러온 품목 전송", "warehouse"),
+            ("📅  일정\n대시보드 일정 관리", "calendar"),
+        ]
+        self.action_buttons = []
+        for index, (text, target) in enumerate(action_specs):
+            button = QPushButton(text)
+            button.setObjectName("widgetAction")
+            button.setProperty("widgetTarget", target)
+            button.setCursor(Qt.CursorShape.PointingHandCursor)
+            button.clicked.connect(
+                lambda checked=False, selected_target=target: self.open_target(selected_target)
+            )
+            action_grid.addWidget(button, index // 2, index % 2)
+            self.action_buttons.append(button)
+        layout.addLayout(action_grid)
 
-        button_row = QHBoxLayout()
-        self.attachment_button = QPushButton("첨부 파일 다운로드")
+        self.event_summary = QLabel()
+        self.event_summary.setObjectName("widgetEventSummary")
+        self.event_summary.setWordWrap(True)
+        layout.addWidget(self.event_summary)
+
+        self.attachment_button = QPushButton("일정 첨부 파일 다운로드")
+        self.attachment_button.setObjectName("widgetAttachment")
         self.attachment_button.setEnabled(False)
         self.attachment_button.clicked.connect(self.download_selected_attachments)
-        self.open_main_button = QPushButton()
-        self.open_main_button.setObjectName("primaryButton")
-        self.open_main_button.clicked.connect(self.open_main_window)
-        button_row.addWidget(self.attachment_button)
-        button_row.addStretch(1)
-        button_row.addWidget(self.open_main_button)
-        layout.addLayout(button_row)
-        self.update_open_button_text()
+        layout.addWidget(self.attachment_button, 0, Qt.AlignmentFlag.AlignRight)
         self.refresh_events()
 
     def refresh_events(self) -> None:
-        self.event_list.clear()
         today_text = QDate.currentDate().toString("yyyy-MM-dd")
         upcoming = sorted(
             (row for row in self.main_window.calendar_events if str(row.get("date", "")) >= today_text),
             key=lambda row: (str(row.get("date", "")), str(row.get("title", ""))),
-        )[:5]
+        )[:1]
         if not upcoming:
-            item = QListWidgetItem("가까운 일정이 없습니다.")
-            item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEnabled)
-            self.event_list.addItem(item)
+            self.upcoming_event = None
+            self.event_summary.setText("다음 일정  ·  가까운 일정이 없습니다.")
+            self.update_attachment_button()
             return
-        for row in upcoming:
-            info = str(row.get("info", "")).strip().replace("\n", " ")
-            text = f"{row.get('date', '')}  ·  {row.get('title', '')}"
-            if info:
-                text += f"\n{info}"
-            item = QListWidgetItem(text)
-            item.setData(Qt.ItemDataRole.UserRole, row.get("id"))
-            self.event_list.addItem(item)
-        self.event_list.setCurrentRow(0)
+        self.upcoming_event = upcoming[0]
+        self.event_summary.setText(
+            f"다음 일정  ·  {self.upcoming_event.get('date', '')}  "
+            f"{self.upcoming_event.get('title', '')}"
+        )
+        self.update_attachment_button()
 
     def selected_event(self) -> dict | None:
-        item = self.event_list.currentItem()
-        event_id = item.data(Qt.ItemDataRole.UserRole) if item else None
-        return next(
-            (row for row in self.main_window.calendar_events if row.get("id") == event_id), None
-        )
+        return self.upcoming_event
 
     def update_attachment_button(self, current=None, previous=None) -> None:
         event_row = self.selected_event()
@@ -1424,9 +1766,8 @@ class MiniWidgetDialog(QDialog):
         if event_row:
             self.main_window.download_event_attachments(event_row)
 
-    def open_main_window(self) -> None:
+    def open_target(self, target: str) -> None:
         self.opening_main_window = True
-        target = str(self.target_combo.currentData() or "dashboard")
         self.main_window.showNormal()
         if target == "shipping":
             self.main_window.show_shipping_workspace()
@@ -1435,8 +1776,13 @@ class MiniWidgetDialog(QDialog):
         self.main_window.raise_()
         self.main_window.activateWindow()
         self.close()
-        if target == "inventory":
-            self.main_window.open_inventory_check()
+        if target == "duty_free":
+            self.main_window.open_duty_free_shipping()
+        elif target == "warehouse":
+            self.main_window.open_dashboard_warehouse_transfer()
+
+    def open_main_window(self) -> None:
+        self.open_target("calendar")
 
     def closeEvent(self, event) -> None:
         if not self.opening_main_window and self.main_window.isMinimized():
@@ -1445,19 +1791,6 @@ class MiniWidgetDialog(QDialog):
             self.main_window.raise_()
             self.main_window.activateWindow()
         event.accept()
-
-    def change_widget_target(self) -> None:
-        save_widget_target(str(self.target_combo.currentData() or "dashboard"))
-        self.update_open_button_text()
-
-    def update_open_button_text(self) -> None:
-        labels = {
-            "dashboard": "메인 화면 열기",
-            "shipping": "출고 화면 열기",
-            "inventory": "재고 확인 열기",
-        }
-        self.open_main_button.setText(labels.get(str(self.target_combo.currentData()), "메인 화면 열기"))
-
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -1507,6 +1840,11 @@ class MainWindow(QMainWindow):
             QDialog#miniWidget { background: #f7f7f3; color: #151515; font-family: '맑은 고딕'; }
             QDialog#startupLogin { background: #f7f7f3; color: #151515; font-family: '맑은 고딕'; }
             QLabel#widgetTitle { color: #111111; font-size: 20px; font-weight: 900; }
+            QLabel#widgetHint { color: #71736f; font-size: 12px; }
+            QPushButton#widgetAction { background: #ffffff; color: #151515; border: 1px solid #dfdfda; border-radius: 16px; padding: 13px 14px; min-height: 54px; font-size: 13px; text-align: left; }
+            QPushButton#widgetAction:hover { background: #e9f8f6; border: 2px solid #48bdb7; }
+            QLabel#widgetEventSummary { background: #eef7f5; color: #315d59; border-radius: 11px; padding: 9px 11px; font-size: 12px; }
+            QPushButton#widgetAttachment { background: transparent; color: #5f6562; border: none; padding: 2px 4px; font-size: 11px; text-decoration: underline; }
             QListWidget#widgetEventList { background: #ffffff; border: 1px solid #dfdfda; border-radius: 16px; padding: 7px; }
             QListWidget#widgetEventList::item { padding: 11px 9px; border-bottom: 1px solid #eeeeea; font-size: 13px; }
             QListWidget#widgetEventList::item:selected { background: #e9f8f6; color: #151515; border-radius: 8px; }
@@ -1766,14 +2104,20 @@ class MainWindow(QMainWindow):
         cards.setSpacing(16)
         shipment = self.dashboard_card("📦  출고 파일 변환", "주문 파일 분석 · 품목 매칭 · 출고 양식 변환")
         shipment.clicked.connect(self.show_shipping_workspace)
-        inventory = self.dashboard_card("▦  재고 확인", "상품별 실재고 조회 · 이카운트 API 연동 예정")
-        inventory.clicked.connect(self.open_inventory_check)
+        duty_free = self.dashboard_card("🏬  면세점 출고", "PDF·Excel 품목 인식 · 저장 출고지 자동 적용")
+        duty_free.clicked.connect(self.open_duty_free_shipping)
+        warehouse = self.dashboard_card("↔  창고이동", "출고 주문 집계 · 이카운트 창고이동")
+        warehouse.clicked.connect(self.open_dashboard_warehouse_transfer)
         shipment.setMaximumWidth(430)
-        inventory.setMaximumWidth(430)
+        duty_free.setMaximumWidth(430)
+        warehouse.setMaximumWidth(430)
         cards.addWidget(shipment, 0, 0)
-        cards.addWidget(inventory, 0, 1)
+        cards.addWidget(duty_free, 0, 1)
+        cards.addWidget(warehouse, 0, 2)
         cards.setColumnStretch(0, 1)
         cards.setColumnStretch(1, 1)
+        cards.setColumnStretch(2, 1)
+        self.dashboard_cards = [shipment, duty_free, warehouse]
         layout.addLayout(cards)
 
         self.calendar_widget = CalendarDropWidget()
@@ -1855,6 +2199,26 @@ class MainWindow(QMainWindow):
 
     def show_shipping_workspace(self) -> None:
         self.page_stack.setCurrentWidget(self.work_page)
+
+    def open_duty_free_shipping(self) -> None:
+        dialog = DutyFreeShippingDialog(
+            self.matcher,
+            load_locations(),
+            self,
+            client=self.supabase_client,
+            catalog_items=self.catalog.get("items", []),
+            ecount_config=load_config().get("ecount", {}),
+            completed_requests=self.completed_ecount_requests,
+            is_admin=self.is_admin,
+        )
+        dialog.exec()
+
+    def open_dashboard_warehouse_transfer(self) -> None:
+        if not self.current_orders:
+            self.show_shipping_workspace()
+            self.status.setText("창고이동할 출고 파일을 먼저 불러오세요. 분석 후 '이카운트 창고이동'을 누르면 됩니다.")
+            return
+        self.open_ecount_transfer()
 
     def open_mini_widget(self) -> None:
         if self.mini_widget is not None:
@@ -2093,7 +2457,7 @@ class MainWindow(QMainWindow):
             self.location_combo.setCurrentIndex(0)
 
     def manage_locations(self) -> None:
-        dialog = DutyLocationDialog(self.duty_locations, self)
+        dialog = DutyLocationDialog(self.duty_locations, self, client=self.supabase_client)
         dialog.exec()
         self.refresh_location_combo()
 
@@ -2139,11 +2503,16 @@ class MainWindow(QMainWindow):
         self.auto_button.setEnabled(True)
         self.supabase_client = catalog["client"]
         self.catalog = catalog
+        self.duty_locations, restored_count = sync_remote_locations(catalog.get("duty_locations", []))
+        self.refresh_location_combo()
         self.is_admin = catalog.get("app_role") == "admin"
         self.db_button.setEnabled(self.is_admin)
         self.dashboard_db_button.setEnabled(self.is_admin)
         self.ecount_button.setEnabled(self.is_admin and bool(self.current_orders))
-        self.matcher = ProductMatcher(catalog["items"], catalog["products"], catalog["components"], catalog["aliases"])
+        self.matcher = ProductMatcher(
+            catalog["items"], catalog["products"], catalog["components"],
+            catalog["aliases"], catalog["barcodes"],
+        )
         self.login_row.removeWidget(self.login_button)
         self.login_card.hide()
         self.login_button.setText("로그아웃")
@@ -2154,7 +2523,8 @@ class MainWindow(QMainWindow):
         self.login_button.style().polish(self.login_button)
         self.status.setText(
             f"DB 준비 완료: 품목 {count:,}개 · 등록상품 {len(catalog['products']):,}개 · "
-            f"구성품 {len(catalog['components']):,}개 · 권한: {'관리자' if self.is_admin else '일반 사용자(조회 전용)'}"
+            f"구성품 {len(catalog['components']):,}개 · 주소 복구 {restored_count:,}건 · "
+            f"권한: {'관리자' if self.is_admin else '일반 사용자(조회 전용)'}"
         )
 
     def open_account_settings(self) -> None:
@@ -2332,7 +2702,7 @@ class MainWindow(QMainWindow):
                 self.catalog[key] = fetch_all_rows(self.supabase_client, table)
             self.matcher = ProductMatcher(
                 self.catalog["items"], self.catalog["products"],
-                self.catalog["components"], self.catalog["aliases"],
+                self.catalog["components"], self.catalog["aliases"], self.catalog["barcodes"],
             )
             rematched = self.rematch_deleted_items()
             self.status.setText(

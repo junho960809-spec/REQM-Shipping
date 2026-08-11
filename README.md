@@ -4,8 +4,8 @@
 
 ## 기준 버전
 
-- 애플리케이션: `1.0.26`
-- 원본 저장소 기준 브랜치: `agent/ecount-warehouse-transfer-1.0.26`
+- 애플리케이션: `1.0.36`
+- 원본 저장소 기준 브랜치: `main`
 - 이카운트 회사코드: `304293`
 - 이카운트 ZONE: `AB`
 
@@ -27,7 +27,7 @@ python main.py
 ## 빌드
 
 ```powershell
-pyinstaller --noconfirm --clean REQM_1_0_26.spec
+pyinstaller --noconfirm --clean REQM_1_0_35.spec
 ```
 
 `config.example.json`을 `config.json`으로 복사해 사용하며 실제 인증키와 비밀번호는 커밋하지 않습니다.
