@@ -124,7 +124,16 @@ class ProductMatcher:
                     "status": "exact",
                     "matched_product": str(item.get("standard_name", "")),
                     "components": str(item.get("item_code", "")),
-                    "reason": "파일 품목코드 DB 정확 일치",
+                    "reason": "SKU 품목코드 DB 정확 일치",
+                }
+            barcode_item_code = self.item_code_by_barcode.get(source_item_code.casefold(), "")
+            item = self.items_by_code.get(barcode_item_code.casefold())
+            if item:
+                return {
+                    "status": "exact",
+                    "matched_product": str(item.get("standard_name", "")),
+                    "components": str(item.get("item_code", "")),
+                    "reason": f"SKU {source_item_code} 바코드 DB 정확 일치",
                 }
         alias_key = compact(order_source_text(order))
         alias = self.aliases.get((order.get("channel", ""), alias_key)) or self.aliases.get(("", alias_key))

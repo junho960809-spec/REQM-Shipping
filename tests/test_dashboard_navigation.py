@@ -22,10 +22,10 @@ class DashboardNavigationTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.window.close()
 
-    def test_cards_are_ordered_shipping_duty_free_warehouse(self) -> None:
+    def test_dashboard_has_only_shipping_and_duty_free_cards(self) -> None:
         self.assertEqual(
             [button.text() for button in self.window.dashboard_cards],
-            ["📦  출고 파일 변환", "🏬  면세점 출고", "↔  창고이동"],
+            ["📦  출고 파일 변환", "🏬  면세점 출고"],
         )
 
     def test_shipping_card_opens_shipping_workspace(self) -> None:
@@ -61,12 +61,6 @@ class DashboardNavigationTests(unittest.TestCase):
         self.assertEqual(transfer_class.call_args.args[1], [{"item_code": "A001"}])
         self.assertIn("창고이동 완료", dialog.status.text())
         dialog.close()
-
-    def test_warehouse_card_routes_to_transfer_when_orders_exist(self) -> None:
-        self.window.current_orders = [{"channel": "롯데면세점", "quantity": "1"}]
-        self.window.open_ecount_transfer = Mock()
-        self.window.dashboard_cards[2].click()
-        self.window.open_ecount_transfer.assert_called_once_with()
 
     def test_mini_widget_has_four_function_buttons_in_requested_order(self) -> None:
         widget = MiniWidgetDialog(self.window)

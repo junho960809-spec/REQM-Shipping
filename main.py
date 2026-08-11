@@ -82,7 +82,7 @@ DEFAULT_CONFIG = {
     },
 }
 ADMIN_USER_ID = "c7937d51-1a14-47aa-987e-6254c6c79014"
-APP_VERSION = "1.0.36"
+APP_VERSION = "1.0.37"
 UPDATE_BASE_URL = "https://jcslohuraqclhryeqxoc.supabase.co/storage/v1/object/public/reqm-updates"
 UPDATE_MANIFEST_URL = f"{UPDATE_BASE_URL}/manifest.json"
 RECENT_WORK_PATH = Path(os.getenv("LOCALAPPDATA", str(Path.home()))) / "REQM" / "recent_work.json"
@@ -2106,18 +2106,13 @@ class MainWindow(QMainWindow):
         shipment.clicked.connect(self.show_shipping_workspace)
         duty_free = self.dashboard_card("🏬  면세점 출고", "PDF·Excel 품목 인식 · 저장 출고지 자동 적용")
         duty_free.clicked.connect(self.open_duty_free_shipping)
-        warehouse = self.dashboard_card("↔  창고이동", "출고 주문 집계 · 이카운트 창고이동")
-        warehouse.clicked.connect(self.open_dashboard_warehouse_transfer)
         shipment.setMaximumWidth(430)
         duty_free.setMaximumWidth(430)
-        warehouse.setMaximumWidth(430)
         cards.addWidget(shipment, 0, 0)
         cards.addWidget(duty_free, 0, 1)
-        cards.addWidget(warehouse, 0, 2)
         cards.setColumnStretch(0, 1)
         cards.setColumnStretch(1, 1)
-        cards.setColumnStretch(2, 1)
-        self.dashboard_cards = [shipment, duty_free, warehouse]
+        self.dashboard_cards = [shipment, duty_free]
         layout.addLayout(cards)
 
         self.calendar_widget = CalendarDropWidget()

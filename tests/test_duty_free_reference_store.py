@@ -48,6 +48,31 @@ class DutyFreeReferenceMappingTests(unittest.TestCase):
         self.assertEqual(result["components"], "QP1000C1-Butter")
         self.assertIn("바코드", result["reason"])
 
+    def test_unmatched_ref_falls_back_to_sku_item_code(self) -> None:
+        items = [{"item_code": "SKU-100", "standard_name": "SKU 대체 품목", "is_active": True}]
+        matcher = ProductMatcher(items, [], [], barcodes=[])
+
+        result = matcher.match({
+            "ref_no": "REF-NOT-IN-DB", "sku_no": "SKU-100", "product_name": "다른 이름",
+        })
+
+        self.assertEqual(result["status"], "exact")
+        self.assertEqual(result["components"], "SKU-100")
+        self.assertIn("SKU 품목코드", result["reason"])
+
+    def test_unmatched_ref_falls_back_to_sku_barcode(self) -> None:
+        items = [{"item_code": "ITEM-200", "standard_name": "SKU 바코드 품목", "is_active": True}]
+        barcodes = [{"barcode": "SKU-200", "item_code": "ITEM-200", "is_active": True}]
+        matcher = ProductMatcher(items, [], [], barcodes=barcodes)
+
+        result = matcher.match({
+            "ref_no": "REF-NOT-IN-DB", "sku_no": "SKU-200", "product_name": "다른 이름",
+        })
+
+        self.assertEqual(result["status"], "exact")
+        self.assertEqual(result["components"], "ITEM-200")
+        self.assertIn("SKU SKU-200 바코드", result["reason"])
+
 
 if __name__ == "__main__":
     unittest.main()
