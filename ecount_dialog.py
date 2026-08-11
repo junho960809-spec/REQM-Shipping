@@ -9,7 +9,7 @@ from PySide6.QtWidgets import (
 
 from ecount_client import (
     EcountClient, build_location_transfer_payload, collect_transfer_items,
-    save_completed_transfer_request, transfer_request_key,
+    decimal_value, format_quantity, save_completed_transfer_request, transfer_request_key,
 )
 from ecount_user_store import delete_ecount_user, load_ecount_users, upsert_ecount_user
 from ecount_credential_store import delete_api_key, load_api_key, save_api_key
@@ -222,6 +222,14 @@ class EcountTransferDialog(QDialog):
 
         self.summary = QLabel()
         self.summary.setWordWrap(True)
+        self.total_quantity = QLabel("총 이동수량  0개")
+        self.total_quantity.setStyleSheet(
+            "background: #dff4ef; color: #17635a; border-radius: 12px; "
+            "padding: 10px 16px; font-size: 15px; font-weight: 800;"
+        )
+        preview_summary = QHBoxLayout()
+        preview_summary.addWidget(self.summary, 1)
+        preview_summary.addWidget(self.total_quantity)
         self.table = QTableWidget(0, 3)
         self.table.setHorizontalHeaderLabels(["품목코드", "품목명", "이동수량"])
         self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
@@ -237,7 +245,7 @@ class EcountTransferDialog(QDialog):
         buttons.addWidget(self.cancel_button)
         layout = QVBoxLayout(self)
         layout.addLayout(form)
-        layout.addWidget(self.summary)
+        layout.addLayout(preview_summary)
         layout.addWidget(self.table, 1)
         layout.addLayout(buttons)
         self.user_manage_button.clicked.connect(self.open_user_manager)
@@ -302,10 +310,14 @@ class EcountTransferDialog(QDialog):
 
     def refresh_preview(self) -> None:
         self.items, counts = collect_transfer_items(self.orders, "", self.catalog_items)
+        total_quantity = sum(
+            (decimal_value(row.get("quantity")) for row in self.items), decimal_value("")
+        )
         self.summary.setText(
             f"선택 주문 {counts['selected']:,}행 · 이동 포함 {counts['included']:,}행 · "
             f"확인 필요/중복 등 제외 {counts['excluded']:,}행 · 집계 품목 {len(self.items):,}개"
         )
+        self.total_quantity.setText(f"총 이동수량  {format_quantity(total_quantity)}개")
         self.table.setRowCount(len(self.items))
         for row_index, row in enumerate(self.items):
             for column, key in enumerate(("item_code", "item_name", "quantity")):

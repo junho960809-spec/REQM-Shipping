@@ -2,9 +2,24 @@ import unittest
 from unittest.mock import patch
 
 from ecount_client import EcountClient, EcountError, build_location_transfer_payload, collect_transfer_items, parse_transfer_result
+from ecount_dialog import EcountTransferDialog
 
 
 class EcountTransferTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        from PySide6.QtWidgets import QApplication
+        cls.app = QApplication.instance() or QApplication([])
+
+    def test_dialog_displays_total_aggregated_transfer_quantity(self):
+        orders = [
+            {"channel": "롯데면세점", "status": "exact", "quantity": "3", "components": "A×2 + B"},
+            {"channel": "롯데면세점", "status": "exact", "quantity": "2", "components": "A"},
+        ]
+        dialog = EcountTransferDialog(orders, [], {})
+        self.assertEqual(dialog.total_quantity.text(), "총 이동수량  11개")
+        dialog.close()
+
     def test_collects_selected_channel_and_multiplies_set_quantity(self):
         orders = [
             {"channel": "스마트스토어", "status": "exact", "quantity": "3", "components": "A×2 + B×1"},
