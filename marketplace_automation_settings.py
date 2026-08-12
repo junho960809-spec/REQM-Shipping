@@ -11,7 +11,7 @@ from pathlib import Path
 
 
 SETTINGS_PATH = Path(os.getenv("LOCALAPPDATA", str(Path.home()))) / "REQM" / "marketplace_automation.json"
-DEFAULT_29CM_PROFILE = Path(os.getenv("LOCALAPPDATA", str(Path.home()))) / "Google" / "Chrome" / "User Data" / "Profile 1"
+DEFAULT_29CM_PROFILE = Path(os.getenv("LOCALAPPDATA", str(Path.home()))) / "REQM" / "29cm-automation-profile"
 
 
 def load_29cm_profile_path() -> str:

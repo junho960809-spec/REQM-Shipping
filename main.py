@@ -71,7 +71,7 @@ from marketplace_option_store import (
     upsert_option_mapping,
 )
 from marketplace_automation_settings import load_29cm_profile_path, save_29cm_profile_path
-from marketplace_29cm_executor import execute_29cm_action, sync_29cm_catalog
+from marketplace_29cm_executor import execute_29cm_action, sync_29cm_catalog, open_29cm_login
 from marketplace_catalog_store import save_catalog_options, search_catalog_options
 
 
@@ -93,7 +93,7 @@ DEFAULT_CONFIG = {
     },
 }
 ADMIN_USER_ID = "c7937d51-1a14-47aa-987e-6254c6c79014"
-APP_VERSION = "1.0.41"
+APP_VERSION = "1.0.42"
 UPDATE_BASE_URL = "https://jcslohuraqclhryeqxoc.supabase.co/storage/v1/object/public/reqm-updates"
 UPDATE_MANIFEST_URL = f"{UPDATE_BASE_URL}/manifest.json"
 RECENT_WORK_PATH = Path(os.getenv("LOCALAPPDATA", str(Path.home()))) / "REQM" / "recent_work.json"
@@ -206,6 +206,8 @@ class MarketplaceOptionDialog(QDialog):
         open_site.clicked.connect(self.open_29cm_item)
         profile = QPushButton("REQM_CS 프로필 설정")
         profile.clicked.connect(self.configure_29cm_profile)
+        login = QPushButton("29CM 로그인 창 열기")
+        login.clicked.connect(self.open_29cm_login)
         history = QPushButton("처리 이력")
         history.clicked.connect(self.open_history)
         sold_out = QPushButton("품절 처리")
@@ -218,6 +220,7 @@ class MarketplaceOptionDialog(QDialog):
         actions.addWidget(save)
         actions.addWidget(open_site)
         actions.addWidget(profile)
+        actions.addWidget(login)
         actions.addWidget(history)
         actions.addStretch(1)
         actions.addWidget(sold_out)
@@ -414,6 +417,13 @@ class MarketplaceOptionDialog(QDialog):
             self.status.setText("REQM_CS 프로필 경로를 저장했습니다.")
         except ValueError as error:
             QMessageBox.warning(self, "29CM 프로필", str(error))
+
+    def open_29cm_login(self) -> None:
+        try:
+            open_29cm_login(load_29cm_profile_path())
+            self.status.setText("29CM 로그인 창을 열었습니다. 회사 CS 판매처 계정으로 로그인한 뒤 창을 닫고 목록 동기화를 실행해 주세요.")
+        except Exception as error:
+            QMessageBox.critical(self, "29CM 로그인 창", str(error))
 
     def open_29cm_item(self) -> None:
         item_no = self.item_no.text().strip()

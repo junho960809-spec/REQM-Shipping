@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import subprocess
 
 from playwright.sync_api import sync_playwright
 
@@ -24,20 +25,34 @@ def _open_29cm_context(profile_path: str):
     profile = Path(profile_path)
     if not profile.is_dir():
         raise RuntimeError("29CM Chrome 프로필 폴더를 찾지 못했습니다.")
+    # Chrome 136+에서는 기본 User Data 경로의 원격 자동화 연결을 제한할 수 있다.
+    # REQM 전용 폴더는 user_data_dir 자체로 열어 안전하게 자동화한다.
+    is_standard_profile = profile.parent.name == "User Data" and (profile.name == "Default" or profile.name.startswith("Profile "))
+    user_data_dir = profile.parent if is_standard_profile else profile
+    args = [f"--profile-directory={profile.name}"] if is_standard_profile else []
     playwright = sync_playwright().start()
     try:
         context = playwright.chromium.launch_persistent_context(
-            user_data_dir=str(profile.parent),
+            user_data_dir=str(user_data_dir),
             executable_path=_chrome_path(),
             headless=False,
-            args=[f"--profile-directory={profile.name}"],
+            args=args,
+            timeout=30_000,
         )
     except Exception as error:
         playwright.stop()
         raise RuntimeError(
-            "REQM_CS Chrome 프로필을 열지 못했습니다. 해당 프로필로 열린 Chrome 창을 모두 닫은 뒤 다시 실행해 주세요."
+            "Chrome 자동화 연결을 열지 못했습니다. 기본 Chrome 프로필은 자동화가 제한될 수 있으므로 "
+            "REQM 전용 29CM 자동화 프로필을 만든 뒤 로그인해 주세요."
         ) from error
     return playwright, context
+
+
+def open_29cm_login(profile_path: str) -> None:
+    """REQM 전용 Chrome 데이터 폴더에서 사용자가 29CM에 직접 로그인하도록 연다."""
+    profile = Path(profile_path)
+    profile.mkdir(parents=True, exist_ok=True)
+    subprocess.Popen([_chrome_path(), f"--user-data-dir={profile}", "https://partner-connect.29cm.co.kr/dashboard"])
 
 
 def sync_29cm_catalog(profile_path: str) -> list[dict[str, str]]:
