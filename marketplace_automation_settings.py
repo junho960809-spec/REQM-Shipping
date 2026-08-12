@@ -27,7 +27,12 @@ def load_29cm_profile_path() -> str:
 
 def save_29cm_profile_path(profile_path: str) -> None:
     path = Path(profile_path).expanduser()
-    if not path.is_dir():
+    dedicated_root = SETTINGS_PATH.parent.resolve()
+    try:
+        is_dedicated_profile = path.resolve().is_relative_to(dedicated_root)
+    except (OSError, ValueError):
+        is_dedicated_profile = False
+    if not path.is_dir() and not is_dedicated_profile:
         raise ValueError("Chrome Profile Path 폴더를 찾지 못했습니다.")
     SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
     SETTINGS_PATH.write_text(
