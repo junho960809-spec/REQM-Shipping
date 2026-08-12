@@ -6,6 +6,7 @@ import shutil
 import subprocess
 import uuid
 import urllib.request
+import webbrowser
 from datetime import datetime
 from urllib.parse import quote
 from pathlib import Path
@@ -62,6 +63,12 @@ from output_format_store import delete_output_format, load_output_formats, save_
 from direct_suggester import component_payload, components_text, suggest_direct_order
 from ecount_dialog import EcountTransferDialog
 from ecount_client import load_completed_transfer_requests
+from marketplace_option_store import (
+    create_option_action,
+    load_option_actions,
+    load_option_mappings,
+    upsert_option_mapping,
+)
 
 
 APP_DIR = Path(__file__).resolve().parent
@@ -82,12 +89,194 @@ DEFAULT_CONFIG = {
     },
 }
 ADMIN_USER_ID = "c7937d51-1a14-47aa-987e-6254c6c79014"
-APP_VERSION = "1.0.38"
+APP_VERSION = "1.0.39"
 UPDATE_BASE_URL = "https://jcslohuraqclhryeqxoc.supabase.co/storage/v1/object/public/reqm-updates"
 UPDATE_MANIFEST_URL = f"{UPDATE_BASE_URL}/manifest.json"
 RECENT_WORK_PATH = Path(os.getenv("LOCALAPPDATA", str(Path.home()))) / "REQM" / "recent_work.json"
 CALENDAR_EVENT_PATH = Path(os.getenv("LOCALAPPDATA", str(Path.home()))) / "REQM" / "calendar_events.json"
 WIDGET_SETTINGS_PATH = Path(os.getenv("LOCALAPPDATA", str(Path.home()))) / "REQM" / "widget_settings.json"
+
+
+class MarketplaceActionHistoryDialog(QDialog):
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("상품 관리 처리 이력")
+        self.resize(1000, 440)
+        layout = QVBoxLayout(self)
+        title = QLabel("품절 처리 · 판매 재개 이력")
+        title.setObjectName("sectionTitle")
+        layout.addWidget(title)
+        self.table = QTableWidget(0, 9)
+        self.table.setHorizontalHeaderLabels([
+            "요청 시각", "요청 계정", "처리 계정", "판매처", "상품번호", "옵션번호",
+            "내부 품목", "작업", "상태",
+        ])
+        self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        layout.addWidget(self.table)
+        close_button = QPushButton("닫기")
+        close_button.clicked.connect(self.accept)
+        layout.addWidget(close_button, 0, Qt.AlignmentFlag.AlignRight)
+        self.refresh()
+
+    def refresh(self) -> None:
+        rows = list(reversed(load_option_actions()))
+        self.table.setRowCount(len(rows))
+        for row_index, row in enumerate(rows):
+            values = [
+                row.get("requested_at", ""), row.get("requested_by", ""),
+                row.get("processed_by", "") or "처리 대기", row.get("marketplace", ""),
+                row.get("marketplace_item_no", ""), row.get("marketplace_option_no", ""),
+                row.get("internal_item_code", ""),
+                "품절 처리" if row.get("action") == "SOLD_OUT" else "판매 재개",
+                row.get("status", ""),
+            ]
+            for column, value in enumerate(values):
+                self.table.setItem(row_index, column, QTableWidgetItem(str(value)))
+
+
+class MarketplaceOptionDialog(QDialog):
+    """판매처 옵션 매핑과 전용 자동화 PC용 요청을 관리한다."""
+
+    def __init__(self, requested_by: str = "", parent=None) -> None:
+        super().__init__(parent)
+        self.requested_by = requested_by.strip()
+        self.setWindowTitle("상품 관리")
+        self.resize(960, 620)
+        layout = QVBoxLayout(self)
+        title = QLabel("상품 관리")
+        title.setObjectName("sectionTitle")
+        hint = QLabel(
+            "로그인 세션은 전용 자동화 PC에만 보관합니다. 이 화면에서는 상품·옵션 매핑과 "
+            "품절/판매 재개 요청을 관리합니다."
+        )
+        hint.setWordWrap(True)
+        layout.addWidget(title)
+        layout.addWidget(hint)
+
+        form = QFormLayout()
+        self.marketplace = QComboBox()
+        self.marketplace.addItem("29CM")
+        self.internal_item = QLineEdit()
+        self.internal_option = QLineEdit()
+        self.item_no = QLineEdit()
+        self.option_no = QLineEdit()
+        self.option_name = QLineEdit()
+        form.addRow("판매처", self.marketplace)
+        form.addRow("내부 품목코드", self.internal_item)
+        form.addRow("내부 옵션명", self.internal_option)
+        form.addRow("판매처 상품번호", self.item_no)
+        form.addRow("판매처 옵션번호", self.option_no)
+        form.addRow("판매처 옵션명", self.option_name)
+        layout.addLayout(form)
+
+        actions = QHBoxLayout()
+        save = QPushButton("매핑 저장")
+        save.setObjectName("primaryButton")
+        save.clicked.connect(self.save_mapping)
+        open_site = QPushButton("29CM 상품 열기")
+        open_site.clicked.connect(self.open_29cm_item)
+        history = QPushButton("처리 이력")
+        history.clicked.connect(self.open_history)
+        sold_out = QPushButton("품절 처리")
+        sold_out.clicked.connect(lambda: self.request_action("SOLD_OUT"))
+        restock = QPushButton("판매 재개")
+        restock.clicked.connect(lambda: self.request_action("RESTOCK"))
+        actions.addWidget(save)
+        actions.addWidget(open_site)
+        actions.addWidget(history)
+        actions.addStretch(1)
+        actions.addWidget(sold_out)
+        actions.addWidget(restock)
+        layout.addLayout(actions)
+
+        self.table = QTableWidget(0, 6)
+        self.table.setHorizontalHeaderLabels(["판매처", "내부 품목", "내부 옵션", "상품번호", "옵션번호", "옵션명"])
+        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.table.itemSelectionChanged.connect(self.load_selected_mapping)
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        layout.addWidget(self.table, 1)
+        self.status = QLabel()
+        self.status.setWordWrap(True)
+        layout.addWidget(self.status)
+        self.refresh()
+
+    def current_mapping(self) -> dict[str, str]:
+        return {
+            "marketplace": self.marketplace.currentText(),
+            "internal_item_code": self.internal_item.text(),
+            "internal_option_name": self.internal_option.text(),
+            "marketplace_item_no": self.item_no.text(),
+            "marketplace_option_no": self.option_no.text(),
+            "marketplace_option_name": self.option_name.text(),
+        }
+
+    def refresh(self) -> None:
+        rows = load_option_mappings()
+        self.table.setRowCount(len(rows))
+        for row_index, row in enumerate(rows):
+            values = [
+                row.get("marketplace", ""), row.get("internal_item_code", ""),
+                row.get("internal_option_name", ""), row.get("marketplace_item_no", ""),
+                row.get("marketplace_option_no", ""), row.get("marketplace_option_name", ""),
+            ]
+            for column, value in enumerate(values):
+                self.table.setItem(row_index, column, QTableWidgetItem(str(value)))
+        pending = sum(1 for row in load_option_actions() if row.get("status") == "PENDING")
+        self.status.setText(f"저장된 옵션 매핑 {len(rows)}개 · 전용 자동화 PC 처리 대기 요청 {pending}건")
+
+    def load_selected_mapping(self) -> None:
+        row = self.table.currentRow()
+        if row < 0:
+            return
+        values = [self.table.item(row, column).text() if self.table.item(row, column) else "" for column in range(6)]
+        self.marketplace.setCurrentText(values[0])
+        self.internal_item.setText(values[1])
+        self.internal_option.setText(values[2])
+        self.item_no.setText(values[3])
+        self.option_no.setText(values[4])
+        self.option_name.setText(values[5])
+
+    def save_mapping(self) -> None:
+        try:
+            upsert_option_mapping(self.current_mapping())
+        except ValueError as error:
+            QMessageBox.warning(self, "매핑 저장", str(error))
+            return
+        self.refresh()
+        self.status.setText("매핑을 저장했습니다. 실제 처리 전에는 전용 자동화 PC에서 로그인 상태를 확인합니다.")
+
+    def request_action(self, action: str) -> None:
+        label = "품절 처리" if action == "SOLD_OUT" else "판매 재개"
+        answer = QMessageBox.question(
+            self,
+            label,
+            f"29CM 옵션 {self.option_no.text().strip() or '(미입력)'}에 {label} 요청을 등록합니다.\n"
+            "전용 자동화 PC가 처리하기 전에는 판매 상태가 변경되지 않습니다.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            create_option_action(self.current_mapping(), action, self.requested_by)
+        except ValueError as error:
+            QMessageBox.warning(self, label, str(error))
+            return
+        self.refresh()
+        self.status.setText(f"{label} 요청을 등록했습니다. 처리 이력에서 요청 계정과 상태를 확인할 수 있습니다.")
+
+    def open_history(self) -> None:
+        MarketplaceActionHistoryDialog(self).exec()
+
+    def open_29cm_item(self) -> None:
+        item_no = self.item_no.text().strip()
+        if not item_no:
+            QMessageBox.warning(self, "29CM 상품 열기", "판매처 상품번호를 입력해 주세요.")
+            return
+        webbrowser.open(f"https://partner-item.29cm.co.kr/{quote(item_no)}?from=option-stock")
 
 
 def load_recent_work() -> list[dict]:
@@ -2106,13 +2295,17 @@ class MainWindow(QMainWindow):
         shipment.clicked.connect(self.show_shipping_workspace)
         duty_free = self.dashboard_card("🏬  면세점 출고", "PDF·Excel 품목 인식 · 저장 출고지 자동 적용")
         duty_free.clicked.connect(self.open_duty_free_shipping)
+        marketplace_options = self.dashboard_card("🛒  상품 관리 팝업", "29CM 옵션 매핑 · 품절/판매 재개 요청 관리")
+        marketplace_options.clicked.connect(self.open_marketplace_option_manager)
         shipment.setMaximumWidth(430)
         duty_free.setMaximumWidth(430)
+        marketplace_options.setMaximumWidth(430)
         cards.addWidget(shipment, 0, 0)
         cards.addWidget(duty_free, 0, 1)
+        cards.addWidget(marketplace_options, 1, 0)
         cards.setColumnStretch(0, 1)
         cards.setColumnStretch(1, 1)
-        self.dashboard_cards = [shipment, duty_free]
+        self.dashboard_cards = [shipment, duty_free, marketplace_options]
         layout.addLayout(cards)
 
         self.calendar_widget = CalendarDropWidget()
@@ -2207,6 +2400,9 @@ class MainWindow(QMainWindow):
             is_admin=self.is_admin,
         )
         dialog.exec()
+
+    def open_marketplace_option_manager(self) -> None:
+        MarketplaceOptionDialog(self.email.text(), self).exec()
 
     def open_dashboard_warehouse_transfer(self) -> None:
         if not self.current_orders:
