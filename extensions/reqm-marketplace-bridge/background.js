@@ -5,12 +5,10 @@ async function bridge(path, options = {}) {
 }
 
 async function sync29cm() {
-  let tabs = await chrome.tabs.query({url: "https://partner-item.29cm.co.kr/option-stock*"});
-  if (!tabs.length) {
-    const tab = await chrome.tabs.create({url: "https://partner-item.29cm.co.kr/option-stock", active: false});
-    await new Promise(resolve => setTimeout(resolve, 2500));
-    tabs = [tab];
-  }
+  const tabs = await chrome.tabs.query({url: "https://partner-item.29cm.co.kr/option-stock*"});
+  // SSO 로그인 화면이나 자동 생성 탭에는 주입하지 않는다. REQM_CS의
+  // 로그인된 옵션 재고 관리 탭이 열려 있을 때만 목록을 읽는다.
+  if (!tabs.length) return;
   // 확장을 다시 로드해도 기존 탭의 content script는 자동 교체되지 않는다.
   // 매 동기화 시 최신 파일을 주입하고 전역 파서를 직접 호출한다.
   await chrome.scripting.executeScript({target: {tabId: tabs[0].id}, files: ["content-29cm.js"]});
