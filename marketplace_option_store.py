@@ -59,7 +59,7 @@ def load_option_actions() -> list[dict[str, str]]:
     return _load_rows(ACTION_LOG_PATH)
 
 
-def create_option_action(mapping: dict[str, str], action: str, requested_by: str = "") -> dict[str, str]:
+def create_option_action(mapping: dict[str, str], action: str, requested_by: str = "", target_stock: str = "") -> dict[str, str]:
     if action not in {"SOLD_OUT", "RESTOCK"}:
         raise ValueError("지원하지 않는 옵션 처리입니다.")
     event = {
@@ -74,6 +74,7 @@ def create_option_action(mapping: dict[str, str], action: str, requested_by: str
         "status": "PENDING",
         "requested_by": requested_by.strip(),
         "processed_by": "",
+        "target_stock": str(target_stock or "0").strip(),
     }
     if not all(event[key] for key in ("marketplace", "marketplace_item_no", "marketplace_option_no")):
         raise ValueError("처리할 판매처 상품번호와 옵션번호가 필요합니다.")
@@ -83,7 +84,9 @@ def create_option_action(mapping: dict[str, str], action: str, requested_by: str
     return event
 
 
-def complete_option_action(action_id: str, status: str, processed_by: str, error_message: str = "") -> dict[str, str]:
+def complete_option_action(
+    action_id: str, status: str, processed_by: str, error_message: str = "", details: dict[str, str] | None = None,
+) -> dict[str, str]:
     """전용 자동화 PC가 판매처 실행 결과를 기록한다."""
     if status not in {"COMPLETED", "FAILED"}:
         raise ValueError("처리 결과는 COMPLETED 또는 FAILED여야 합니다.")
@@ -94,6 +97,7 @@ def complete_option_action(action_id: str, status: str, processed_by: str, error
             row["processed_by"] = processed_by.strip()
             row["processed_at"] = datetime.now().isoformat(timespec="seconds")
             row["error_message"] = error_message.strip()
+            row.update({key: str(value) for key, value in (details or {}).items()})
             _save_rows(ACTION_LOG_PATH, rows)
             return dict(row)
     raise ValueError("처리 이력을 찾지 못했습니다.")

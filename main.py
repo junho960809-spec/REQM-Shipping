@@ -64,11 +64,14 @@ from direct_suggester import component_payload, components_text, suggest_direct_
 from ecount_dialog import EcountTransferDialog
 from ecount_client import load_completed_transfer_requests
 from marketplace_option_store import (
+    complete_option_action,
     create_option_action,
     load_option_actions,
     load_option_mappings,
     upsert_option_mapping,
 )
+from marketplace_automation_settings import load_29cm_profile_path, save_29cm_profile_path
+from marketplace_29cm_executor import execute_29cm_action
 
 
 APP_DIR = Path(__file__).resolve().parent
@@ -89,7 +92,7 @@ DEFAULT_CONFIG = {
     },
 }
 ADMIN_USER_ID = "c7937d51-1a14-47aa-987e-6254c6c79014"
-APP_VERSION = "1.0.39"
+APP_VERSION = "1.0.40"
 UPDATE_BASE_URL = "https://jcslohuraqclhryeqxoc.supabase.co/storage/v1/object/public/reqm-updates"
 UPDATE_MANIFEST_URL = f"{UPDATE_BASE_URL}/manifest.json"
 RECENT_WORK_PATH = Path(os.getenv("LOCALAPPDATA", str(Path.home()))) / "REQM" / "recent_work.json"
@@ -163,12 +166,15 @@ class MarketplaceOptionDialog(QDialog):
         self.item_no = QLineEdit()
         self.option_no = QLineEdit()
         self.option_name = QLineEdit()
+        self.restock_stock = QLineEdit("1")
+        self.restock_stock.setPlaceholderText("판매 재개 재고 수량")
         form.addRow("판매처", self.marketplace)
         form.addRow("내부 품목코드", self.internal_item)
         form.addRow("내부 옵션명", self.internal_option)
         form.addRow("판매처 상품번호", self.item_no)
         form.addRow("판매처 옵션번호", self.option_no)
         form.addRow("판매처 옵션명", self.option_name)
+        form.addRow("판매 재개 재고", self.restock_stock)
         layout.addLayout(form)
 
         actions = QHBoxLayout()
@@ -177,18 +183,25 @@ class MarketplaceOptionDialog(QDialog):
         save.clicked.connect(self.save_mapping)
         open_site = QPushButton("29CM 상품 열기")
         open_site.clicked.connect(self.open_29cm_item)
+        profile = QPushButton("REQM_CS 프로필 설정")
+        profile.clicked.connect(self.configure_29cm_profile)
         history = QPushButton("처리 이력")
         history.clicked.connect(self.open_history)
         sold_out = QPushButton("품절 처리")
         sold_out.clicked.connect(lambda: self.request_action("SOLD_OUT"))
         restock = QPushButton("판매 재개")
         restock.clicked.connect(lambda: self.request_action("RESTOCK"))
+        execute = QPushButton("대기 요청 실행")
+        execute.setObjectName("primaryButton")
+        execute.clicked.connect(self.execute_pending_action)
         actions.addWidget(save)
         actions.addWidget(open_site)
+        actions.addWidget(profile)
         actions.addWidget(history)
         actions.addStretch(1)
         actions.addWidget(sold_out)
         actions.addWidget(restock)
+        actions.addWidget(execute)
         layout.addLayout(actions)
 
         self.table = QTableWidget(0, 6)
@@ -261,15 +274,71 @@ class MarketplaceOptionDialog(QDialog):
         if answer != QMessageBox.StandardButton.Yes:
             return
         try:
-            create_option_action(self.current_mapping(), action, self.requested_by)
+            target_stock = "0" if action == "SOLD_OUT" else self.restock_stock.text().strip()
+            if action == "RESTOCK" and (not target_stock.isdigit() or int(target_stock) <= 0):
+                raise ValueError("판매 재개 재고 수량은 1개 이상 입력해 주세요.")
+            create_option_action(self.current_mapping(), action, self.requested_by, target_stock)
         except ValueError as error:
             QMessageBox.warning(self, label, str(error))
             return
         self.refresh()
         self.status.setText(f"{label} 요청을 등록했습니다. 처리 이력에서 요청 계정과 상태를 확인할 수 있습니다.")
 
+    def execute_pending_action(self) -> None:
+        mapping = self.current_mapping()
+        pending = next(
+            (
+                row for row in reversed(load_option_actions())
+                if row.get("status") == "PENDING"
+                and row.get("marketplace") == mapping["marketplace"]
+                and row.get("marketplace_item_no") == mapping["marketplace_item_no"]
+                and row.get("marketplace_option_no") == mapping["marketplace_option_no"]
+            ),
+            None,
+        )
+        if pending is None:
+            QMessageBox.information(self, "대기 요청 실행", "이 옵션의 대기 중인 품절 또는 판매 재개 요청이 없습니다.")
+            return
+        label = "품절 처리" if pending.get("action") == "SOLD_OUT" else f"판매 재개 ({pending.get('target_stock')}개)"
+        answer = QMessageBox.question(
+            self,
+            "29CM 실제 실행 확인",
+            f"REQM_CS 프로필로 29CM 옵션 {pending.get('marketplace_option_no')}의 {label}를 실제 실행합니다.\n"
+            "판매 상태가 변경되며, 실행 후 재고와 상태를 다시 검증합니다.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            result = execute_29cm_action(pending, load_29cm_profile_path())
+            complete_option_action(pending["action_id"], "COMPLETED", self.requested_by, details=result)
+            self.status.setText(
+                f"29CM {label} 완료 · 이전 {result['previous_stock']}개 → {result['target_stock']}개 · "
+                f"상태 {result['verified_status']}"
+            )
+        except Exception as error:
+            complete_option_action(pending["action_id"], "FAILED", self.requested_by, str(error))
+            QMessageBox.critical(self, "29CM 실행 실패", str(error))
+        self.refresh()
+
     def open_history(self) -> None:
         MarketplaceActionHistoryDialog(self).exec()
+
+    def configure_29cm_profile(self) -> None:
+        profile_path, accepted = QInputDialog.getText(
+            self,
+            "29CM REQM_CS 프로필 경로",
+            "Chrome Profile Path",
+            text=load_29cm_profile_path(),
+        )
+        if not accepted:
+            return
+        try:
+            save_29cm_profile_path(profile_path)
+            self.status.setText("REQM_CS 프로필 경로를 저장했습니다.")
+        except ValueError as error:
+            QMessageBox.warning(self, "29CM 프로필", str(error))
 
     def open_29cm_item(self) -> None:
         item_no = self.item_no.text().strip()
