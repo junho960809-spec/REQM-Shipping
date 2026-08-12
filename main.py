@@ -11,7 +11,7 @@ from datetime import datetime
 from urllib.parse import quote
 from pathlib import Path
 
-from PySide6.QtCore import QDate, Qt, QThread, Signal
+from PySide6.QtCore import QDate, Qt, QThread, Signal, QTimer
 from PySide6.QtGui import QColor, QPainter, QTextCharFormat
 from PySide6.QtWidgets import (
     QApplication,
@@ -307,6 +307,8 @@ class MarketplaceOptionDialog(QDialog):
         if answer != QMessageBox.StandardButton.Yes:
             return
         marketplace_bridge.request_29cm_sync()
+        self.refresh_catalog()
+        QTimer.singleShot(8_000, self.refresh_catalog)
         self.status.setText(
             "REQM Chrome 확장 프로그램에 29CM 목록 동기화를 요청했습니다. "
             "REQM_CS Chrome에서 확장 프로그램이 설치·활성화되어 있으면 잠시 후 목록에 표시됩니다."
