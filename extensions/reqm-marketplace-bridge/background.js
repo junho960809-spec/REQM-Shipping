@@ -11,8 +11,15 @@ async function sync29cm() {
     await new Promise(resolve => setTimeout(resolve, 2500));
     tabs = [tab];
   }
-  const result = await chrome.tabs.sendMessage(tabs[0].id, {type: "REQM_READ_29CM_CATALOG"}).catch(() => null);
-  if (result?.rows?.length) await bridge("/api/29cm/catalog", {method: "POST", body: JSON.stringify({rows: result.rows})});
+  // 확장을 다시 로드해도 기존 탭의 content script는 자동 교체되지 않는다.
+  // 매 동기화 시 최신 파일을 주입하고 전역 파서를 직접 호출한다.
+  await chrome.scripting.executeScript({target: {tabId: tabs[0].id}, files: ["content-29cm.js"]});
+  const result = await chrome.scripting.executeScript({
+    target: {tabId: tabs[0].id},
+    func: () => globalThis.__REQM_READ_29CM_CATALOG?.() || []
+  }).catch(() => []);
+  const rows = result[0]?.result || [];
+  if (rows.length) await bridge("/api/29cm/catalog", {method: "POST", body: JSON.stringify({rows})});
 }
 
 chrome.action.onClicked.addListener(sync29cm);
