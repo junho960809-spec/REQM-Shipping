@@ -93,12 +93,17 @@ DEFAULT_CONFIG = {
     },
 }
 ADMIN_USER_ID = "c7937d51-1a14-47aa-987e-6254c6c79014"
-APP_VERSION = "1.0.48"
+APP_VERSION = "1.0.49"
 UPDATE_BASE_URL = "https://jcslohuraqclhryeqxoc.supabase.co/storage/v1/object/public/reqm-updates"
 UPDATE_MANIFEST_URL = f"{UPDATE_BASE_URL}/manifest.json"
 RECENT_WORK_PATH = Path(os.getenv("LOCALAPPDATA", str(Path.home()))) / "REQM" / "recent_work.json"
 CALENDAR_EVENT_PATH = Path(os.getenv("LOCALAPPDATA", str(Path.home()))) / "REQM" / "calendar_events.json"
 WIDGET_SETTINGS_PATH = Path(os.getenv("LOCALAPPDATA", str(Path.home()))) / "REQM" / "widget_settings.json"
+
+MARKETPLACES = [
+    "29CM", "현대홈쇼핑", "이지웰", "베네카페", "현대카드 M포인트몰", "베네피아", "삼몰",
+    "삼성카드", "무신사", "한섬", "SSF SHOP", "W컨셉", "컬리", "Shopby", "핫트랙스",
+]
 
 
 class MarketplaceActionHistoryDialog(QDialog):
@@ -151,23 +156,29 @@ class MarketplaceOptionDialog(QDialog):
         layout = QVBoxLayout(self)
         title = QLabel("상품 관리")
         title.setObjectName("sectionTitle")
+        profile = QPushButton("REQM_CS 프로필 설정")
+        profile.clicked.connect(self.configure_29cm_profile)
+        header = QHBoxLayout()
+        header.addWidget(title)
+        header.addStretch(1)
+        header.addWidget(profile)
         hint = QLabel(
-            "로그인 세션은 전용 자동화 PC에만 보관합니다. 이 화면에서는 상품·옵션 매핑과 "
-            "품절/판매 재개 요청을 관리합니다."
+            "판매처를 선택해 상품·옵션을 동기화하고, 선택한 옵션을 품절 또는 판매 재개합니다. "
+            "로그인 세션은 REQM_CS Chrome에만 보관됩니다."
         )
         hint.setWordWrap(True)
-        layout.addWidget(title)
+        layout.addLayout(header)
         layout.addWidget(hint)
 
         catalog_actions = QHBoxLayout()
         self.catalog_search = QLineEdit()
-        self.catalog_search.setPlaceholderText("29CM 상품명·옵션명·상품번호로 검색")
+        self.catalog_search.setPlaceholderText("상품명·옵션명·상품번호로 검색")
         self.catalog_search.textChanged.connect(self.refresh_catalog)
-        sync_catalog = QPushButton("29CM 목록 동기화")
-        sync_catalog.setObjectName("primaryButton")
-        sync_catalog.clicked.connect(self.sync_catalog)
+        self.sync_catalog_button = QPushButton("목록 동기화")
+        self.sync_catalog_button.setObjectName("primaryButton")
+        self.sync_catalog_button.clicked.connect(self.sync_catalog)
         catalog_actions.addWidget(self.catalog_search, 1)
-        catalog_actions.addWidget(sync_catalog)
+        catalog_actions.addWidget(self.sync_catalog_button)
         layout.addLayout(catalog_actions)
 
         self.catalog_table = QTableWidget(0, 6)
@@ -181,7 +192,8 @@ class MarketplaceOptionDialog(QDialog):
 
         form = QFormLayout()
         self.marketplace = QComboBox()
-        self.marketplace.addItem("29CM")
+        self.marketplace.addItems(MARKETPLACES)
+        self.marketplace.currentTextChanged.connect(self.on_marketplace_changed)
         self.internal_item = QLineEdit()
         self.internal_option = QLineEdit()
         self.item_no = QLineEdit()
@@ -202,30 +214,17 @@ class MarketplaceOptionDialog(QDialog):
         save = QPushButton("매핑 저장")
         save.setObjectName("primaryButton")
         save.clicked.connect(self.save_mapping)
-        open_site = QPushButton("29CM 상품 열기")
-        open_site.clicked.connect(self.open_29cm_item)
-        profile = QPushButton("REQM_CS 프로필 설정")
-        profile.clicked.connect(self.configure_29cm_profile)
-        login = QPushButton("29CM 로그인 창 열기")
-        login.clicked.connect(self.open_29cm_login)
         history = QPushButton("처리 이력")
         history.clicked.connect(self.open_history)
         sold_out = QPushButton("품절 처리")
         sold_out.clicked.connect(lambda: self.request_action("SOLD_OUT"))
         restock = QPushButton("판매 재개")
         restock.clicked.connect(lambda: self.request_action("RESTOCK"))
-        execute = QPushButton("대기 요청 실행")
-        execute.setObjectName("primaryButton")
-        execute.clicked.connect(self.execute_pending_action)
         actions.addWidget(save)
-        actions.addWidget(open_site)
-        actions.addWidget(profile)
-        actions.addWidget(login)
         actions.addWidget(history)
         actions.addStretch(1)
         actions.addWidget(sold_out)
         actions.addWidget(restock)
-        actions.addWidget(execute)
         layout.addLayout(actions)
 
         self.table = QTableWidget(0, 6)
@@ -244,6 +243,7 @@ class MarketplaceOptionDialog(QDialog):
         self.catalog_refresh_timer.setInterval(2_000)
         self.catalog_refresh_timer.timeout.connect(self.refresh_catalog)
         self.catalog_refresh_timer.start()
+        self.on_marketplace_changed(self.marketplace.currentText())
         self.refresh()
 
     def current_mapping(self) -> dict[str, str]:
@@ -285,6 +285,11 @@ class MarketplaceOptionDialog(QDialog):
             for column, value in enumerate(values):
                 self.catalog_table.setItem(row_index, column, QTableWidgetItem(str(value)))
 
+    def on_marketplace_changed(self, marketplace: str) -> None:
+        self.sync_catalog_button.setText(f"{marketplace} 목록 동기화")
+        self.catalog_search.setPlaceholderText(f"{marketplace} 상품명·옵션명·상품번호로 검색")
+        self.refresh_catalog()
+
     def load_selected_catalog_option(self) -> None:
         row = self.catalog_table.currentRow()
         if row < 0:
@@ -304,13 +309,19 @@ class MarketplaceOptionDialog(QDialog):
     def sync_catalog(self) -> None:
         answer = QMessageBox.question(
             self,
-            "29CM 목록 동기화",
-            "REQM_CS 프로필로 29CM 옵션 재고 화면을 열어 현재 조회 가능한 목록을 가져옵니다.\n"
-            "동기화 중에는 해당 REQM_CS Chrome 창을 모두 닫아야 합니다. 계속할까요?",
+            f"{self.marketplace.currentText()} 목록 동기화",
+            f"{self.marketplace.currentText()}의 현재 상품·옵션 목록을 가져옵니다. 계속할까요?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
         if answer != QMessageBox.StandardButton.Yes:
+            return
+        if self.marketplace.currentText() != "29CM":
+            QMessageBox.information(
+                self, "판매처 연동 준비 중",
+                f"{self.marketplace.currentText()}은 목록에 등록되었습니다.\n"
+                "상품/옵션 화면을 확인한 뒤 동기화와 품절 처리를 순차적으로 활성화합니다.",
+            )
             return
         marketplace_bridge.request_29cm_sync()
         self.refresh_catalog()
@@ -342,12 +353,19 @@ class MarketplaceOptionDialog(QDialog):
         self.status.setText("매핑을 저장했습니다. 실제 처리 전에는 전용 자동화 PC에서 로그인 상태를 확인합니다.")
 
     def request_action(self, action: str) -> None:
+        marketplace = self.marketplace.currentText()
         label = "품절 처리" if action == "SOLD_OUT" else "판매 재개"
+        if marketplace != "29CM":
+            QMessageBox.information(
+                self, "판매처 연동 준비 중",
+                f"{marketplace}은 아직 실제 {label} 연동 전입니다.",
+            )
+            return
         answer = QMessageBox.question(
             self,
             label,
-            f"29CM 옵션 {self.option_no.text().strip() or '(미입력)'}에 {label} 요청을 등록합니다.\n"
-            "전용 자동화 PC가 처리하기 전에는 판매 상태가 변경되지 않습니다.",
+            f"29CM 옵션 {self.option_no.text().strip() or '(미입력)'}을 {label}합니다.\n"
+            "REQM_CS Chrome에서 실제 판매 상태가 변경됩니다. 계속할까요?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
@@ -357,48 +375,16 @@ class MarketplaceOptionDialog(QDialog):
             target_stock = "0" if action == "SOLD_OUT" else self.restock_stock.text().strip()
             if action == "RESTOCK" and (not target_stock.isdigit() or int(target_stock) <= 0):
                 raise ValueError("판매 재개 재고 수량은 1개 이상 입력해 주세요.")
-            create_option_action(self.current_mapping(), action, self.requested_by, target_stock)
+            created = create_option_action(self.current_mapping(), action, self.requested_by, target_stock)
+            marketplace_bridge.queue_29cm_action(created)
         except ValueError as error:
             QMessageBox.warning(self, label, str(error))
             return
         self.refresh()
-        self.status.setText(f"{label} 요청을 등록했습니다. 처리 이력에서 요청 계정과 상태를 확인할 수 있습니다.")
-
-    def execute_pending_action(self) -> None:
-        mapping = self.current_mapping()
-        pending = next(
-            (
-                row for row in reversed(load_option_actions())
-                if row.get("status") == "PENDING"
-                and row.get("marketplace") == mapping["marketplace"]
-                and row.get("marketplace_item_no") == mapping["marketplace_item_no"]
-                and row.get("marketplace_option_no") == mapping["marketplace_option_no"]
-            ),
-            None,
+        self.status.setText(
+            f"29CM {label}를 REQM_CS Chrome 확장 프로그램에 전달했습니다. "
+            "완료되면 목록의 재고와 상태가 자동 갱신됩니다."
         )
-        if pending is None:
-            QMessageBox.information(self, "대기 요청 실행", "이 옵션의 대기 중인 품절 또는 판매 재개 요청이 없습니다.")
-            return
-        label = "품절 처리" if pending.get("action") == "SOLD_OUT" else f"판매 재개 ({pending.get('target_stock')}개)"
-        answer = QMessageBox.question(
-            self,
-            "29CM 실제 실행 확인",
-            f"REQM_CS 프로필로 29CM 옵션 {pending.get('marketplace_option_no')}의 {label}를 실제 실행합니다.\n"
-            "판매 상태가 변경되며, 실행 후 재고와 상태를 다시 검증합니다.",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
-        )
-        if answer != QMessageBox.StandardButton.Yes:
-            return
-        try:
-            marketplace_bridge.queue_29cm_action(pending)
-            self.status.setText(
-                f"29CM {label} 실행을 REQM_CS Chrome 확장 프로그램에 전달했습니다. "
-                "처리 이력에서 완료 여부를 확인해 주세요."
-            )
-        except Exception as error:
-            QMessageBox.critical(self, "29CM 실행 실패", str(error))
-        self.refresh()
 
     def open_history(self) -> None:
         MarketplaceActionHistoryDialog(self).exec()
