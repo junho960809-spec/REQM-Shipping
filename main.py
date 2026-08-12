@@ -289,10 +289,11 @@ class MarketplaceOptionDialog(QDialog):
         self.item_no.setText(item_no)
         self.option_no.setText(option_no)
         self.option_name.setText(option_name)
-        if not self.internal_item.text().strip():
-            self.internal_item.setText(item_name)
-        if not self.internal_option.text().strip():
-            self.internal_option.setText(option_name)
+        # 목록에서 다른 옵션을 선택하면 이전 선택의 내부 품목/옵션 값이 남지
+        # 않도록 현재 판매처 상품명·옵션명으로 즉시 갱신한다. 별도 내부 매핑은
+        # 선택 후 사용자가 수정하고 '매핑 저장'으로 확정한다.
+        self.internal_item.setText(item_name)
+        self.internal_option.setText(option_name)
         self.status.setText(f"선택됨 · {item_name} / {option_name} (상품번호 {item_no}, 옵션번호 {option_no})")
 
     def sync_catalog(self) -> None:
