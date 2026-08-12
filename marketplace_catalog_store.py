@@ -51,6 +51,34 @@ def save_catalog_options(marketplace: str, options: list[dict[str, str]]) -> lis
     return normalized
 
 
+def update_catalog_option(
+    marketplace: str, item_no: str, option_no: str, *, stock: str, sale_status: str,
+) -> bool:
+    """판매처 실행이 완료된 옵션의 화면 캐시를 즉시 갱신한다."""
+    try:
+        rows = json.loads(CATALOG_PATH.read_text(encoding="utf-8"))
+        if not isinstance(rows, list):
+            return False
+    except (OSError, ValueError, TypeError):
+        return False
+
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        if (
+            str(row.get("marketplace", "")).strip() == marketplace
+            and str(row.get("marketplace_item_no", "")).strip() == str(item_no).strip()
+            and str(row.get("marketplace_option_no", "")).strip() == str(option_no).strip()
+        ):
+            row["stock"] = str(stock).strip()
+            row["sale_status"] = str(sale_status).strip()
+            row["synced_at"] = datetime.now().isoformat(timespec="seconds")
+            CATALOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+            CATALOG_PATH.write_text(json.dumps(rows, ensure_ascii=False, indent=2), encoding="utf-8")
+            return True
+    return False
+
+
 def search_catalog_options(query: str, marketplace: str = "29CM") -> list[dict[str, str]]:
     needle = query.strip().casefold()
     rows = load_catalog_options(marketplace)

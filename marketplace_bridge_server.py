@@ -6,7 +6,7 @@ import json
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from marketplace_catalog_store import save_catalog_options
+from marketplace_catalog_store import save_catalog_options, update_catalog_option
 from marketplace_option_store import complete_option_action
 
 
@@ -63,10 +63,19 @@ class MarketplaceBridge:
                         try:
                             length = int(self.headers.get("Content-Length", "0"))
                             payload = json.loads(self.rfile.read(length).decode("utf-8"))
-                            complete_option_action(
+                            completed = complete_option_action(
                                 str(payload["action_id"]), str(payload["status"]), "REQM_CS Chrome 확장",
                                 str(payload.get("error_message", "")), dict(payload.get("details", {})),
                             )
+                            if completed["status"] == "COMPLETED" and completed.get("marketplace") == "29CM":
+                                is_sold_out = completed.get("action") == "SOLD_OUT"
+                                update_catalog_option(
+                                    "29CM",
+                                    completed.get("marketplace_item_no", ""),
+                                    completed.get("marketplace_option_no", ""),
+                                    stock="0" if is_sold_out else completed.get("target_stock", "1"),
+                                    sale_status="품절" if is_sold_out else "판매중",
+                                )
                             self._reply(200, {"ok": True})
                         except (KeyError, ValueError, TypeError, UnicodeDecodeError, json.JSONDecodeError):
                             self._reply(400, {"error": "invalid_action_result"})

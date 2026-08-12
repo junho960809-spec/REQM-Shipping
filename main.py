@@ -93,7 +93,7 @@ DEFAULT_CONFIG = {
     },
 }
 ADMIN_USER_ID = "c7937d51-1a14-47aa-987e-6254c6c79014"
-APP_VERSION = "1.0.47"
+APP_VERSION = "1.0.48"
 UPDATE_BASE_URL = "https://jcslohuraqclhryeqxoc.supabase.co/storage/v1/object/public/reqm-updates"
 UPDATE_MANIFEST_URL = f"{UPDATE_BASE_URL}/manifest.json"
 RECENT_WORK_PATH = Path(os.getenv("LOCALAPPDATA", str(Path.home()))) / "REQM" / "recent_work.json"
@@ -238,6 +238,12 @@ class MarketplaceOptionDialog(QDialog):
         self.status = QLabel()
         self.status.setWordWrap(True)
         layout.addWidget(self.status)
+        # 확장 프로그램이 비동기로 완료 결과를 보내면, 열린 목록도 즉시 같은
+        # 로컬 캐시를 다시 읽어 상태·재고를 반영한다.
+        self.catalog_refresh_timer = QTimer(self)
+        self.catalog_refresh_timer.setInterval(2_000)
+        self.catalog_refresh_timer.timeout.connect(self.refresh_catalog)
+        self.catalog_refresh_timer.start()
         self.refresh()
 
     def current_mapping(self) -> dict[str, str]:
