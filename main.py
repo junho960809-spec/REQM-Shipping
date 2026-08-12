@@ -73,6 +73,7 @@ from marketplace_option_store import (
 from marketplace_automation_settings import load_29cm_profile_path, save_29cm_profile_path
 from marketplace_29cm_executor import execute_29cm_action, sync_29cm_catalog, open_29cm_login
 from marketplace_catalog_store import save_catalog_options, search_catalog_options
+from marketplace_bridge_server import bridge as marketplace_bridge
 
 
 APP_DIR = Path(__file__).resolve().parent
@@ -93,7 +94,7 @@ DEFAULT_CONFIG = {
     },
 }
 ADMIN_USER_ID = "c7937d51-1a14-47aa-987e-6254c6c79014"
-APP_VERSION = "1.0.43"
+APP_VERSION = "1.0.44"
 UPDATE_BASE_URL = "https://jcslohuraqclhryeqxoc.supabase.co/storage/v1/object/public/reqm-updates"
 UPDATE_MANIFEST_URL = f"{UPDATE_BASE_URL}/manifest.json"
 RECENT_WORK_PATH = Path(os.getenv("LOCALAPPDATA", str(Path.home()))) / "REQM" / "recent_work.json"
@@ -305,18 +306,11 @@ class MarketplaceOptionDialog(QDialog):
         )
         if answer != QMessageBox.StandardButton.Yes:
             return
-        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
-        try:
-            rows = sync_29cm_catalog(load_29cm_profile_path())
-            saved = save_catalog_options(self.marketplace.currentText(), rows)
-            self.refresh_catalog()
-            self.status.setText(
-                f"29CM 옵션 목록 {len(saved)}개를 동기화했습니다. 검색 결과에서 상품과 옵션을 선택해 주세요."
-            )
-        except Exception as error:
-            QMessageBox.critical(self, "29CM 목록 동기화 실패", str(error))
-        finally:
-            QApplication.restoreOverrideCursor()
+        marketplace_bridge.request_29cm_sync()
+        self.status.setText(
+            "REQM Chrome 확장 프로그램에 29CM 목록 동기화를 요청했습니다. "
+            "REQM_CS Chrome에서 확장 프로그램이 설치·활성화되어 있으면 잠시 후 목록에 표시됩니다."
+        )
 
     def load_selected_mapping(self) -> None:
         row = self.table.currentRow()
@@ -2138,6 +2132,7 @@ class MiniWidgetDialog(QDialog):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
+        marketplace_bridge.start()
         self.worker = None
         self.update_worker = None
         self.mini_widget = None
