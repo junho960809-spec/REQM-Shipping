@@ -4,7 +4,7 @@ async function bridge(path, options = {}) {
   return fetch(`${BRIDGE}${path}`, {headers: {"Content-Type": "application/json"}, ...options});
 }
 
-function waitForTabLoad(tabId, timeout = 20000) {
+function waitForTabLoad(tabId, urlPrefix = "https://partner-item.29cm.co.kr/option-stock", timeout = 20000) {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
       chrome.tabs.onUpdated.removeListener(listener);
@@ -12,7 +12,7 @@ function waitForTabLoad(tabId, timeout = 20000) {
     }, timeout);
     function listener(updatedId, changeInfo, tab) {
       if (updatedId !== tabId || changeInfo.status !== "complete") return;
-      if (!tab.url?.startsWith("https://partner-item.29cm.co.kr/option-stock")) return;
+      if (!tab.url?.startsWith(urlPrefix)) return;
       clearTimeout(timer);
       chrome.tabs.onUpdated.removeListener(listener);
       resolve(tab);
@@ -54,7 +54,7 @@ async function execute29cmAction(action) {
   const target = `https://partner-item.29cm.co.kr/${action.marketplace_item_no}?from=option-stock`;
   const tab = await chrome.tabs.create({url: target, active: false});
   try {
-    await waitForTabLoad(tab.id);
+    await waitForTabLoad(tab.id, "https://partner-item.29cm.co.kr/");
     const result = await chrome.scripting.executeScript({
       target: {tabId: tab.id},
       args: [action],

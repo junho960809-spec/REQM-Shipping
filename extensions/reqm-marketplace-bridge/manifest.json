@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "REQM 판매처 연동",
-  "version": "0.1.9",
+  "version": "0.1.10",
   "description": "로그인된 판매처 탭에서 REQM 상품 관리 요청을 처리합니다.",
   "permissions": ["tabs", "scripting", "alarms", "storage"],
   "host_permissions": ["https://partner-item.29cm.co.kr/*", "https://partner-connect.29cm.co.kr/*", "https://partner-sso.one.musinsa.com/*", "http://127.0.0.1:8765/*"],
