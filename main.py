@@ -71,7 +71,6 @@ from marketplace_option_store import (
     upsert_option_mapping,
 )
 from marketplace_automation_settings import load_29cm_profile_path, save_29cm_profile_path
-from marketplace_29cm_executor import execute_29cm_action, sync_29cm_catalog, open_29cm_login
 from marketplace_catalog_store import save_catalog_options, search_catalog_options
 from marketplace_bridge_server import bridge as marketplace_bridge
 
@@ -94,7 +93,7 @@ DEFAULT_CONFIG = {
     },
 }
 ADMIN_USER_ID = "c7937d51-1a14-47aa-987e-6254c6c79014"
-APP_VERSION = "1.0.46"
+APP_VERSION = "1.0.47"
 UPDATE_BASE_URL = "https://jcslohuraqclhryeqxoc.supabase.co/storage/v1/object/public/reqm-updates"
 UPDATE_MANIFEST_URL = f"{UPDATE_BASE_URL}/manifest.json"
 RECENT_WORK_PATH = Path(os.getenv("LOCALAPPDATA", str(Path.home()))) / "REQM" / "recent_work.json"
@@ -386,14 +385,12 @@ class MarketplaceOptionDialog(QDialog):
         if answer != QMessageBox.StandardButton.Yes:
             return
         try:
-            result = execute_29cm_action(pending, load_29cm_profile_path())
-            complete_option_action(pending["action_id"], "COMPLETED", self.requested_by, details=result)
+            marketplace_bridge.queue_29cm_action(pending)
             self.status.setText(
-                f"29CM {label} 완료 · 이전 {result['previous_stock']}개 → {result['target_stock']}개 · "
-                f"상태 {result['verified_status']}"
+                f"29CM {label} 실행을 REQM_CS Chrome 확장 프로그램에 전달했습니다. "
+                "처리 이력에서 완료 여부를 확인해 주세요."
             )
         except Exception as error:
-            complete_option_action(pending["action_id"], "FAILED", self.requested_by, str(error))
             QMessageBox.critical(self, "29CM 실행 실패", str(error))
         self.refresh()
 

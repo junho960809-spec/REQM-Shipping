@@ -7,16 +7,21 @@ import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from marketplace_catalog_store import save_catalog_options
+from marketplace_option_store import complete_option_action
 
 
 class MarketplaceBridge:
     def __init__(self) -> None:
         self.sync_requested = False
         self.last_catalog_count = 0
+        self.pending_action: dict | None = None
         self._server: ThreadingHTTPServer | None = None
 
     def request_29cm_sync(self) -> None:
         self.sync_requested = True
+
+    def queue_29cm_action(self, action: dict) -> None:
+        self.pending_action = dict(action)
 
     def start(self) -> None:
         if self._server is not None:
@@ -45,11 +50,27 @@ class MarketplaceBridge:
                     self._reply(200, {"ok": True})
                 elif self.path == "/api/29cm/sync-request":
                     self._reply(200, {"requested": bridge.sync_requested})
+                elif self.path == "/api/29cm/pending-action":
+                    action = bridge.pending_action
+                    bridge.pending_action = None
+                    self._reply(200, {"action": action})
                 else:
                     self._reply(404, {"error": "not_found"})
 
             def do_POST(self):
                 if self.path != "/api/29cm/catalog":
+                    if self.path == "/api/29cm/action-result":
+                        try:
+                            length = int(self.headers.get("Content-Length", "0"))
+                            payload = json.loads(self.rfile.read(length).decode("utf-8"))
+                            complete_option_action(
+                                str(payload["action_id"]), str(payload["status"]), "REQM_CS Chrome 확장",
+                                str(payload.get("error_message", "")), dict(payload.get("details", {})),
+                            )
+                            self._reply(200, {"ok": True})
+                        except (KeyError, ValueError, TypeError, UnicodeDecodeError, json.JSONDecodeError):
+                            self._reply(400, {"error": "invalid_action_result"})
+                        return
                     self._reply(404, {"error": "not_found"})
                     return
                 try:

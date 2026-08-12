@@ -50,11 +50,51 @@ async function sync29cm() {
   if (temporaryTab) await chrome.tabs.remove(tab.id).catch(() => {});
 }
 
+async function execute29cmAction(action) {
+  const target = `https://partner-item.29cm.co.kr/${action.marketplace_item_no}?from=option-stock`;
+  const tab = await chrome.tabs.create({url: target, active: false});
+  try {
+    await waitForTabLoad(tab.id);
+    const result = await chrome.scripting.executeScript({
+      target: {tabId: tab.id},
+      args: [action],
+      func: async (work) => {
+        const row = [...document.querySelectorAll("tr")].find(item => item.innerText.includes(work.marketplace_option_no));
+        if (!row) throw new Error("옵션 행을 찾지 못했습니다.");
+        const inputs = row.querySelectorAll("input");
+        if (inputs.length < 2) throw new Error("재고 입력칸을 찾지 못했습니다.");
+        const targetStock = work.action === "SOLD_OUT" ? "0" : String(work.target_stock);
+        const previousStock = inputs[1].value;
+        inputs[1].focus();
+        inputs[1].value = targetStock;
+        inputs[1].dispatchEvent(new Event("input", {bubbles: true}));
+        inputs[1].dispatchEvent(new Event("change", {bubbles: true}));
+        const save = [...document.querySelectorAll("button")].find(button => button.innerText.trim() === "수정 완료");
+        if (!save) throw new Error("수정 완료 버튼을 찾지 못했습니다.");
+        save.click();
+        await new Promise(resolve => setTimeout(resolve, 1600));
+        return {previous_stock: previousStock, target_stock: targetStock};
+      }
+    });
+    await bridge("/api/29cm/action-result", {method: "POST", body: JSON.stringify({
+      action_id: action.action_id, status: "COMPLETED", details: result[0]?.result || {}
+    })});
+  } catch (error) {
+    await bridge("/api/29cm/action-result", {method: "POST", body: JSON.stringify({
+      action_id: action.action_id, status: "FAILED", error_message: String(error?.message || error)
+    })}).catch(() => {});
+  } finally {
+    await chrome.tabs.remove(tab.id).catch(() => {});
+  }
+}
+
 chrome.action.onClicked.addListener(sync29cm);
 chrome.alarms.create("reqm-catalog-sync", {periodInMinutes: 1});
 chrome.alarms.onAlarm.addListener(async () => {
   const request = await bridge("/api/29cm/sync-request").then(r => r.json()).catch(() => null);
   if (request?.requested) await sync29cm();
+  const action = await bridge("/api/29cm/pending-action").then(r => r.json()).catch(() => null);
+  if (action?.action) await execute29cmAction(action.action);
 });
 chrome.runtime.onMessage.addListener((message, _sender, reply) => {
   if (message.type === "REQM_SYNC_NOW") sync29cm().then(() => reply({ok: true}));
