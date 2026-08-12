@@ -31,3 +31,13 @@ pyinstaller --noconfirm --clean REQM_1_0_35.spec
 ```
 
 `config.example.json`을 `config.json`으로 복사해 사용하며 실제 인증키와 비밀번호는 커밋하지 않습니다.
+# 업데이트 배포
+
+새 버전의 업데이트 폴더를 배포할 때는 `tools/publish_update.py`를 사용합니다.
+새 청크를 먼저 업로드하고 manifest를 교체한 뒤, 이전 `REQM_*.exe.part*` 청크만 자동 삭제합니다.
+29CM 확장 프로그램 ZIP은 삭제하지 않습니다.
+
+```powershell
+$env:SUPABASE_SERVICE_ROLE_KEY = "Supabase service_role 키"
+python tools/publish_update.py C:\release\reqm-shipping-update-1.0.49
+```
