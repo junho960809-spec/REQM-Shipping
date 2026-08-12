@@ -22,10 +22,10 @@ class DashboardNavigationTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.window.close()
 
-    def test_dashboard_has_only_shipping_and_duty_free_cards(self) -> None:
+    def test_dashboard_has_shipping_duty_free_and_product_management_cards(self) -> None:
         self.assertEqual(
             [button.text() for button in self.window.dashboard_cards],
-            ["📦  출고 파일 변환", "🏬  면세점 출고"],
+            ["📦  출고 파일 변환", "🏬  면세점 출고", "🛒  상품 관리 팝업"],
         )
 
     def test_shipping_card_opens_shipping_workspace(self) -> None:

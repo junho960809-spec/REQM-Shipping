@@ -71,7 +71,8 @@ from marketplace_option_store import (
     upsert_option_mapping,
 )
 from marketplace_automation_settings import load_29cm_profile_path, save_29cm_profile_path
-from marketplace_29cm_executor import execute_29cm_action
+from marketplace_29cm_executor import execute_29cm_action, sync_29cm_catalog
+from marketplace_catalog_store import save_catalog_options, search_catalog_options
 
 
 APP_DIR = Path(__file__).resolve().parent
@@ -92,7 +93,7 @@ DEFAULT_CONFIG = {
     },
 }
 ADMIN_USER_ID = "c7937d51-1a14-47aa-987e-6254c6c79014"
-APP_VERSION = "1.0.40"
+APP_VERSION = "1.0.41"
 UPDATE_BASE_URL = "https://jcslohuraqclhryeqxoc.supabase.co/storage/v1/object/public/reqm-updates"
 UPDATE_MANIFEST_URL = f"{UPDATE_BASE_URL}/manifest.json"
 RECENT_WORK_PATH = Path(os.getenv("LOCALAPPDATA", str(Path.home()))) / "REQM" / "recent_work.json"
@@ -157,6 +158,26 @@ class MarketplaceOptionDialog(QDialog):
         hint.setWordWrap(True)
         layout.addWidget(title)
         layout.addWidget(hint)
+
+        catalog_actions = QHBoxLayout()
+        self.catalog_search = QLineEdit()
+        self.catalog_search.setPlaceholderText("29CM 상품명·옵션명·상품번호로 검색")
+        self.catalog_search.textChanged.connect(self.refresh_catalog)
+        sync_catalog = QPushButton("29CM 목록 동기화")
+        sync_catalog.setObjectName("primaryButton")
+        sync_catalog.clicked.connect(self.sync_catalog)
+        catalog_actions.addWidget(self.catalog_search, 1)
+        catalog_actions.addWidget(sync_catalog)
+        layout.addLayout(catalog_actions)
+
+        self.catalog_table = QTableWidget(0, 6)
+        self.catalog_table.setHorizontalHeaderLabels(["상품명", "옵션명", "재고", "상태", "상품번호", "옵션번호"])
+        self.catalog_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.catalog_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.catalog_table.itemSelectionChanged.connect(self.load_selected_catalog_option)
+        self.catalog_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.catalog_table.setMaximumHeight(210)
+        layout.addWidget(self.catalog_table)
 
         form = QFormLayout()
         self.marketplace = QComboBox()
@@ -239,6 +260,60 @@ class MarketplaceOptionDialog(QDialog):
                 self.table.setItem(row_index, column, QTableWidgetItem(str(value)))
         pending = sum(1 for row in load_option_actions() if row.get("status") == "PENDING")
         self.status.setText(f"저장된 옵션 매핑 {len(rows)}개 · 전용 자동화 PC 처리 대기 요청 {pending}건")
+        self.refresh_catalog()
+
+    def refresh_catalog(self) -> None:
+        if not hasattr(self, "catalog_table"):
+            return
+        rows = search_catalog_options(self.catalog_search.text(), self.marketplace.currentText())
+        self.catalog_table.setRowCount(len(rows))
+        for row_index, row in enumerate(rows):
+            values = [
+                row.get("marketplace_item_name", ""), row.get("marketplace_option_name", ""),
+                row.get("stock", ""), row.get("sale_status", ""),
+                row.get("marketplace_item_no", ""), row.get("marketplace_option_no", ""),
+            ]
+            for column, value in enumerate(values):
+                self.catalog_table.setItem(row_index, column, QTableWidgetItem(str(value)))
+
+    def load_selected_catalog_option(self) -> None:
+        row = self.catalog_table.currentRow()
+        if row < 0:
+            return
+        values = [self.catalog_table.item(row, column).text() if self.catalog_table.item(row, column) else "" for column in range(6)]
+        item_name, option_name, _stock, _status, item_no, option_no = values
+        self.item_no.setText(item_no)
+        self.option_no.setText(option_no)
+        self.option_name.setText(option_name)
+        if not self.internal_item.text().strip():
+            self.internal_item.setText(item_name)
+        if not self.internal_option.text().strip():
+            self.internal_option.setText(option_name)
+        self.status.setText(f"선택됨 · {item_name} / {option_name} (상품번호 {item_no}, 옵션번호 {option_no})")
+
+    def sync_catalog(self) -> None:
+        answer = QMessageBox.question(
+            self,
+            "29CM 목록 동기화",
+            "REQM_CS 프로필로 29CM 옵션 재고 화면을 열어 현재 조회 가능한 목록을 가져옵니다.\n"
+            "동기화 중에는 해당 REQM_CS Chrome 창을 모두 닫아야 합니다. 계속할까요?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            rows = sync_29cm_catalog(load_29cm_profile_path())
+            saved = save_catalog_options(self.marketplace.currentText(), rows)
+            self.refresh_catalog()
+            self.status.setText(
+                f"29CM 옵션 목록 {len(saved)}개를 동기화했습니다. 검색 결과에서 상품과 옵션을 선택해 주세요."
+            )
+        except Exception as error:
+            QMessageBox.critical(self, "29CM 목록 동기화 실패", str(error))
+        finally:
+            QApplication.restoreOverrideCursor()
 
     def load_selected_mapping(self) -> None:
         row = self.table.currentRow()
