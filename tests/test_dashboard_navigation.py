@@ -6,9 +6,9 @@ from unittest.mock import Mock, patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtWidgets import QApplication, QDialog
+from PySide6.QtWidgets import QApplication
 
-from main import DutyFreeShippingDialog, MainWindow, MiniWidgetDialog
+from main import InventoryPreviewDialog, MainWindow, MiniWidgetDialog
 
 
 class DashboardNavigationTests(unittest.TestCase):
@@ -22,51 +22,62 @@ class DashboardNavigationTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.window.close()
 
-    def test_dashboard_has_only_shipping_and_duty_free_cards(self) -> None:
+    def test_dashboard_has_shipping_and_inventory_cards(self) -> None:
         self.assertEqual(
             [button.text() for button in self.window.dashboard_cards],
-            ["📦  출고 파일 변환", "🏬  면세점 출고"],
+            ["📦  출고 파일 변환", "▤  재고 조회"],
         )
 
     def test_shipping_card_opens_shipping_workspace(self) -> None:
         self.window.dashboard_cards[0].click()
         self.assertIs(self.window.page_stack.currentWidget(), self.window.work_page)
 
-    def test_duty_free_card_opens_compact_dialog(self) -> None:
-        dialog = DutyFreeShippingDialog(None, [], self.window)
-        self.assertEqual((dialog.width(), dialog.height()), (760, 560))
-        dialog.close()
-        with patch.object(DutyFreeShippingDialog, "exec", return_value=0) as opened:
+    def test_inventory_card_opens_preview_dialog(self) -> None:
+        with patch.object(InventoryPreviewDialog, "exec", return_value=0) as opened:
             self.window.dashboard_cards[1].click()
         opened.assert_called_once()
 
-    def test_duty_free_transfer_uses_loaded_orders(self) -> None:
-        dialog = DutyFreeShippingDialog(
-            None, [], self.window, catalog_items=[{"item_code": "A001"}],
-            ecount_config={"source_warehouse": "100", "target_warehouse": "300"},
-            completed_requests=set(), is_admin=True,
-        )
-        dialog.orders = [{
-            "channel": "롯데면세점", "quantity": "2", "status": "exact", "components": "A001",
-        }]
-        dialog.apply_selected_location()
-        self.assertTrue(dialog.transfer_button.isEnabled())
-        with patch("main.EcountTransferDialog") as transfer_class:
-            transfer = transfer_class.return_value
-            transfer.exec.return_value = QDialog.DialogCode.Accepted
-            transfer.transfer_scope = "롯데면세점"
-            transfer.items = [{"item_code": "A001", "quantity": "2"}]
-            dialog.open_warehouse_transfer()
-        self.assertIs(transfer_class.call_args.args[0], dialog.orders)
-        self.assertEqual(transfer_class.call_args.args[1], [{"item_code": "A001"}])
-        self.assertIn("창고이동 완료", dialog.status.text())
+    def test_inventory_preview_is_not_connected_yet(self) -> None:
+        dialog = InventoryPreviewDialog(self.window)
+        self.assertEqual(dialog.table.rowCount(), 3)
+        self.assertFalse(dialog.search_button.isEnabled())
+        self.assertIn("연동 전 샘플", dialog.table.item(0, 7).text())
         dialog.close()
 
-    def test_mini_widget_has_four_function_buttons_in_requested_order(self) -> None:
+    def test_sparse_duty_free_file_uses_unified_shipping_workspace(self) -> None:
+        order = {
+            "channel": "롯데면세점", "product_name": "테스트 품목", "quantity": "2",
+            "ref_no": "REF-1", "sku_no": "SKU-1", "match_method": "name_or_code",
+        }
+        location = {
+            "id": "lotte", "name": "롯데 출고지", "channel": "롯데면세점",
+            "recipient": "담당자", "phone": "010-0000-0000", "zipcode": "00000",
+            "address": "서울시 테스트로 1", "message": "면세점 출고",
+        }
+        self.window.matcher = Mock()
+        self.window.matcher.match.return_value = {
+            "status": "exact", "matched_product": "테스트 품목", "components": "A001",
+        }
+        self.window.mark_duplicates = Mock()
+        with (
+            patch("main.load_duty_free", return_value=None),
+            patch("main.load_simple_duty_free", return_value=([order], "롯데면세점")),
+            patch("main.load_locations", return_value=[location]),
+            patch("main.find_reference_mapping", return_value={"item_code": "A001"}),
+        ):
+            self.window.load_order_file("롯데면세점.xlsx", "auto")
+
+        self.assertEqual(self.window.current_mode, "duty_free")
+        self.assertEqual(self.window.current_orders[0]["internal_item_code"], "A001")
+        self.assertEqual(self.window.current_orders[0]["address"], "서울시 테스트로 1")
+        self.assertEqual(self.window.selected_location_name, "롯데 출고지")
+        self.assertNotIn("면세점 출고", [button.text() for button in self.window.dashboard_cards])
+
+    def test_mini_widget_has_three_unified_function_buttons(self) -> None:
         widget = MiniWidgetDialog(self.window)
         self.assertEqual(
             [button.property("widgetTarget") for button in widget.action_buttons],
-            ["shipping", "duty_free", "warehouse", "calendar"],
+            ["shipping", "warehouse", "calendar"],
         )
         widget.close()
 
@@ -75,20 +86,16 @@ class DashboardNavigationTests(unittest.TestCase):
         widget.close = Mock()
         self.window.show_shipping_workspace = Mock()
         self.window.show_dashboard = Mock()
-        self.window.open_duty_free_shipping = Mock()
         self.window.open_dashboard_warehouse_transfer = Mock()
 
         widget.open_target("shipping")
         self.window.show_shipping_workspace.assert_called_once_with()
 
-        widget.open_target("duty_free")
-        self.window.open_duty_free_shipping.assert_called_once_with()
-
         widget.open_target("warehouse")
         self.window.open_dashboard_warehouse_transfer.assert_called_once_with()
 
         widget.open_target("calendar")
-        self.assertEqual(self.window.show_dashboard.call_count, 3)
+        self.assertEqual(self.window.show_dashboard.call_count, 2)
         widget.deleteLater()
 
 

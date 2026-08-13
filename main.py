@@ -82,7 +82,7 @@ DEFAULT_CONFIG = {
     },
 }
 ADMIN_USER_ID = "c7937d51-1a14-47aa-987e-6254c6c79014"
-APP_VERSION = "1.0.50"
+APP_VERSION = "1.0.52"
 UPDATE_BASE_URL = "https://jcslohuraqclhryeqxoc.supabase.co/storage/v1/object/public/reqm-updates"
 UPDATE_MANIFEST_URL = f"{UPDATE_BASE_URL}/manifest.json"
 RECENT_WORK_PATH = Path(os.getenv("LOCALAPPDATA", str(Path.home()))) / "REQM" / "recent_work.json"
@@ -1561,6 +1561,124 @@ class CalendarDropWidget(QCalendarWidget):
         super().dropEvent(event)
 
 
+class InventoryPreviewDialog(QDialog):
+    """Design preview for the future Ecount inventory lookup workflow."""
+
+    SAMPLE_ROWS = [
+        ("정상", "QP1000C-BL", "QP1000C 블루", "본사창고", "124", "118", "30", "연동 전 샘플"),
+        ("부족", "QP1000C-MT", "실리콘케이스 핸디형 민트", "위킵창고", "12", "9", "20", "연동 전 샘플"),
+        ("품절", "QP2000-WH", "고속충전 보조배터리 화이트", "본사창고", "0", "0", "15", "연동 전 샘플"),
+    ]
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("inventoryPreview")
+        self.setWindowTitle("이카운트 재고 조회")
+        self.resize(980, 650)
+        self.setMinimumSize(880, 580)
+
+        title = QLabel("이카운트 재고 조회")
+        title.setObjectName("inventoryTitle")
+        subtitle = QLabel("이카운트에 등록된 품목별 재고 현황을 확인합니다.")
+        subtitle.setObjectName("appSubtitle")
+        badge = QLabel("연동 준비 중")
+        badge.setObjectName("inventoryBadge")
+        header_text = QVBoxLayout()
+        header_text.addWidget(title)
+        header_text.addWidget(subtitle)
+        header = QHBoxLayout()
+        header.addLayout(header_text)
+        header.addStretch(1)
+        header.addWidget(badge, 0, Qt.AlignmentFlag.AlignTop)
+
+        summary_row = QHBoxLayout()
+        summary_row.setSpacing(12)
+        for label, value, object_name in (
+            ("전체 품목", "248", "inventoryTotal"),
+            ("정상 재고", "221", "inventoryNormal"),
+            ("부족 재고", "19", "inventoryLow"),
+            ("품절", "8", "inventoryOut"),
+        ):
+            card = QFrame()
+            card.setObjectName("inventorySummary")
+            card_layout = QVBoxLayout(card)
+            card_layout.setContentsMargins(18, 12, 18, 12)
+            label_widget = QLabel(label)
+            label_widget.setObjectName("inventorySummaryLabel")
+            value_widget = QLabel(value)
+            value_widget.setObjectName(object_name)
+            card_layout.addWidget(label_widget)
+            card_layout.addWidget(value_widget)
+            summary_row.addWidget(card, 1)
+
+        self.warehouse_combo = QComboBox()
+        self.warehouse_combo.addItems(["전체 창고", "본사창고", "위킵창고"])
+        self.warehouse_combo.setEnabled(False)
+        self.search_input = QLineEdit()
+        self.search_input.setPlaceholderText("품목코드 또는 품목명 검색")
+        self.search_input.setEnabled(False)
+        self.search_button = QPushButton("조회")
+        self.search_button.setObjectName("primaryButton")
+        self.search_button.setEnabled(False)
+        filters = QHBoxLayout()
+        filters.addWidget(QLabel("창고"))
+        filters.addWidget(self.warehouse_combo)
+        filters.addSpacing(12)
+        filters.addWidget(QLabel("품목 검색"))
+        filters.addWidget(self.search_input, 1)
+        filters.addWidget(self.search_button)
+        filter_card = QFrame()
+        filter_card.setObjectName("inventoryFilter")
+        filter_card.setLayout(filters)
+
+        self.table = QTableWidget(len(self.SAMPLE_ROWS), 8)
+        self.table.setHorizontalHeaderLabels(
+            ["상태", "품목코드", "품목명", "창고", "현재고", "가용재고", "안전재고", "최종 확인"]
+        )
+        self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.table.verticalHeader().setVisible(False)
+        self.table.verticalHeader().setDefaultSectionSize(38)
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        status_colors = {"정상": "#d8f3e4", "부족": "#fff0d5", "품절": "#ffe1e1"}
+        status_text = {"정상": "#16844f", "부족": "#b56b00", "품절": "#d43b3b"}
+        for row_index, row in enumerate(self.SAMPLE_ROWS):
+            for column_index, value in enumerate(row):
+                item = QTableWidgetItem(value)
+                if column_index == 0:
+                    item.setBackground(QColor(status_colors[value]))
+                    item.setForeground(QColor(status_text[value]))
+                    item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                elif column_index in {4, 5, 6}:
+                    item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+                self.table.setItem(row_index, column_index, item)
+
+        notice = QLabel("※ 현재 화면은 구성 시안이며 이카운트 API는 아직 연결되지 않았습니다.")
+        notice.setObjectName("inventoryNotice")
+        excel_button = QPushButton("Excel 저장")
+        refresh_button = QPushButton("↻  새로고침")
+        excel_button.setEnabled(False)
+        refresh_button.setEnabled(False)
+        close_button = QPushButton("닫기")
+        close_button.clicked.connect(self.accept)
+        footer = QHBoxLayout()
+        footer.addWidget(notice)
+        footer.addStretch(1)
+        footer.addWidget(excel_button)
+        footer.addWidget(refresh_button)
+        footer.addWidget(close_button)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(24, 22, 24, 20)
+        layout.setSpacing(14)
+        layout.addLayout(header)
+        layout.addLayout(summary_row)
+        layout.addWidget(filter_card)
+        layout.addWidget(self.table, 1)
+        layout.addLayout(footer)
+
+
 class CalendarEventDialog(QDialog):
     def __init__(self, event_data: dict | None = None, default_date: QDate | None = None, parent=None):
         super().__init__(parent)
@@ -1704,8 +1822,7 @@ class MiniWidgetDialog(QDialog):
         action_grid.setHorizontalSpacing(10)
         action_grid.setVerticalSpacing(10)
         action_specs = [
-            ("📦  출고 파일 변환\n일반 출고 파일 불러오기", "shipping"),
-            ("🏬  면세점 출고\nPDF · 엑셀 변환", "duty_free"),
+            ("📦  출고 파일 변환\n일반 · 면세점 파일 불러오기", "shipping"),
             ("↔  창고이동\n불러온 품목 전송", "warehouse"),
             ("📅  일정\n대시보드 일정 관리", "calendar"),
         ]
@@ -1775,9 +1892,7 @@ class MiniWidgetDialog(QDialog):
         self.main_window.raise_()
         self.main_window.activateWindow()
         self.close()
-        if target == "duty_free":
-            self.main_window.open_duty_free_shipping()
-        elif target == "warehouse":
+        if target == "warehouse":
             self.main_window.open_dashboard_warehouse_transfer()
 
     def open_main_window(self) -> None:
@@ -1838,6 +1953,18 @@ class MainWindow(QMainWindow):
             QLabel#dashboardHint { color: #71736f; font-size: 13px; }
             QDialog#miniWidget { background: #f7f7f3; color: #151515; font-family: '맑은 고딕'; }
             QDialog#startupLogin { background: #f7f7f3; color: #151515; font-family: '맑은 고딕'; }
+            QDialog#inventoryPreview { background: #f7f7f3; color: #151515; font-family: '맑은 고딕'; }
+            QLabel#inventoryTitle { color: #111111; font-size: 25px; font-weight: 900; }
+            QLabel#inventoryBadge { background: #e3f6f3; color: #16877f; border-radius: 15px; padding: 8px 14px; font-weight: 800; }
+            QFrame#inventorySummary, QFrame#inventoryFilter { background: #ffffff; border: 1px solid #dfdfda; border-radius: 14px; }
+            QFrame#inventoryFilter { padding: 7px; }
+            QLabel#inventorySummaryLabel { color: #626662; font-size: 12px; font-weight: 700; }
+            QLabel#inventoryTotal, QLabel#inventoryNormal, QLabel#inventoryLow, QLabel#inventoryOut { font-size: 24px; font-weight: 900; }
+            QLabel#inventoryTotal { color: #225c9e; }
+            QLabel#inventoryNormal { color: #16844f; }
+            QLabel#inventoryLow { color: #c87500; }
+            QLabel#inventoryOut { color: #d43b3b; }
+            QLabel#inventoryNotice { color: #777b77; font-size: 11px; }
             QLabel#widgetTitle { color: #111111; font-size: 20px; font-weight: 900; }
             QLabel#widgetHint { color: #71736f; font-size: 12px; }
             QPushButton#widgetAction { background: #ffffff; color: #151515; border: 1px solid #dfdfda; border-radius: 16px; padding: 13px 14px; min-height: 54px; font-size: 13px; text-align: left; }
@@ -2101,17 +2228,23 @@ class MainWindow(QMainWindow):
 
         cards = QGridLayout()
         cards.setSpacing(16)
-        shipment = self.dashboard_card("📦  출고 파일 변환", "주문 파일 분석 · 품목 매칭 · 출고 양식 변환")
+        shipment = self.dashboard_card(
+            "📦  출고 파일 변환",
+            "일반·면세점 주문 파일 분석 · 품목 매칭 · 출고 양식 변환",
+        )
         shipment.clicked.connect(self.show_shipping_workspace)
-        duty_free = self.dashboard_card("🏬  면세점 출고", "PDF·Excel 품목 인식 · 저장 출고지 자동 적용")
-        duty_free.clicked.connect(self.open_duty_free_shipping)
+        inventory = self.dashboard_card(
+            "▤  재고 조회",
+            "이카운트 품목별 현재고 · 가용재고 · 안전재고 확인",
+        )
+        inventory.clicked.connect(self.open_inventory_preview)
         shipment.setMaximumWidth(430)
-        duty_free.setMaximumWidth(430)
+        inventory.setMaximumWidth(430)
         cards.addWidget(shipment, 0, 0)
-        cards.addWidget(duty_free, 0, 1)
+        cards.addWidget(inventory, 0, 1)
         cards.setColumnStretch(0, 1)
         cards.setColumnStretch(1, 1)
-        self.dashboard_cards = [shipment, duty_free]
+        self.dashboard_cards = [shipment, inventory]
         layout.addLayout(cards)
 
         self.calendar_widget = CalendarDropWidget()
@@ -2194,18 +2327,8 @@ class MainWindow(QMainWindow):
     def show_shipping_workspace(self) -> None:
         self.page_stack.setCurrentWidget(self.work_page)
 
-    def open_duty_free_shipping(self) -> None:
-        dialog = DutyFreeShippingDialog(
-            self.matcher,
-            load_locations(),
-            self,
-            client=self.supabase_client,
-            catalog_items=self.catalog.get("items", []),
-            ecount_config=load_config().get("ecount", {}),
-            completed_requests=self.completed_ecount_requests,
-            is_admin=self.is_admin,
-        )
-        dialog.exec()
+    def open_inventory_preview(self) -> None:
+        InventoryPreviewDialog(self).exec()
 
     def open_dashboard_warehouse_transfer(self) -> None:
         if not self.current_orders:
@@ -2465,6 +2588,7 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "면세점 파일", "먼저 면세점 출고 파일을 불러오세요.")
             return
         for order in self.current_orders:
+            order["channel"] = location.get("channel") or order.get("channel", "")
             order["recipient"] = location.get("recipient", "")
             order["phone"] = location.get("phone", "")
             order["zipcode"] = location.get("zipcode", "")
@@ -2774,11 +2898,36 @@ class MainWindow(QMainWindow):
             if self.matcher is None:
                 raise RuntimeError("먼저 Supabase에 로그인해 DB를 불러오세요.")
             duty_result = load_duty_free(path)
+            simple_duty_free = False
+            if duty_result is None and Path(path).suffix.lower() in {".pdf", ".xls", ".xlsx"}:
+                try:
+                    simple_result = load_simple_duty_free(path)
+                except ValueError:
+                    simple_result = None
+                if simple_result is not None:
+                    simple_orders, simple_channel = simple_result
+                    use_simple = expected_type == "b2b" or simple_channel != "면세점"
+                    if expected_type == "auto" and not use_simple:
+                        try:
+                            _, probe_columns = load_orders(path)
+                            use_simple = bool(missing_shipping_columns(probe_columns))
+                        except (ValueError, TypeError):
+                            use_simple = True
+                    if use_simple:
+                        duty_result = simple_result
+                        simple_duty_free = True
             if duty_result:
                 if expected_type not in {"b2b", "auto"}:
                     raise ValueError("면세점 B2B 파일로 감지됐습니다. B2B 엑셀 파일 버튼을 사용하세요.")
                 orders, detected_type = duty_result
-                if all(order.get("match_method") == "name_or_code" for order in orders):
+                if simple_duty_free:
+                    for order in orders:
+                        order["order_number"] = Path(path).stem
+                        reference_mapping = find_reference_mapping(detected_type, order.get("ref_no", ""))
+                        if reference_mapping:
+                            order["internal_item_code"] = reference_mapping.get("item_code", "")
+                        order.update(self.matcher.match(order))
+                elif all(order.get("match_method") == "name_or_code" for order in orders):
                     for order in orders:
                         order.update(self.matcher.match(order))
                 else:
@@ -2874,6 +3023,8 @@ class MainWindow(QMainWindow):
             f"확인필요 {counts['ambiguous']:,} · 미등록 {counts['missing']:,} · "
             f"바코드오류 {counts['barcode_error']:,} · {len(columns)}개 열 인식"
         )
+        if simple_duty_free and self.location_combo.count():
+            self.apply_location()
 
     def apply_direct_suggestions(self, orders: list[dict], confirmed: list[dict], reviews: list[dict]) -> None:
         confirmed_by_key = {entry["key"]: entry["suggestion"] for entry in confirmed}
