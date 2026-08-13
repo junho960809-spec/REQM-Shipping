@@ -157,7 +157,11 @@ class UpdateCheckWorker(QThread):
 
     def run(self) -> None:
         try:
-            request = urllib.request.Request(UPDATE_MANIFEST_URL, headers={"User-Agent": "REQM-Updater"})
+            manifest_url = f"{UPDATE_MANIFEST_URL}?cache={uuid.uuid4().hex}"
+            request = urllib.request.Request(
+                manifest_url,
+                headers={"User-Agent": "REQM-Updater", "Cache-Control": "no-cache"},
+            )
             with urllib.request.urlopen(request, timeout=15) as response:
                 manifest = json.loads(response.read().decode("utf-8"))
             for key in ("version", "file", "sha256"):

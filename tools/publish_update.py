@@ -14,6 +14,7 @@ import argparse
 import json
 import os
 import sys
+import time
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -76,7 +77,9 @@ def publish(folder: Path, key: str) -> list[str]:
         upload_file(chunk, key)
     upload_file(folder / "manifest.json", key)
 
-    published_manifest = json.loads(request(f"/storage/v1/object/public/{BUCKET}/manifest.json", key))
+    published_manifest = json.loads(
+        request(f"/storage/v1/object/public/{BUCKET}/manifest.json?cache={time.time_ns()}", key)
+    )
     if published_manifest.get("version") != manifest["version"] or published_manifest.get("chunks") != manifest["chunks"]:
         raise ValueError("공개 manifest 검증에 실패해 이전 파일을 삭제하지 않았습니다.")
 
