@@ -137,7 +137,7 @@ INVENTORY_DISPLAY_CODES = frozenset({
     "QS-QST01M_WH",
     "QTC-45W_BK",
     "QTC-45W_WH",
-    "QWC-CW330",
+    "QWC-CW500",
     "QWC-L5100-A",
     "QWC-L5100-S",
     "QWC-Q3100S-BK",

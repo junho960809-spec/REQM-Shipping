@@ -6,10 +6,14 @@ from ecount_client import (
     parse_inventory_rows, parse_transfer_result,
 )
 from ecount_dialog import EcountTransferDialog
-from main import merge_inventory_by_item
+from main import has_shared_safety_stock, merge_inventory_by_item
 
 
 class EcountTransferTests(unittest.TestCase):
+    def test_detects_shared_safety_stock_column(self):
+        self.assertTrue(has_shared_safety_stock([{"item_code": "A", "safety_stock": 0}]))
+        self.assertFalse(has_shared_safety_stock([{"item_code": "A"}]))
+
     @classmethod
     def setUpClass(cls):
         from PySide6.QtWidgets import QApplication

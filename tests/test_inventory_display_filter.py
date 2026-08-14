@@ -6,6 +6,8 @@ from inventory_display_filter import INVENTORY_DISPLAY_CODES, filter_inventory_d
 class InventoryDisplayFilterTest(unittest.TestCase):
     def test_reference_contains_all_excel_item_codes(self) -> None:
         self.assertEqual(len(INVENTORY_DISPLAY_CODES), 172)
+        self.assertIn("QWC-CW500", INVENTORY_DISPLAY_CODES)
+        self.assertNotIn("QWC-CW330", INVENTORY_DISPLAY_CODES)
 
     def test_only_exact_case_insensitive_codes_are_kept(self) -> None:
         rows = [

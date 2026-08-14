@@ -89,7 +89,7 @@ DEFAULT_CONFIG = {
     },
 }
 ADMIN_USER_ID = "c7937d51-1a14-47aa-987e-6254c6c79014"
-APP_VERSION = "1.0.57"
+APP_VERSION = "1.0.58"
 UPDATE_BASE_URL = "https://jcslohuraqclhryeqxoc.supabase.co/storage/v1/object/public/reqm-updates"
 UPDATE_MANIFEST_URL = f"{UPDATE_BASE_URL}/manifest.json"
 RECENT_WORK_PATH = Path(os.getenv("LOCALAPPDATA", str(Path.home()))) / "REQM" / "recent_work.json"
@@ -1641,6 +1641,10 @@ def merge_inventory_by_item(
     return sorted(merged.values(), key=lambda row: (row["name"].casefold(), row["code"].casefold()))
 
 
+def has_shared_safety_stock(catalog_items: list[dict]) -> bool:
+    return any("safety_stock" in item for item in catalog_items)
+
+
 class InventoryWorker(QThread):
     succeeded = Signal(object)
     failed = Signal(str)
@@ -1654,12 +1658,13 @@ class InventoryWorker(QThread):
     def run(self) -> None:
         try:
             source_rows = EcountClient(**self.credentials).get_inventory_by_location()
+            safety_overrides = {} if has_shared_safety_stock(self.catalog_items) else load_safety_stocks()
             rows = merge_inventory_by_item(
                 source_rows,
                 self.catalog_items,
                 str(self.config.get("source_warehouse") or "100"),
                 str(self.config.get("target_warehouse") or "300"),
-                load_safety_stocks(),
+                safety_overrides,
             )
             rows = filter_inventory_display_rows(rows)
             self.succeeded.emit(rows)
@@ -3055,6 +3060,7 @@ class MainWindow(QMainWindow):
         self.duty_locations, restored_count = sync_remote_locations(catalog.get("duty_locations", []))
         self.refresh_location_combo()
         self.is_admin = catalog.get("app_role") == "admin"
+        migrated_safety_count = self.migrate_local_safety_stocks()
         self.db_button.setEnabled(self.is_admin)
         self.dashboard_db_button.setEnabled(self.is_admin)
         self.ecount_button.setEnabled(self.is_admin and bool(self.current_orders))
@@ -3075,7 +3081,30 @@ class MainWindow(QMainWindow):
             f"DB 준비 완료: 품목 {count:,}개 · 등록상품 {len(catalog['products']):,}개 · "
             f"구성품 {len(catalog['components']):,}개 · 주소 복구 {restored_count:,}건 · "
             f"권한: {'관리자' if self.is_admin else '일반 사용자(조회 전용)'}"
+            f"{' · 안전재고 공용 이전 ' + str(migrated_safety_count) + '건' if migrated_safety_count else ''}"
         )
+
+    def migrate_local_safety_stocks(self) -> int:
+        items = self.catalog.get("items", [])
+        if self.supabase_client is None or not has_shared_safety_stock(items):
+            return 0
+        local_rows = load_safety_stocks()
+        migrated = 0
+        for item in items:
+            code = str(item.get("item_code", "")).strip()
+            key = code.casefold()
+            if key not in local_rows or float(item.get("safety_stock", 0) or 0) > 0:
+                continue
+            value = float(local_rows[key])
+            try:
+                self.supabase_client.table("items").update({"safety_stock": value}).eq(
+                    "item_code", code
+                ).execute()
+            except Exception:
+                continue
+            item["safety_stock"] = value
+            migrated += 1
+        return migrated
 
     def open_account_settings(self) -> None:
         dialog = AccountSettingsDialog(
