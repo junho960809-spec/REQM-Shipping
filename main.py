@@ -2,6 +2,7 @@ import json
 import sys
 import hashlib
 import os
+import ctypes
 import shutil
 import subprocess
 import uuid
@@ -13,7 +14,7 @@ from urllib.parse import quote
 from pathlib import Path
 
 from PySide6.QtCore import QDate, Qt, QThread, Signal, QTimer
-from PySide6.QtGui import QColor, QPainter, QTextCharFormat
+from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPixmap, QTextCharFormat
 from PySide6.QtWidgets import (
     QApplication,
     QCalendarWidget,
@@ -87,12 +88,37 @@ DEFAULT_CONFIG = {
     },
 }
 ADMIN_USER_ID = "c7937d51-1a14-47aa-987e-6254c6c79014"
-APP_VERSION = "1.0.55"
+APP_VERSION = "1.0.56"
 UPDATE_BASE_URL = "https://jcslohuraqclhryeqxoc.supabase.co/storage/v1/object/public/reqm-updates"
 UPDATE_MANIFEST_URL = f"{UPDATE_BASE_URL}/manifest.json"
 RECENT_WORK_PATH = Path(os.getenv("LOCALAPPDATA", str(Path.home()))) / "REQM" / "recent_work.json"
 CALENDAR_EVENT_PATH = Path(os.getenv("LOCALAPPDATA", str(Path.home()))) / "REQM" / "calendar_events.json"
 WIDGET_SETTINGS_PATH = Path(os.getenv("LOCALAPPDATA", str(Path.home()))) / "REQM" / "widget_settings.json"
+
+
+def create_app_icon() -> QIcon:
+    pixmap = QPixmap(64, 64)
+    pixmap.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    painter.setPen(Qt.PenStyle.NoPen)
+    painter.setBrush(QColor("#12b8a6"))
+    painter.drawRoundedRect(4, 4, 56, 56, 14, 14)
+    painter.setPen(QColor("#ffffff"))
+    font = QFont("Arial", 30, QFont.Weight.Bold)
+    painter.setFont(font)
+    painter.drawText(pixmap.rect(), Qt.AlignmentFlag.AlignCenter, "R")
+    painter.end()
+    return QIcon(pixmap)
+
+
+def register_windows_app_id() -> None:
+    if sys.platform != "win32":
+        return
+    try:
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("REQM.Logistics.Shipping")
+    except (AttributeError, OSError):
+        pass
 
 def load_recent_work() -> list[dict]:
     try:
@@ -1082,6 +1108,8 @@ class StartupLoginDialog(QDialog):
         self.item_count = 0
         self.setObjectName("startupLogin")
         self.setWindowTitle("REQM 로그인")
+        self.setWindowIcon(QApplication.windowIcon())
+        self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
         self.setFixedSize(470, 330)
         self.setModal(True)
 
@@ -1731,15 +1759,21 @@ class InventoryPreviewDialog(QDialog):
         self.table.setHorizontalHeaderLabels(
             ["상태", "품목코드", "품목명", "본사재고", "위킵재고", "안전재고", "최종 확인"]
         )
-        self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.table.setEditTriggers(
+            QTableWidget.EditTrigger.DoubleClicked
+            | QTableWidget.EditTrigger.EditKeyPressed
+            | QTableWidget.EditTrigger.SelectedClicked
+        )
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.verticalHeader().setVisible(False)
         self.table.verticalHeader().setDefaultSectionSize(38)
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
         self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        self.updating_table = False
+        self.table.itemChanged.connect(self.save_safety_stock)
         self.refresh_table()
 
-        notice = QLabel("※ 재고는 이카운트에서 120초마다 자동 갱신됩니다.")
+        notice = QLabel("※ 안전재고 칸을 더블클릭해 바로 수정할 수 있습니다. 재고는 120초마다 갱신됩니다.")
         notice.setObjectName("inventoryNotice")
         excel_button = QPushButton("Excel 저장")
         self.refresh_button = QPushButton("↻  새로고침")
@@ -1793,27 +1827,49 @@ class InventoryPreviewDialog(QDialog):
 
     def refresh_table(self) -> None:
         rows = self.filtered_rows()
-        self.table.setRowCount(len(rows))
-        status_colors = {"정상": "#ffffff", "안전재고 도달": "#fff0d5", "품절": "#ffe1e1"}
-        status_text = {"정상": "#16844f", "안전재고 도달": "#b56b00", "품절": "#d43b3b"}
-        for row_index, row in enumerate(rows):
-            status = self.status_for(row)
-            values = [
-                status, row["code"], row["name"],
-                f"{float(row.get('headquarters_stock', 0)):g}",
-                f"{float(row.get('wekeep_stock', 0)):g}",
-                f"{float(row.get('safety', 0)):g}",
-                getattr(self.main_window, "inventory_last_checked", ""),
-            ]
-            for column_index, value in enumerate(values):
-                item = QTableWidgetItem(value)
-                item.setBackground(QColor(status_colors[status]))
-                if column_index == 0:
-                    item.setForeground(QColor(status_text[status]))
-                    item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                elif column_index in {3, 4, 5}:
-                    item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-                self.table.setItem(row_index, column_index, item)
+        self.updating_table = True
+        try:
+            self.table.setRowCount(len(rows))
+            status_colors = {"정상": "#ffffff", "안전재고 도달": "#fff0d5", "품절": "#ffe1e1"}
+            status_text = {"정상": "#16844f", "안전재고 도달": "#b56b00", "품절": "#d43b3b"}
+            for row_index, row in enumerate(rows):
+                status = self.status_for(row)
+                values = [
+                    status, row["code"], row["name"],
+                    f"{float(row.get('headquarters_stock', 0)):g}",
+                    f"{float(row.get('wekeep_stock', 0)):g}",
+                    f"{float(row.get('safety', 0)):g}",
+                    getattr(self.main_window, "inventory_last_checked", ""),
+                ]
+                for column_index, value in enumerate(values):
+                    item = QTableWidgetItem(value)
+                    item.setData(Qt.ItemDataRole.UserRole, row["code"])
+                    item.setBackground(QColor(status_colors[status]))
+                    if column_index != 5:
+                        item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                    if column_index == 0:
+                        item.setForeground(QColor(status_text[status]))
+                        item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                    elif column_index in {3, 4, 5}:
+                        item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+                    self.table.setItem(row_index, column_index, item)
+        finally:
+            self.updating_table = False
+
+    def save_safety_stock(self, item: QTableWidgetItem) -> None:
+        if self.updating_table or item.column() != 5:
+            return
+        code = str(item.data(Qt.ItemDataRole.UserRole) or "").strip()
+        try:
+            value = float(item.text().strip().replace(",", ""))
+            if value < 0:
+                raise ValueError
+        except ValueError:
+            QMessageBox.warning(self, "안전재고 입력", "안전재고는 0 이상의 숫자로 입력하세요.")
+            self.refresh_table()
+            return
+        if self.main_window is None or not self.main_window.save_inventory_safety_stock(code, value):
+            self.refresh_table()
 
     def on_inventory_updated(self, rows: list[dict], checked_at: str, error: str) -> None:
         self.rows = list(rows or [])
@@ -2034,7 +2090,7 @@ class MiniWidgetDialog(QDialog):
         rows = [
             row for row in self.main_window.inventory_rows
             if InventoryPreviewDialog.matches(row, query)
-        ][:3]
+        ]
         self.inventory_results.clear()
         if not rows:
             self.inventory_results.addItem("검색 결과가 없습니다.")
@@ -2134,6 +2190,8 @@ class MainWindow(QMainWindow):
 
     def __init__(self):
         super().__init__()
+        self.setWindowIcon(QApplication.windowIcon())
+        self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
         self.worker = None
         self.update_worker = None
         self.mini_widget = None
@@ -2621,6 +2679,37 @@ class MainWindow(QMainWindow):
         self.inventory_worker.finished.connect(self.release_inventory_worker)
         self.inventoryUpdated.emit(self.inventory_rows, self.inventory_last_checked, "")
         self.inventory_worker.start()
+
+    def save_inventory_safety_stock(self, code: str, value: float) -> bool:
+        if self.supabase_client is None:
+            QMessageBox.warning(self, "안전재고 저장", "품목 DB에 로그인한 뒤 수정할 수 있습니다.")
+            return False
+        catalog_item = next(
+            (
+                item for item in self.catalog.get("items", [])
+                if str(item.get("item_code", "")).strip().casefold() == code.casefold()
+            ),
+            None,
+        )
+        if catalog_item is None:
+            QMessageBox.warning(self, "안전재고 저장", f"품목 DB에서 {code}를 찾을 수 없습니다.")
+            return False
+        field = next(
+            (name for name in ("safety_stock", "safe_stock", "minimum_stock") if name in catalog_item),
+            "safety_stock",
+        )
+        try:
+            self.supabase_client.table("items").update({field: value}).eq("item_code", code).execute()
+        except Exception as exc:
+            QMessageBox.critical(self, "안전재고 저장 실패", str(exc))
+            return False
+        catalog_item[field] = value
+        for row in self.inventory_rows:
+            if str(row.get("code", "")).strip().casefold() == code.casefold():
+                row["safety"] = value
+                break
+        self.inventoryUpdated.emit(self.inventory_rows, self.inventory_last_checked, "")
+        return True
 
     def on_inventory_loaded(self, rows: list[dict]) -> None:
         self.inventory_rows = rows
@@ -3587,9 +3676,19 @@ class MainWindow(QMainWindow):
 
 if __name__ == "__main__":
     remove_legacy_transfer_credentials()
+    register_windows_app_id()
     app = QApplication(sys.argv)
+    app.setApplicationName("REQM")
+    app.setOrganizationName("REQM")
+    app.setWindowIcon(create_app_icon())
     window = MainWindow()
-    if not window.require_startup_login():
-        sys.exit(0)
     window.show()
+    window.raise_()
+    window.activateWindow()
+    if not window.require_startup_login():
+        window.close()
+        sys.exit(0)
+    window.showNormal()
+    window.raise_()
+    window.activateWindow()
     sys.exit(app.exec())

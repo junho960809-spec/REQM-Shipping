@@ -8,7 +8,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtWidgets import QApplication
 
-from main import InventoryPreviewDialog, MainWindow, MiniWidgetDialog
+from main import InventoryPreviewDialog, MainWindow, MiniWidgetDialog, create_app_icon
 
 
 class DashboardNavigationTests(unittest.TestCase):
@@ -30,6 +30,14 @@ class DashboardNavigationTests(unittest.TestCase):
             [button.text() for button in self.window.dashboard_cards],
             ["📦  출고 파일 변환", "▤  재고 조회"],
         )
+
+    def test_main_window_stays_on_top_and_has_taskbar_icon(self) -> None:
+        icon = create_app_icon()
+        QApplication.setWindowIcon(icon)
+        self.window.setWindowIcon(icon)
+
+        self.assertTrue(self.window.windowFlags() & self.window.windowFlags().WindowStaysOnTopHint)
+        self.assertFalse(self.window.windowIcon().isNull())
 
     def test_shipping_card_opens_shipping_workspace(self) -> None:
         self.window.dashboard_cards[0].click()
@@ -118,14 +126,46 @@ class DashboardNavigationTests(unittest.TestCase):
         widget.close()
 
     def test_mini_widget_supports_quick_inventory_search(self) -> None:
+        self.window.inventory_rows.extend([
+            {"code": "MINT-4", "name": "민트 관련 품목 4", "headquarters_stock": 1, "wekeep_stock": 2, "safety": 0},
+            {"code": "MINT-5", "name": "민트 관련 품목 5", "headquarters_stock": 1, "wekeep_stock": 2, "safety": 0},
+        ])
         widget = MiniWidgetDialog(self.window)
         widget.inventory_search_input.setText("민트")
-        self.assertEqual(widget.inventory_results.count(), 3)
+        self.assertEqual(widget.inventory_results.count(), 5)
         self.assertIn("위킵 20", widget.inventory_results.item(0).text())
         widget.inventory_search_input.setText("없는품목")
         self.assertEqual(widget.inventory_results.count(), 1)
         self.assertIn("검색 결과가 없습니다", widget.inventory_results.item(0).text())
         widget.close()
+
+    def test_inventory_safety_stock_cell_saves_immediately(self) -> None:
+        self.window.save_inventory_safety_stock = Mock(return_value=True)
+        dialog = InventoryPreviewDialog(self.window)
+
+        safety_item = dialog.table.item(0, 5)
+        safety_item.setText("42")
+
+        self.window.save_inventory_safety_stock.assert_called_once_with("QP1000C-BL", 42.0)
+        dialog.close()
+
+    def test_saving_safety_stock_updates_database_catalog_and_shared_rows(self) -> None:
+        query = Mock()
+        query.update.return_value = query
+        query.eq.return_value = query
+        query.execute.return_value = Mock(data=[])
+        self.window.supabase_client = Mock()
+        self.window.supabase_client.table.return_value = query
+        self.window.catalog = {
+            "items": [{"item_code": "QP1000C-BL", "standard_name": "QP1000C 블루", "safety_stock": 30}]
+        }
+
+        saved = self.window.save_inventory_safety_stock("QP1000C-BL", 42)
+
+        self.assertTrue(saved)
+        query.update.assert_called_once_with({"safety_stock": 42})
+        self.assertEqual(self.window.catalog["items"][0]["safety_stock"], 42)
+        self.assertEqual(self.window.inventory_rows[0]["safety"], 42)
 
     def test_mini_widget_buttons_route_to_each_function(self) -> None:
         widget = MiniWidgetDialog(self.window)
