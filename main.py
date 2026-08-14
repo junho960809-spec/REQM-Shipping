@@ -90,7 +90,7 @@ DEFAULT_CONFIG = {
     },
 }
 ADMIN_USER_ID = "c7937d51-1a14-47aa-987e-6254c6c79014"
-APP_VERSION = "1.0.59"
+APP_VERSION = "1.0.60"
 UPDATE_BASE_URL = "https://jcslohuraqclhryeqxoc.supabase.co/storage/v1/object/public/reqm-updates"
 UPDATE_MANIFEST_URL = f"{UPDATE_BASE_URL}/manifest.json"
 RECENT_WORK_PATH = Path(os.getenv("LOCALAPPDATA", str(Path.home()))) / "REQM" / "recent_work.json"
@@ -2384,7 +2384,7 @@ class MainWindow(QMainWindow):
         self.dashboard_button = QPushButton("←  메인으로")
         self.dashboard_button.setObjectName("adminButton")
         self.dashboard_button.setMaximumWidth(125)
-        self.export_button = QPushButton("택배 출고용 변환")
+        self.export_button = QPushButton("출고 변환")
         self.export_button.setObjectName("exportButton")
         self.export_button.setEnabled(False)
         self.ecount_button = QPushButton("이카운트 창고이동")
@@ -3649,10 +3649,8 @@ class MainWindow(QMainWindow):
                 self.selected_location_name = detected_type if embedded_destination else ""
                 self.refresh_location_combo(detected_type)
                 self.location_apply_button.setEnabled(True)
-                self.export_button.setText(
-                    "매장 출고용 변환" if detected_type.startswith("트래블메이트") else "면세점 출고용 변환"
-                )
-                self.export_button.setEnabled(embedded_destination)
+                self.export_button.setText("출고 변환")
+                self.export_button.setEnabled(True)
             else:
                 if expected_type not in {"b2c", "auto"}:
                     raise ValueError("면세점 B2B 양식을 찾지 못했습니다. B2C 파일이라면 B2C 엑셀 파일 버튼을 사용하세요.")
@@ -3708,7 +3706,7 @@ class MainWindow(QMainWindow):
                 detected_type = orders[0].get("source_format", "일반 택배") if orders else "일반 택배"
                 self.current_mode = "parcel"
                 self.location_apply_button.setEnabled(False)
-                self.export_button.setText("택배 출고용 변환")
+                self.export_button.setText("출고 변환")
                 self.export_button.setEnabled(True)
             self.mark_duplicates(orders)
             if detected_type.startswith("판매처 직접파일"):
@@ -3731,8 +3729,6 @@ class MainWindow(QMainWindow):
             f"확인필요 {counts['ambiguous']:,} · 미등록 {counts['missing']:,} · "
             f"바코드오류 {counts['barcode_error']:,} · {len(columns)}개 열 인식"
         )
-        if simple_duty_free and self.location_combo.count():
-            self.apply_location()
 
     def apply_direct_suggestions(self, orders: list[dict], confirmed: list[dict], reviews: list[dict]) -> None:
         confirmed_by_key = {entry["key"]: entry["suggestion"] for entry in confirmed}
@@ -3893,9 +3889,6 @@ class MainWindow(QMainWindow):
     def export_file(self) -> None:
         if not self.current_orders:
             QMessageBox.warning(self, "저장할 데이터 없음", "먼저 주문 파일을 불러오세요.")
-            return
-        if self.current_mode == "duty_free" and not self.selected_location_name:
-            QMessageBox.warning(self, "출고지 미적용", "면세점 출고지를 선택하고 '선택 출고지 적용'을 눌러주세요.")
             return
         unresolved = [row for row in self.current_orders if row.get("status") in {"missing", "ambiguous", "duplicate", "barcode_error"}]
         if unresolved:

@@ -130,6 +130,8 @@ class DashboardNavigationTests(unittest.TestCase):
         order = {
             "channel": "롯데면세점", "product_name": "테스트 품목", "quantity": "2",
             "ref_no": "REF-1", "sku_no": "SKU-1", "match_method": "name_or_code",
+            "recipient": "원본 수령인", "phone": "010-1111-2222", "zipcode": "12345",
+            "address": "원본 파일 주소 10",
         }
         location = {
             "id": "lotte", "name": "롯데 출고지", "channel": "롯데면세점",
@@ -151,7 +153,15 @@ class DashboardNavigationTests(unittest.TestCase):
 
         self.assertEqual(self.window.current_mode, "duty_free")
         self.assertEqual(self.window.current_orders[0]["internal_item_code"], "A001")
+        self.assertEqual(self.window.current_orders[0]["address"], "원본 파일 주소 10")
+        self.assertEqual(self.window.current_orders[0]["recipient"], "원본 수령인")
+        self.assertEqual(self.window.selected_location_name, "")
+        self.assertEqual(self.window.export_button.text(), "출고 변환")
+        self.assertTrue(self.window.export_button.isEnabled())
+
+        self.window.apply_location()
         self.assertEqual(self.window.current_orders[0]["address"], "서울시 테스트로 1")
+        self.assertEqual(self.window.current_orders[0]["recipient"], "담당자")
         self.assertEqual(self.window.selected_location_name, "롯데 출고지")
         self.assertNotIn("면세점 출고", [button.text() for button in self.window.dashboard_cards])
 
