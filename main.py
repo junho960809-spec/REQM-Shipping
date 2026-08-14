@@ -90,7 +90,7 @@ DEFAULT_CONFIG = {
     },
 }
 ADMIN_USER_ID = "c7937d51-1a14-47aa-987e-6254c6c79014"
-APP_VERSION = "1.0.60"
+APP_VERSION = "1.0.61"
 UPDATE_BASE_URL = "https://jcslohuraqclhryeqxoc.supabase.co/storage/v1/object/public/reqm-updates"
 UPDATE_MANIFEST_URL = f"{UPDATE_BASE_URL}/manifest.json"
 RECENT_WORK_PATH = Path(os.getenv("LOCALAPPDATA", str(Path.home()))) / "REQM" / "recent_work.json"
@@ -3613,9 +3613,8 @@ class MainWindow(QMainWindow):
                 except ValueError:
                     simple_result = None
                 if simple_result is not None:
-                    simple_orders, simple_channel = simple_result
-                    use_simple = expected_type == "b2b" or simple_channel != "면세점"
-                    if expected_type == "auto" and not use_simple:
+                    use_simple = expected_type == "b2b"
+                    if expected_type == "auto":
                         try:
                             _, probe_columns = load_orders(path)
                             use_simple = bool(missing_shipping_columns(probe_columns))

@@ -146,6 +146,7 @@ class DashboardNavigationTests(unittest.TestCase):
         with (
             patch("main.load_duty_free", return_value=None),
             patch("main.load_simple_duty_free", return_value=([order], "롯데면세점")),
+            patch("main.load_orders", return_value=([order], {"product_name": 0, "quantity": 1})),
             patch("main.load_locations", return_value=[location]),
             patch("main.find_reference_mapping", return_value={"item_code": "A001"}),
         ):
@@ -164,6 +165,39 @@ class DashboardNavigationTests(unittest.TestCase):
         self.assertEqual(self.window.current_orders[0]["recipient"], "담당자")
         self.assertEqual(self.window.selected_location_name, "롯데 출고지")
         self.assertNotIn("면세점 출고", [button.text() for button in self.window.dashboard_cards])
+
+    def test_regular_shipping_file_is_not_misclassified_by_marketplace_name(self) -> None:
+        order = {
+            "channel": "현대홈쇼핑", "order_number": "ORDER-1",
+            "product_name": "테스트 품목", "quantity": "1",
+            "recipient": "홍길동", "phone": "010-1234-5678",
+            "zipcode": "12345", "address": "서울시 원본 주소 1",
+            "source_format": "일반 택배",
+        }
+        columns = {
+            "channel": 0, "order_number": 1, "product_name": 2, "quantity": 3,
+            "recipient": 4, "phone": 5, "zipcode": 6, "address1": 7,
+        }
+        sparse_order = {
+            "channel": "현대면세점", "product_name": "테스트 품목", "quantity": "1",
+            "recipient": "", "phone": "", "zipcode": "", "address": "",
+        }
+        self.window.matcher = Mock()
+        self.window.matcher.match.return_value = {
+            "status": "exact", "matched_product": "테스트 품목", "components": "A001",
+        }
+        self.window.mark_duplicates = Mock()
+        with (
+            patch("main.load_duty_free", return_value=None),
+            patch("main.load_simple_duty_free", return_value=([sparse_order], "현대면세점")),
+            patch("main.load_orders", return_value=([order], columns)),
+        ):
+            self.window.load_order_file("현대홈쇼핑_일반출고.xlsx", "auto")
+
+        self.assertEqual(self.window.current_mode, "parcel")
+        self.assertEqual(self.window.current_orders[0]["recipient"], "홍길동")
+        self.assertEqual(self.window.current_orders[0]["phone"], "010-1234-5678")
+        self.assertEqual(self.window.current_orders[0]["address"], "서울시 원본 주소 1")
 
     def test_mini_widget_has_two_compact_function_buttons(self) -> None:
         widget = MiniWidgetDialog(self.window)
