@@ -5,6 +5,7 @@ import re
 import urllib.error
 import urllib.request
 from collections import defaultdict
+from datetime import date
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
@@ -161,6 +162,31 @@ def parse_transfer_result(response: dict[str, Any]) -> dict[str, Any]:
     return {"success_count": success, "fail_count": failed, "slip_numbers": data.get("SlipNos") or [], "raw": response}
 
 
+def parse_inventory_rows(response: dict[str, Any]) -> list[dict[str, Any]]:
+    if str(response.get("Status", "")) not in {"200", ""}:
+        error = response.get("Error") or response.get("Errors") or "재고 조회에 실패했습니다."
+        raise EcountError(f"이카운트 재고 조회 실패: {error}")
+    result = (response.get("Data") or {}).get("Result") or []
+    if not isinstance(result, list):
+        raise EcountError("이카운트 재고 응답의 품목 목록 형식이 올바르지 않습니다.")
+    rows = []
+    for record in result:
+        if not isinstance(record, dict):
+            continue
+        code = str(record.get("PROD_CD") or "").strip()
+        if not code:
+            continue
+        quantity = decimal_value(record.get("BAL_QTY"))
+        rows.append({
+            "code": code,
+            "name": str(record.get("PROD_DES") or record.get("PROD_SIZE_DES") or "").strip(),
+            "warehouse_code": str(record.get("WH_CD") or "").strip(),
+            "warehouse": str(record.get("WH_DES") or record.get("WH_CD") or "").strip(),
+            "stock": float(quantity),
+        })
+    return rows
+
+
 class EcountClient:
     def __init__(
         self, company_code: str, user_id: str, api_key: str, zone: str = "", test_mode: bool = False
@@ -247,3 +273,20 @@ class EcountClient:
             f"?SESSION_ID={encoded_session}"
         )
         return parse_transfer_result(self._post_json(url, payload))
+
+    def get_inventory_by_location(self, base_date: str = "") -> list[dict[str, Any]]:
+        session_id = self.login()
+        encoded_session = quote(session_id, safe="")
+        url = (
+            f"https://{self.api_host_prefix}{self.zone}.ecount.com/OAPI/V2/InventoryBalance/"
+            f"GetListInventoryBalanceStatusByLocation?SESSION_ID={encoded_session}"
+        )
+        response = self._post_json(url, {
+            "BASE_DATE": base_date or date.today().strftime("%Y%m%d"),
+            "COM_CODE": self.company_code,
+            "USER_ID": self.user_id,
+            "ZONE": self.zone,
+            "API_CERT_KEY": self.api_key,
+            "LAN_TYPE": "ko-KR",
+        })
+        return parse_inventory_rows(response)

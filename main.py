@@ -6,6 +6,8 @@ import shutil
 import subprocess
 import uuid
 import urllib.request
+import time
+from difflib import SequenceMatcher
 from datetime import datetime
 from urllib.parse import quote
 from pathlib import Path
@@ -61,7 +63,9 @@ from format_store import upsert_format
 from output_format_store import delete_output_format, load_output_formats, save_custom_output_format
 from direct_suggester import component_payload, components_text, suggest_direct_order
 from ecount_dialog import EcountTransferDialog
-from ecount_client import load_completed_transfer_requests
+from ecount_client import EcountClient, load_completed_transfer_requests
+from ecount_credential_store import load_api_key
+from ecount_user_store import load_ecount_users
 
 
 APP_DIR = Path(__file__).resolve().parent
@@ -82,7 +86,7 @@ DEFAULT_CONFIG = {
     },
 }
 ADMIN_USER_ID = "c7937d51-1a14-47aa-987e-6254c6c79014"
-APP_VERSION = "1.0.52"
+APP_VERSION = "1.0.54"
 UPDATE_BASE_URL = "https://jcslohuraqclhryeqxoc.supabase.co/storage/v1/object/public/reqm-updates"
 UPDATE_MANIFEST_URL = f"{UPDATE_BASE_URL}/manifest.json"
 RECENT_WORK_PATH = Path(os.getenv("LOCALAPPDATA", str(Path.home()))) / "REQM" / "recent_work.json"
@@ -1565,17 +1569,112 @@ class CalendarDropWidget(QCalendarWidget):
         super().dropEvent(event)
 
 
+def merge_inventory_by_item(
+    rows: list[dict], catalog_items: list[dict], headquarters_code: str, wekeep_code: str
+) -> list[dict]:
+    catalog_by_code = {
+        str(item.get("item_code", "")).strip().casefold(): item
+        for item in catalog_items
+    }
+    merged: dict[str, dict] = {}
+    for source in rows:
+        code = str(source.get("code", "")).strip()
+        if not code:
+            continue
+        key = code.casefold()
+        item = catalog_by_code.get(key, {})
+        target = merged.setdefault(key, {
+            "code": code,
+            "name": str(item.get("standard_name") or source.get("name") or ""),
+            "headquarters_stock": 0.0,
+            "wekeep_stock": 0.0,
+            "safety": 0.0,
+        })
+        warehouse_code = str(source.get("warehouse_code", "")).strip()
+        warehouse_name = str(source.get("warehouse", ""))
+        quantity = float(source.get("stock", 0) or 0)
+        if warehouse_code == headquarters_code or "본사" in warehouse_name:
+            target["headquarters_stock"] += quantity
+        elif warehouse_code == wekeep_code or "위킵" in warehouse_name:
+            target["wekeep_stock"] += quantity
+        safety_value = next(
+            (item.get(field) for field in ("safety_stock", "safe_stock", "minimum_stock") if item.get(field) is not None),
+            0,
+        )
+        try:
+            target["safety"] = float(str(safety_value).replace(",", ""))
+        except (TypeError, ValueError):
+            target["safety"] = 0.0
+    return sorted(merged.values(), key=lambda row: (row["name"].casefold(), row["code"].casefold()))
+
+
+class InventoryWorker(QThread):
+    succeeded = Signal(object)
+    failed = Signal(str)
+
+    def __init__(self, credentials: dict, catalog_items: list[dict], config: dict):
+        super().__init__()
+        self.credentials = credentials
+        self.catalog_items = catalog_items
+        self.config = config
+
+    def run(self) -> None:
+        try:
+            source_rows = EcountClient(**self.credentials).get_inventory_by_location()
+            rows = merge_inventory_by_item(
+                source_rows,
+                self.catalog_items,
+                str(self.config.get("source_warehouse") or "100"),
+                str(self.config.get("target_warehouse") or "300"),
+            )
+            self.succeeded.emit(rows)
+        except Exception as exc:
+            self.failed.emit(str(exc))
+
+
 class InventoryPreviewDialog(QDialog):
     """Design preview for the future Ecount inventory lookup workflow."""
 
     SAMPLE_ROWS = [
-        ("정상", "QP1000C-BL", "QP1000C 블루", "본사창고", "124", "118", "30", "연동 전 샘플"),
-        ("부족", "QP1000C-MT", "실리콘케이스 핸디형 민트", "위킵창고", "12", "9", "20", "연동 전 샘플"),
-        ("품절", "QP2000-WH", "고속충전 보조배터리 화이트", "본사창고", "0", "0", "15", "연동 전 샘플"),
+        {"code": "QP1000C-BL", "name": "QP1000C 블루", "headquarters_stock": 124, "wekeep_stock": 118, "safety": 30},
+        {"code": "QP1000C-MT", "name": "실리콘케이스 핸디형 민트", "headquarters_stock": 12, "wekeep_stock": 20, "safety": 20},
+        {"code": "QP2000-MT", "name": "미니 보조배터리 민트", "headquarters_stock": 15, "wekeep_stock": 37, "safety": 15},
+        {"code": "QP500-MT", "name": "충전기 민트", "headquarters_stock": 8, "wekeep_stock": 0, "safety": 10},
     ]
+
+    @staticmethod
+    def normalized(value: str) -> str:
+        return "".join(character.lower() for character in str(value) if character.isalnum())
+
+    @classmethod
+    def matches(cls, row: dict, query: str) -> bool:
+        needle = cls.normalized(query)
+        if not needle:
+            return True
+        code = cls.normalized(row.get("code", ""))
+        name = cls.normalized(row.get("name", ""))
+        combined = code + name
+        combined_iterator = iter(combined)
+        ordered_match = all(character in combined_iterator for character in needle)
+        return (
+            needle in combined
+            or ordered_match
+            or SequenceMatcher(None, needle, code).ratio() >= 0.62
+            or SequenceMatcher(None, needle, name).ratio() >= 0.62
+        )
+
+    @staticmethod
+    def status_for(row: dict) -> str:
+        if float(row.get("wekeep_stock", 0)) == 0:
+            return "품절"
+        if float(row.get("safety", 0)) > 0 and float(row.get("wekeep_stock", 0)) <= float(row.get("safety", 0)):
+            return "안전재고 도달"
+        return "정상"
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.main_window = parent
+        self.rows = list(getattr(parent, "inventory_rows", []) or [])
         self.setObjectName("inventoryPreview")
         self.setWindowTitle("이카운트 재고 조회")
         self.resize(980, 650)
@@ -1583,51 +1682,39 @@ class InventoryPreviewDialog(QDialog):
 
         title = QLabel("이카운트 재고 조회")
         title.setObjectName("inventoryTitle")
-        subtitle = QLabel("이카운트에 등록된 품목별 재고 현황을 확인합니다.")
+        subtitle = QLabel("품목별 현재고와 안전재고를 실시간으로 확인합니다.")
         subtitle.setObjectName("appSubtitle")
-        badge = QLabel("연동 준비 중")
-        badge.setObjectName("inventoryBadge")
+        self.badge = QLabel("재고 불러오는 중")
+        self.badge.setObjectName("inventoryBadge")
         header_text = QVBoxLayout()
         header_text.addWidget(title)
         header_text.addWidget(subtitle)
         header = QHBoxLayout()
         header.addLayout(header_text)
         header.addStretch(1)
-        header.addWidget(badge, 0, Qt.AlignmentFlag.AlignTop)
+        header.addWidget(self.badge, 0, Qt.AlignmentFlag.AlignTop)
 
         summary_row = QHBoxLayout()
         summary_row.setSpacing(12)
-        for label, value, object_name in (
-            ("전체 품목", "248", "inventoryTotal"),
-            ("정상 재고", "221", "inventoryNormal"),
-            ("부족 재고", "19", "inventoryLow"),
-            ("품절", "8", "inventoryOut"),
-        ):
-            card = QFrame()
-            card.setObjectName("inventorySummary")
-            card_layout = QVBoxLayout(card)
-            card_layout.setContentsMargins(18, 12, 18, 12)
-            label_widget = QLabel(label)
-            label_widget.setObjectName("inventorySummaryLabel")
-            value_widget = QLabel(value)
-            value_widget.setObjectName(object_name)
-            card_layout.addWidget(label_widget)
-            card_layout.addWidget(value_widget)
-            summary_row.addWidget(card, 1)
+        out_count = sum(1 for row in self.rows if float(row.get("wekeep_stock", 0)) == 0)
+        self.all_button = QPushButton(f"전체 품목\n{len(self.rows):,}")
+        self.out_button = QPushButton(f"품절\n{out_count:,}  ·  재고 0만 보기")
+        for button, mode in ((self.all_button, "all"), (self.out_button, "out")):
+            button.setObjectName("inventorySummaryButton")
+            button.setProperty("inventoryMode", mode)
+            button.clicked.connect(lambda checked=False, selected=mode: self.set_filter(selected))
+            summary_row.addWidget(button, 1)
+        self.active_filter = "all"
+        self.update_filter_buttons()
 
-        self.warehouse_combo = QComboBox()
-        self.warehouse_combo.addItems(["전체 창고", "본사창고", "위킵창고"])
-        self.warehouse_combo.setEnabled(False)
         self.search_input = QLineEdit()
-        self.search_input.setPlaceholderText("품목코드 또는 품목명 검색")
-        self.search_input.setEnabled(False)
-        self.search_button = QPushButton("조회")
+        self.search_input.setPlaceholderText("품목코드 또는 품목명 일부만 입력")
+        self.search_input.textChanged.connect(self.refresh_table)
+        self.search_input.returnPressed.connect(self.refresh_table)
+        self.search_button = QPushButton("검색")
         self.search_button.setObjectName("primaryButton")
-        self.search_button.setEnabled(False)
+        self.search_button.clicked.connect(self.refresh_table)
         filters = QHBoxLayout()
-        filters.addWidget(QLabel("창고"))
-        filters.addWidget(self.warehouse_combo)
-        filters.addSpacing(12)
         filters.addWidget(QLabel("품목 검색"))
         filters.addWidget(self.search_input, 1)
         filters.addWidget(self.search_button)
@@ -1635,9 +1722,12 @@ class InventoryPreviewDialog(QDialog):
         filter_card.setObjectName("inventoryFilter")
         filter_card.setLayout(filters)
 
-        self.table = QTableWidget(len(self.SAMPLE_ROWS), 8)
+        search_hint = QLabel("예: QP1000, 실리콘, 민트")
+        search_hint.setObjectName("inventoryNotice")
+
+        self.table = QTableWidget(0, 7)
         self.table.setHorizontalHeaderLabels(
-            ["상태", "품목코드", "품목명", "창고", "현재고", "가용재고", "안전재고", "최종 확인"]
+            ["상태", "품목코드", "품목명", "본사재고", "위킵재고", "안전재고", "최종 확인"]
         )
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
@@ -1645,32 +1735,21 @@ class InventoryPreviewDialog(QDialog):
         self.table.verticalHeader().setDefaultSectionSize(38)
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
         self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
-        status_colors = {"정상": "#d8f3e4", "부족": "#fff0d5", "품절": "#ffe1e1"}
-        status_text = {"정상": "#16844f", "부족": "#b56b00", "품절": "#d43b3b"}
-        for row_index, row in enumerate(self.SAMPLE_ROWS):
-            for column_index, value in enumerate(row):
-                item = QTableWidgetItem(value)
-                if column_index == 0:
-                    item.setBackground(QColor(status_colors[value]))
-                    item.setForeground(QColor(status_text[value]))
-                    item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                elif column_index in {4, 5, 6}:
-                    item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-                self.table.setItem(row_index, column_index, item)
+        self.refresh_table()
 
-        notice = QLabel("※ 현재 화면은 구성 시안이며 이카운트 API는 아직 연결되지 않았습니다.")
+        notice = QLabel("※ 재고는 이카운트에서 120초마다 자동 갱신됩니다.")
         notice.setObjectName("inventoryNotice")
         excel_button = QPushButton("Excel 저장")
-        refresh_button = QPushButton("↻  새로고침")
+        self.refresh_button = QPushButton("↻  새로고침")
         excel_button.setEnabled(False)
-        refresh_button.setEnabled(False)
+        self.refresh_button.clicked.connect(lambda: self.main_window.refresh_inventory(force=True))
         close_button = QPushButton("닫기")
         close_button.clicked.connect(self.accept)
         footer = QHBoxLayout()
         footer.addWidget(notice)
         footer.addStretch(1)
         footer.addWidget(excel_button)
-        footer.addWidget(refresh_button)
+        footer.addWidget(self.refresh_button)
         footer.addWidget(close_button)
 
         layout = QVBoxLayout(self)
@@ -1679,8 +1758,75 @@ class InventoryPreviewDialog(QDialog):
         layout.addLayout(header)
         layout.addLayout(summary_row)
         layout.addWidget(filter_card)
+        layout.addWidget(search_hint)
         layout.addWidget(self.table, 1)
         layout.addLayout(footer)
+        if self.main_window is not None:
+            self.main_window.inventoryUpdated.connect(self.on_inventory_updated)
+            self.on_inventory_updated(
+                self.rows,
+                getattr(self.main_window, "inventory_last_checked", ""),
+                getattr(self.main_window, "inventory_error", ""),
+            )
+            self.main_window.refresh_inventory()
+
+    def set_filter(self, mode: str) -> None:
+        self.active_filter = mode
+        self.update_filter_buttons()
+        self.refresh_table()
+
+    def update_filter_buttons(self) -> None:
+        for button in (self.all_button, self.out_button):
+            button.setProperty("selected", button.property("inventoryMode") == self.active_filter)
+            button.style().unpolish(button)
+            button.style().polish(button)
+
+    def filtered_rows(self) -> list[dict]:
+        query = self.search_input.text().strip()
+        return [
+            row for row in self.rows
+            if (self.active_filter != "out" or float(row.get("wekeep_stock", 0)) == 0)
+            and self.matches(row, query)
+        ]
+
+    def refresh_table(self) -> None:
+        rows = self.filtered_rows()
+        self.table.setRowCount(len(rows))
+        status_colors = {"정상": "#ffffff", "안전재고 도달": "#fff0d5", "품절": "#ffe1e1"}
+        status_text = {"정상": "#16844f", "안전재고 도달": "#b56b00", "품절": "#d43b3b"}
+        for row_index, row in enumerate(rows):
+            status = self.status_for(row)
+            values = [
+                status, row["code"], row["name"],
+                f"{float(row.get('headquarters_stock', 0)):g}",
+                f"{float(row.get('wekeep_stock', 0)):g}",
+                f"{float(row.get('safety', 0)):g}",
+                getattr(self.main_window, "inventory_last_checked", ""),
+            ]
+            for column_index, value in enumerate(values):
+                item = QTableWidgetItem(value)
+                item.setBackground(QColor(status_colors[status]))
+                if column_index == 0:
+                    item.setForeground(QColor(status_text[status]))
+                    item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                elif column_index in {3, 4, 5}:
+                    item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+                self.table.setItem(row_index, column_index, item)
+
+    def on_inventory_updated(self, rows: list[dict], checked_at: str, error: str) -> None:
+        self.rows = list(rows or [])
+        out_count = sum(1 for row in self.rows if float(row.get("wekeep_stock", 0)) == 0)
+        self.all_button.setText(f"전체 품목\n{len(self.rows):,}")
+        self.out_button.setText(f"품절\n{out_count:,}  ·  재고 0만 보기")
+        if error:
+            self.badge.setText("연동 오류")
+            self.badge.setToolTip(error)
+        elif checked_at:
+            self.badge.setText(f"연동 완료 · {checked_at}")
+            self.badge.setToolTip("")
+        else:
+            self.badge.setText("재고 불러오는 중")
+        self.refresh_table()
 
 
 class CalendarEventDialog(QDialog):
@@ -1803,10 +1949,10 @@ class MiniWidgetDialog(QDialog):
             | Qt.WindowType.WindowTitleHint
             | Qt.WindowType.WindowCloseButtonHint
         )
-        self.setFixedSize(430, 360)
+        self.setFixedSize(380, 500)
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(18, 16, 18, 18)
-        layout.setSpacing(12)
+        layout.setContentsMargins(14, 12, 14, 12)
+        layout.setSpacing(8)
 
         header = QHBoxLayout()
         title = QLabel("REQM 미니 위젯")
@@ -1818,17 +1964,11 @@ class MiniWidgetDialog(QDialog):
         header.addWidget(self.today_label)
         layout.addLayout(header)
 
-        hint = QLabel("필요한 업무를 누르면 바로 실행됩니다.")
-        hint.setObjectName("widgetHint")
-        layout.addWidget(hint)
-
         action_grid = QGridLayout()
-        action_grid.setHorizontalSpacing(10)
-        action_grid.setVerticalSpacing(10)
+        action_grid.setHorizontalSpacing(8)
         action_specs = [
-            ("📦  출고 파일 변환\n일반 · 면세점 파일 불러오기", "shipping"),
-            ("↔  창고이동\n불러온 품목 전송", "warehouse"),
-            ("📅  일정\n대시보드 일정 관리", "calendar"),
+            ("📦  출고", "shipping"),
+            ("📅  일정", "calendar"),
         ]
         self.action_buttons = []
         for index, (text, target) in enumerate(action_specs):
@@ -1839,21 +1979,100 @@ class MiniWidgetDialog(QDialog):
             button.clicked.connect(
                 lambda checked=False, selected_target=target: self.open_target(selected_target)
             )
-            action_grid.addWidget(button, index // 2, index % 2)
+            action_grid.addWidget(button, 0, index)
             self.action_buttons.append(button)
         layout.addLayout(action_grid)
+
+        inventory_title = QLabel("빠른 재고 검색")
+        inventory_title.setObjectName("widgetInventoryTitle")
+        self.widget_refresh_button = QPushButton("↻")
+        self.widget_refresh_button.setObjectName("widgetInventoryOpen")
+        self.widget_refresh_button.setFixedWidth(34)
+        self.widget_refresh_button.setToolTip("이카운트 재고 수동 갱신")
+        self.widget_refresh_button.clicked.connect(lambda: self.main_window.refresh_inventory(force=True))
+        open_inventory_button = QPushButton("전체 재고 열기")
+        open_inventory_button.setObjectName("widgetInventoryOpen")
+        open_inventory_button.clicked.connect(self.open_inventory)
+        inventory_header = QHBoxLayout()
+        inventory_header.addWidget(inventory_title)
+        inventory_header.addStretch(1)
+        inventory_header.addWidget(self.widget_refresh_button)
+        inventory_header.addWidget(open_inventory_button)
+        layout.addLayout(inventory_header)
+        self.inventory_search_input = QLineEdit()
+        self.inventory_search_input.setPlaceholderText("품목명·코드 일부 입력")
+        self.inventory_search_input.setObjectName("widgetInventorySearch")
+        self.inventory_search_input.textChanged.connect(self.refresh_inventory_results)
+        layout.addWidget(self.inventory_search_input)
+        self.inventory_results = QListWidget()
+        self.inventory_results.setObjectName("widgetInventoryResults")
+        self.inventory_results.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
+        self.inventory_results.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.inventory_results.setFixedHeight(226)
+        layout.addWidget(self.inventory_results)
+        self.inventory_checked_label = QLabel("최근 확인  ·  연동 전 샘플")
+        self.inventory_checked_label.setObjectName("widgetHint")
+        layout.addWidget(self.inventory_checked_label)
 
         self.event_summary = QLabel()
         self.event_summary.setObjectName("widgetEventSummary")
         self.event_summary.setWordWrap(True)
-        layout.addWidget(self.event_summary)
+        self.event_summary.hide()
 
         self.attachment_button = QPushButton("일정 첨부 파일 다운로드")
         self.attachment_button.setObjectName("widgetAttachment")
         self.attachment_button.setEnabled(False)
         self.attachment_button.clicked.connect(self.download_selected_attachments)
-        layout.addWidget(self.attachment_button, 0, Qt.AlignmentFlag.AlignRight)
-        self.refresh_events()
+        self.main_window.inventoryUpdated.connect(self.on_inventory_updated)
+        self.refresh_inventory_results()
+        self.main_window.refresh_inventory()
+
+    def refresh_inventory_results(self) -> None:
+        query = self.inventory_search_input.text().strip()
+        rows = [
+            row for row in self.main_window.inventory_rows
+            if InventoryPreviewDialog.matches(row, query)
+        ][:3]
+        self.inventory_results.clear()
+        if not rows:
+            self.inventory_results.addItem("검색 결과가 없습니다.")
+            return
+        for row in rows:
+            status = InventoryPreviewDialog.status_for(row)
+            item = QListWidgetItem(
+                f"{row['code']}  {row['name']}\n"
+                f"본사 {float(row.get('headquarters_stock', 0)):g}  /  "
+                f"위킵 {float(row.get('wekeep_stock', 0)):g}  /  "
+                f"안전 {float(row.get('safety', 0)):g}"
+            )
+            if status == "품절":
+                item.setBackground(QColor("#ffe1e1"))
+                item.setForeground(QColor("#b92f2f"))
+            elif status == "안전재고 도달":
+                item.setBackground(QColor("#fff0d5"))
+                item.setForeground(QColor("#9a5c00"))
+            self.inventory_results.addItem(item)
+
+    def on_inventory_updated(self, rows: list[dict], checked_at: str, error: str) -> None:
+        self.widget_refresh_button.setEnabled(not bool(getattr(self.main_window, "inventory_worker", None)))
+        if error:
+            self.inventory_checked_label.setText("재고 연동 오류")
+            self.inventory_checked_label.setToolTip(error)
+        elif checked_at:
+            self.inventory_checked_label.setText(f"최근 확인  ·  {checked_at}")
+            self.inventory_checked_label.setToolTip("")
+        else:
+            self.inventory_checked_label.setText("재고 불러오는 중")
+        self.refresh_inventory_results()
+
+    def open_inventory(self) -> None:
+        self.opening_main_window = True
+        self.main_window.showNormal()
+        self.main_window.show_dashboard()
+        self.main_window.raise_()
+        self.main_window.activateWindow()
+        self.close()
+        self.main_window.open_inventory_preview()
 
     def refresh_events(self) -> None:
         today_text = QDate.currentDate().toString("yyyy-MM-dd")
@@ -1896,8 +2115,6 @@ class MiniWidgetDialog(QDialog):
         self.main_window.raise_()
         self.main_window.activateWindow()
         self.close()
-        if target == "warehouse":
-            self.main_window.open_dashboard_warehouse_transfer()
 
     def open_main_window(self) -> None:
         self.open_target("calendar")
@@ -1911,6 +2128,8 @@ class MiniWidgetDialog(QDialog):
         event.accept()
 
 class MainWindow(QMainWindow):
+    inventoryUpdated = Signal(object, str, str)
+
     def __init__(self):
         super().__init__()
         self.worker = None
@@ -1925,6 +2144,16 @@ class MainWindow(QMainWindow):
         self.duty_locations = load_locations()
         self.selected_location_name = ""
         self.is_admin = False
+        self.inventory_rows: list[dict] = []
+        self.inventory_last_checked = ""
+        self.inventory_error = ""
+        self.inventory_worker = None
+        self.inventory_last_request_monotonic = 0.0
+        self.inventory_last_success_monotonic = 0.0
+        self.inventory_alerted_codes: set[str] = set()
+        self.inventory_timer = QTimer(self)
+        self.inventory_timer.setInterval(120_000)
+        self.inventory_timer.timeout.connect(self.refresh_inventory)
         self.setWindowTitle("REQM 출고 관리")
         self.resize(1420, 860)
         self.setStyleSheet("""
@@ -1962,6 +2191,10 @@ class MainWindow(QMainWindow):
             QLabel#inventoryBadge { background: #e3f6f3; color: #16877f; border-radius: 15px; padding: 8px 14px; font-weight: 800; }
             QFrame#inventorySummary, QFrame#inventoryFilter { background: #ffffff; border: 1px solid #dfdfda; border-radius: 14px; }
             QFrame#inventoryFilter { padding: 7px; }
+            QPushButton#inventorySummaryButton { background: #ffffff; border: 1px solid #dfdfda; border-radius: 14px; padding: 16px 20px; min-height: 62px; text-align: left; font-size: 16px; }
+            QPushButton#inventorySummaryButton:hover { border: 2px solid #48bdb7; background: #f3fbfa; }
+            QPushButton#inventorySummaryButton[selected="true"] { border: 2px solid #168f88; background: #e9f8f6; color: #155f5a; }
+            QPushButton#inventorySummaryButton[inventoryMode="out"] { color: #c93c3c; }
             QLabel#inventorySummaryLabel { color: #626662; font-size: 12px; font-weight: 700; }
             QLabel#inventoryTotal, QLabel#inventoryNormal, QLabel#inventoryLow, QLabel#inventoryOut { font-size: 24px; font-weight: 900; }
             QLabel#inventoryTotal { color: #225c9e; }
@@ -1971,9 +2204,14 @@ class MainWindow(QMainWindow):
             QLabel#inventoryNotice { color: #777b77; font-size: 11px; }
             QLabel#widgetTitle { color: #111111; font-size: 20px; font-weight: 900; }
             QLabel#widgetHint { color: #71736f; font-size: 12px; }
-            QPushButton#widgetAction { background: #ffffff; color: #151515; border: 1px solid #dfdfda; border-radius: 16px; padding: 13px 14px; min-height: 54px; font-size: 13px; text-align: left; }
+            QPushButton#widgetAction { background: #ffffff; color: #151515; border: 1px solid #dfdfda; border-radius: 12px; padding: 9px 12px; min-height: 24px; font-size: 12px; text-align: center; }
             QPushButton#widgetAction:hover { background: #e9f8f6; border: 2px solid #48bdb7; }
             QLabel#widgetEventSummary { background: #eef7f5; color: #315d59; border-radius: 11px; padding: 9px 11px; font-size: 12px; }
+            QLabel#widgetInventoryTitle { color: #111111; font-size: 14px; font-weight: 850; padding-top: 3px; }
+            QLineEdit#widgetInventorySearch { padding: 9px 12px; }
+            QListWidget#widgetInventoryResults { background: #ffffff; border: 1px solid #dfdfda; border-radius: 12px; padding: 4px; }
+            QListWidget#widgetInventoryResults::item { padding: 6px 8px; border-bottom: 1px solid #eeeeea; font-size: 11px; }
+            QPushButton#widgetInventoryOpen { padding: 7px 11px; border-radius: 11px; font-size: 11px; }
             QPushButton#widgetAttachment { background: transparent; color: #5f6562; border: none; padding: 2px 4px; font-size: 11px; text-decoration: underline; }
             QListWidget#widgetEventList { background: #ffffff; border: 1px solid #dfdfda; border-radius: 16px; padding: 7px; }
             QListWidget#widgetEventList::item { padding: 11px 9px; border-bottom: 1px solid #eeeeea; font-size: 13px; }
@@ -2239,7 +2477,7 @@ class MainWindow(QMainWindow):
         shipment.clicked.connect(self.show_shipping_workspace)
         inventory = self.dashboard_card(
             "▤  재고 조회",
-            "이카운트 품목별 현재고 · 가용재고 · 안전재고 확인",
+            "이카운트 품목별 현재고 · 안전재고 실시간 확인",
         )
         inventory.clicked.connect(self.open_inventory_preview)
         shipment.setMaximumWidth(430)
@@ -2333,6 +2571,96 @@ class MainWindow(QMainWindow):
 
     def open_inventory_preview(self) -> None:
         InventoryPreviewDialog(self).exec()
+
+    def inventory_credentials(self) -> dict:
+        config = load_config().get("ecount", {})
+        configured_user = str(config.get("user_id", "")).strip()
+        profiles = load_ecount_users()
+        candidates = sorted(
+            profiles,
+            key=lambda row: 0 if row.get("user_id", "").casefold() == configured_user.casefold() else 1,
+        )
+        profile = next((row for row in candidates if load_api_key(row.get("user_id", ""))), None)
+        if profile is None:
+            raise RuntimeError("저장된 이카운트 사용자와 API 인증키가 없습니다. 창고이동 화면에서 먼저 등록하세요.")
+        return {
+            "company_code": str(config.get("company_code") or "304293"),
+            "user_id": profile["user_id"],
+            "api_key": load_api_key(profile["user_id"]),
+            "zone": str(config.get("zone") or "AB"),
+            "test_mode": bool(config.get("test_mode", False)),
+        }
+
+    def refresh_inventory(self, force: bool = False) -> None:
+        if self.inventory_worker is not None and self.inventory_worker.isRunning():
+            return
+        now = time.monotonic()
+        if force and now - self.inventory_last_request_monotonic < 5:
+            self.inventoryUpdated.emit(self.inventory_rows, self.inventory_last_checked, self.inventory_error)
+            return
+        if not force and self.inventory_rows and now - self.inventory_last_success_monotonic < 115:
+            self.inventoryUpdated.emit(self.inventory_rows, self.inventory_last_checked, self.inventory_error)
+            return
+        try:
+            credentials = self.inventory_credentials()
+        except Exception as exc:
+            self.inventory_error = str(exc)
+            self.inventoryUpdated.emit(self.inventory_rows, self.inventory_last_checked, self.inventory_error)
+            return
+        self.inventory_error = ""
+        self.inventory_last_request_monotonic = now
+        self.inventory_worker = InventoryWorker(
+            credentials,
+            self.catalog.get("items", []),
+            load_config().get("ecount", {}),
+        )
+        self.inventory_worker.succeeded.connect(self.on_inventory_loaded)
+        self.inventory_worker.failed.connect(self.on_inventory_failed)
+        self.inventory_worker.finished.connect(self.release_inventory_worker)
+        self.inventoryUpdated.emit(self.inventory_rows, self.inventory_last_checked, "")
+        self.inventory_worker.start()
+
+    def on_inventory_loaded(self, rows: list[dict]) -> None:
+        self.inventory_rows = rows
+        self.inventory_last_success_monotonic = time.monotonic()
+        self.inventory_last_checked = QDate.currentDate().toString("yyyy-MM-dd") + " " + datetime.now().strftime("%H:%M:%S")
+        self.inventory_error = ""
+        self.inventory_timer.start()
+        self.inventoryUpdated.emit(self.inventory_rows, self.inventory_last_checked, "")
+        reached = []
+        current_alert_codes = set()
+        for row in rows:
+            code = str(row.get("code", ""))
+            safety = float(row.get("safety", 0) or 0)
+            wekeep = float(row.get("wekeep_stock", 0) or 0)
+            if safety > 0 and wekeep <= safety:
+                current_alert_codes.add(code)
+                if code not in self.inventory_alerted_codes:
+                    reached.append(row)
+        self.inventory_alerted_codes.intersection_update(current_alert_codes)
+        self.inventory_alerted_codes.update(current_alert_codes)
+        if reached:
+            details = "\n".join(
+                f"• {row.get('code', '')} {row.get('name', '')} · 위킵 {float(row.get('wekeep_stock', 0)):g} / 안전 {float(row.get('safety', 0)):g}"
+                for row in reached[:10]
+            )
+            remaining = f"\n외 {len(reached) - 10:,}개 품목" if len(reached) > 10 else ""
+            QMessageBox.warning(
+                self,
+                "위킵 안전재고 도달",
+                f"위킵 재고가 안전재고 이하가 된 품목이 있습니다.\n\n{details}{remaining}",
+            )
+
+    def on_inventory_failed(self, message: str) -> None:
+        self.inventory_error = message
+        self.inventoryUpdated.emit(self.inventory_rows, self.inventory_last_checked, message)
+
+    def release_inventory_worker(self) -> None:
+        worker = self.inventory_worker
+        self.inventory_worker = None
+        self.inventoryUpdated.emit(self.inventory_rows, self.inventory_last_checked, self.inventory_error)
+        if worker is not None:
+            worker.deleteLater()
 
     def open_dashboard_warehouse_transfer(self) -> None:
         if not self.current_orders:
@@ -2635,6 +2963,7 @@ class MainWindow(QMainWindow):
             catalog["items"], catalog["products"], catalog["components"],
             catalog["aliases"], catalog["barcodes"],
         )
+        self.refresh_inventory()
         self.login_row.removeWidget(self.login_button)
         self.login_card.hide()
         self.login_button.setText("로그아웃")

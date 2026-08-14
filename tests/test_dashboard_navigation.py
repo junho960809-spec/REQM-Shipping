@@ -18,6 +18,9 @@ class DashboardNavigationTests(unittest.TestCase):
 
     def setUp(self) -> None:
         self.window = MainWindow()
+        self.window.inventory_rows = [dict(row) for row in InventoryPreviewDialog.SAMPLE_ROWS]
+        self.window.inventory_last_checked = "2026-08-14 10:00:00"
+        self.window.refresh_inventory = Mock()
 
     def tearDown(self) -> None:
         self.window.close()
@@ -37,11 +40,36 @@ class DashboardNavigationTests(unittest.TestCase):
             self.window.dashboard_cards[1].click()
         opened.assert_called_once()
 
-    def test_inventory_preview_is_not_connected_yet(self) -> None:
+    def test_inventory_preview_uses_shared_live_inventory_rows(self) -> None:
         dialog = InventoryPreviewDialog(self.window)
-        self.assertEqual(dialog.table.rowCount(), 3)
-        self.assertFalse(dialog.search_button.isEnabled())
-        self.assertIn("연동 전 샘플", dialog.table.item(0, 7).text())
+        self.assertEqual(dialog.table.rowCount(), 4)
+        self.assertTrue(dialog.search_button.isEnabled())
+        self.assertEqual(dialog.table.columnCount(), 7)
+        self.assertEqual(dialog.table.item(0, 6).text(), "2026-08-14 10:00:00")
+        dialog.close()
+
+    def test_inventory_filters_out_of_stock_and_highlights_safety_threshold(self) -> None:
+        dialog = InventoryPreviewDialog(self.window)
+        dialog.set_filter("out")
+        self.assertEqual(dialog.table.rowCount(), 1)
+        self.assertEqual(dialog.table.item(0, 0).text(), "품절")
+        dialog.set_filter("all")
+        safety_rows = [
+            row for row in range(dialog.table.rowCount())
+            if dialog.table.item(row, 0).text() == "안전재고 도달"
+        ]
+        self.assertEqual(len(safety_rows), 1)
+        self.assertEqual(dialog.table.item(safety_rows[0], 4).text(), dialog.table.item(safety_rows[0], 5).text())
+        dialog.close()
+
+    def test_inventory_approximate_search_accepts_partial_name_and_code(self) -> None:
+        dialog = InventoryPreviewDialog(self.window)
+        dialog.search_input.setText("실리콘민트")
+        self.assertEqual(dialog.table.rowCount(), 1)
+        self.assertEqual(dialog.table.item(0, 1).text(), "QP1000C-MT")
+        dialog.search_input.setText("qp500")
+        self.assertEqual(dialog.table.rowCount(), 1)
+        self.assertEqual(dialog.table.item(0, 0).text(), "품절")
         dialog.close()
 
     def test_sparse_duty_free_file_uses_unified_shipping_workspace(self) -> None:
@@ -73,12 +101,30 @@ class DashboardNavigationTests(unittest.TestCase):
         self.assertEqual(self.window.selected_location_name, "롯데 출고지")
         self.assertNotIn("면세점 출고", [button.text() for button in self.window.dashboard_cards])
 
-    def test_mini_widget_has_three_unified_function_buttons(self) -> None:
+    def test_mini_widget_has_two_compact_function_buttons(self) -> None:
         widget = MiniWidgetDialog(self.window)
         self.assertEqual(
             [button.property("widgetTarget") for button in widget.action_buttons],
-            ["shipping", "warehouse", "calendar"],
+            ["shipping", "calendar"],
         )
+        self.assertEqual((widget.width(), widget.height()), (380, 500))
+        self.assertEqual([button.text() for button in widget.action_buttons], ["📦  출고", "📅  일정"])
+        self.assertEqual(
+            widget.inventory_results.selectionMode(),
+            widget.inventory_results.SelectionMode.NoSelection,
+        )
+        self.assertEqual(widget.inventory_results.height(), 226)
+        self.assertTrue(widget.event_summary.isHidden())
+        widget.close()
+
+    def test_mini_widget_supports_quick_inventory_search(self) -> None:
+        widget = MiniWidgetDialog(self.window)
+        widget.inventory_search_input.setText("민트")
+        self.assertEqual(widget.inventory_results.count(), 3)
+        self.assertIn("위킵 20", widget.inventory_results.item(0).text())
+        widget.inventory_search_input.setText("없는품목")
+        self.assertEqual(widget.inventory_results.count(), 1)
+        self.assertIn("검색 결과가 없습니다", widget.inventory_results.item(0).text())
         widget.close()
 
     def test_mini_widget_buttons_route_to_each_function(self) -> None:
@@ -86,16 +132,12 @@ class DashboardNavigationTests(unittest.TestCase):
         widget.close = Mock()
         self.window.show_shipping_workspace = Mock()
         self.window.show_dashboard = Mock()
-        self.window.open_dashboard_warehouse_transfer = Mock()
 
         widget.open_target("shipping")
         self.window.show_shipping_workspace.assert_called_once_with()
 
-        widget.open_target("warehouse")
-        self.window.open_dashboard_warehouse_transfer.assert_called_once_with()
-
         widget.open_target("calendar")
-        self.assertEqual(self.window.show_dashboard.call_count, 2)
+        self.assertEqual(self.window.show_dashboard.call_count, 1)
         widget.deleteLater()
 
 

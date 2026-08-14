@@ -1,8 +1,12 @@
 import unittest
 from unittest.mock import patch
 
-from ecount_client import EcountClient, EcountError, build_location_transfer_payload, collect_transfer_items, parse_transfer_result
+from ecount_client import (
+    EcountClient, EcountError, build_location_transfer_payload, collect_transfer_items,
+    parse_inventory_rows, parse_transfer_result,
+)
 from ecount_dialog import EcountTransferDialog
+from main import merge_inventory_by_item
 
 
 class EcountTransferTests(unittest.TestCase):
@@ -68,6 +72,43 @@ class EcountTransferTests(unittest.TestCase):
             with patch.object(client, "_post_json", return_value=response) as post:
                 client.save_location_transfer({"LocationTranList": []})
         self.assertIn("SESSION_ID=session%2Bvalue%2F%3D", post.call_args.args[0])
+
+    def test_parses_inventory_by_location_rows(self):
+        rows = parse_inventory_rows({
+            "Status": "200",
+            "Data": {"Result": [{
+                "WH_CD": "100", "WH_DES": "01-본사창고", "PROD_CD": "A001",
+                "PROD_DES": "테스트 품목", "BAL_QTY": "12.0000000000",
+            }]},
+        })
+        self.assertEqual(rows, [{
+            "code": "A001", "name": "테스트 품목", "warehouse_code": "100",
+            "warehouse": "01-본사창고", "stock": 12.0,
+        }])
+
+    def test_merges_headquarters_and_wekeep_inventory_into_one_item_row(self):
+        rows = merge_inventory_by_item(
+            [
+                {"code": "A001", "name": "테스트", "warehouse_code": "100", "warehouse": "본사", "stock": 12},
+                {"code": "A001", "name": "테스트", "warehouse_code": "300", "warehouse": "위킵", "stock": 7},
+            ],
+            [{"item_code": "A001", "standard_name": "표준 품목", "safety_stock": 7}],
+            "100", "300",
+        )
+        self.assertEqual(rows, [{
+            "code": "A001", "name": "표준 품목", "headquarters_stock": 12.0,
+            "wekeep_stock": 7.0, "safety": 7.0,
+        }])
+
+    def test_inventory_query_uses_encoded_session_and_base_date(self):
+        client = EcountClient("304293", "JUNHO191", "secret", "AB")
+        response = {"Status": "200", "Data": {"Result": []}}
+        with patch.object(client, "login", return_value="session+value/="):
+            with patch.object(client, "_post_json", return_value=response) as post:
+                rows = client.get_inventory_by_location("20260814")
+        self.assertEqual(rows, [])
+        self.assertIn("SESSION_ID=session%2Bvalue%2F%3D", post.call_args.args[0])
+        self.assertEqual(post.call_args.args[1]["BASE_DATE"], "20260814")
 
     def test_uses_sboapi_for_test_key(self):
         client = EcountClient("304293", "JUNHO191", "test-secret", "AB", test_mode=True)
