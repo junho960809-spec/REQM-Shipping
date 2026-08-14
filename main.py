@@ -66,6 +66,7 @@ from ecount_dialog import EcountTransferDialog
 from ecount_client import EcountClient, load_completed_transfer_requests
 from ecount_credential_store import load_api_key
 from ecount_user_store import load_ecount_users
+from inventory_display_filter import filter_inventory_display_rows
 
 
 APP_DIR = Path(__file__).resolve().parent
@@ -86,7 +87,7 @@ DEFAULT_CONFIG = {
     },
 }
 ADMIN_USER_ID = "c7937d51-1a14-47aa-987e-6254c6c79014"
-APP_VERSION = "1.0.54"
+APP_VERSION = "1.0.55"
 UPDATE_BASE_URL = "https://jcslohuraqclhryeqxoc.supabase.co/storage/v1/object/public/reqm-updates"
 UPDATE_MANIFEST_URL = f"{UPDATE_BASE_URL}/manifest.json"
 RECENT_WORK_PATH = Path(os.getenv("LOCALAPPDATA", str(Path.home()))) / "REQM" / "recent_work.json"
@@ -1627,6 +1628,7 @@ class InventoryWorker(QThread):
                 str(self.config.get("source_warehouse") or "100"),
                 str(self.config.get("target_warehouse") or "300"),
             )
+            rows = filter_inventory_display_rows(rows)
             self.succeeded.emit(rows)
         except Exception as exc:
             self.failed.emit(str(exc))
