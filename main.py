@@ -68,6 +68,7 @@ from ecount_client import EcountClient, load_completed_transfer_requests
 from ecount_credential_store import load_api_key
 from ecount_user_store import load_ecount_users
 from inventory_display_filter import filter_inventory_display_rows
+from inventory_safety_store import load_safety_stocks, save_safety_stock
 
 
 APP_DIR = Path(__file__).resolve().parent
@@ -88,7 +89,7 @@ DEFAULT_CONFIG = {
     },
 }
 ADMIN_USER_ID = "c7937d51-1a14-47aa-987e-6254c6c79014"
-APP_VERSION = "1.0.56"
+APP_VERSION = "1.0.57"
 UPDATE_BASE_URL = "https://jcslohuraqclhryeqxoc.supabase.co/storage/v1/object/public/reqm-updates"
 UPDATE_MANIFEST_URL = f"{UPDATE_BASE_URL}/manifest.json"
 RECENT_WORK_PATH = Path(os.getenv("LOCALAPPDATA", str(Path.home()))) / "REQM" / "recent_work.json"
@@ -1599,8 +1600,10 @@ class CalendarDropWidget(QCalendarWidget):
 
 
 def merge_inventory_by_item(
-    rows: list[dict], catalog_items: list[dict], headquarters_code: str, wekeep_code: str
+    rows: list[dict], catalog_items: list[dict], headquarters_code: str, wekeep_code: str,
+    safety_overrides: dict[str, float] | None = None,
 ) -> list[dict]:
+    safety_overrides = safety_overrides or {}
     catalog_by_code = {
         str(item.get("item_code", "")).strip().casefold(): item
         for item in catalog_items
@@ -1620,11 +1623,10 @@ def merge_inventory_by_item(
             "safety": 0.0,
         })
         warehouse_code = str(source.get("warehouse_code", "")).strip()
-        warehouse_name = str(source.get("warehouse", ""))
         quantity = float(source.get("stock", 0) or 0)
-        if warehouse_code == headquarters_code or "본사" in warehouse_name:
+        if warehouse_code == headquarters_code:
             target["headquarters_stock"] += quantity
-        elif warehouse_code == wekeep_code or "위킵" in warehouse_name:
+        elif warehouse_code == wekeep_code:
             target["wekeep_stock"] += quantity
         safety_value = next(
             (item.get(field) for field in ("safety_stock", "safe_stock", "minimum_stock") if item.get(field) is not None),
@@ -1634,6 +1636,8 @@ def merge_inventory_by_item(
             target["safety"] = float(str(safety_value).replace(",", ""))
         except (TypeError, ValueError):
             target["safety"] = 0.0
+        if key in safety_overrides:
+            target["safety"] = float(safety_overrides[key])
     return sorted(merged.values(), key=lambda row: (row["name"].casefold(), row["code"].casefold()))
 
 
@@ -1655,6 +1659,7 @@ class InventoryWorker(QThread):
                 self.catalog_items,
                 str(self.config.get("source_warehouse") or "100"),
                 str(self.config.get("target_warehouse") or "300"),
+                load_safety_stocks(),
             )
             rows = filter_inventory_display_rows(rows)
             self.succeeded.emit(rows)
@@ -2696,14 +2701,17 @@ class MainWindow(QMainWindow):
             return False
         field = next(
             (name for name in ("safety_stock", "safe_stock", "minimum_stock") if name in catalog_item),
-            "safety_stock",
+            "",
         )
         try:
-            self.supabase_client.table("items").update({field: value}).eq("item_code", code).execute()
+            if field:
+                self.supabase_client.table("items").update({field: value}).eq("item_code", code).execute()
+            save_safety_stock(code, value)
         except Exception as exc:
             QMessageBox.critical(self, "안전재고 저장 실패", str(exc))
             return False
-        catalog_item[field] = value
+        if field:
+            catalog_item[field] = value
         for row in self.inventory_rows:
             if str(row.get("code", "")).strip().casefold() == code.casefold():
                 row["safety"] = value
@@ -3688,6 +3696,8 @@ if __name__ == "__main__":
     if not window.require_startup_login():
         window.close()
         sys.exit(0)
+    window.showNormal()
+    window.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, False)
     window.showNormal()
     window.raise_()
     window.activateWindow()

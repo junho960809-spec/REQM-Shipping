@@ -100,6 +100,21 @@ class EcountTransferTests(unittest.TestCase):
             "wekeep_stock": 7.0, "safety": 7.0,
         }])
 
+    def test_inventory_merge_uses_exact_warehouse_codes_only(self):
+        rows = merge_inventory_by_item(
+            [
+                {"code": "QMP5", "name": "QMP5", "warehouse_code": "100", "warehouse": "01-본사창고", "stock": 85},
+                {"code": "QMP5", "name": "QMP5", "warehouse_code": "CS001", "warehouse": "03-불량창고(본사)", "stock": 40},
+                {"code": "QMP5", "name": "QMP5", "warehouse_code": "300", "warehouse": "01-위킵창고", "stock": 3384},
+            ],
+            [],
+            "100",
+            "300",
+        )
+
+        self.assertEqual(rows[0]["headquarters_stock"], 85)
+        self.assertEqual(rows[0]["wekeep_stock"], 3384)
+
     def test_inventory_query_uses_encoded_session_and_base_date(self):
         client = EcountClient("304293", "JUNHO191", "secret", "AB")
         response = {"Status": "200", "Data": {"Result": []}}
