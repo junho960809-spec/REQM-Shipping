@@ -3,6 +3,7 @@ import sys
 import hashlib
 import os
 import ctypes
+import mimetypes
 import shutil
 import subprocess
 import uuid
@@ -89,12 +90,14 @@ DEFAULT_CONFIG = {
     },
 }
 ADMIN_USER_ID = "c7937d51-1a14-47aa-987e-6254c6c79014"
-APP_VERSION = "1.0.58"
+APP_VERSION = "1.0.59"
 UPDATE_BASE_URL = "https://jcslohuraqclhryeqxoc.supabase.co/storage/v1/object/public/reqm-updates"
 UPDATE_MANIFEST_URL = f"{UPDATE_BASE_URL}/manifest.json"
 RECENT_WORK_PATH = Path(os.getenv("LOCALAPPDATA", str(Path.home()))) / "REQM" / "recent_work.json"
 CALENDAR_EVENT_PATH = Path(os.getenv("LOCALAPPDATA", str(Path.home()))) / "REQM" / "calendar_events.json"
 WIDGET_SETTINGS_PATH = Path(os.getenv("LOCALAPPDATA", str(Path.home()))) / "REQM" / "widget_settings.json"
+CALENDAR_ATTACHMENT_BUCKET = "calendar-attachments"
+MAX_CALENDAR_ATTACHMENT_SIZE = 20 * 1024 * 1024
 
 
 def create_app_icon() -> QIcon:
@@ -149,6 +152,28 @@ def save_calendar_events(rows: list[dict]) -> None:
     CALENDAR_EVENT_PATH.write_text(
         json.dumps(rows, ensure_ascii=False, indent=2), encoding="utf-8"
     )
+
+
+def calendar_event_payload(row: dict) -> dict:
+    return {
+        "id": str(row.get("id") or uuid.uuid4()),
+        "event_date": str(row.get("date", "")),
+        "title": str(row.get("title", "")),
+        "info": str(row.get("info", "")),
+        "attachments": list(row.get("attachments") or []),
+        "updated_at": datetime.now().astimezone().isoformat(),
+    }
+
+
+def calendar_event_from_remote(row: dict, local_paths: list[str] | None = None) -> dict:
+    return {
+        "id": str(row.get("id", "")),
+        "date": str(row.get("event_date", "")),
+        "title": str(row.get("title", "")),
+        "info": str(row.get("info", "")),
+        "file_paths": list(local_paths or []),
+        "attachments": list(row.get("attachments") or []),
+    }
 
 
 def load_widget_target() -> str:
@@ -1087,6 +1112,12 @@ class LoginWorker(QThread):
             except Exception:
                 aliases = []
             try:
+                calendar_events = fetch_all_rows(client, "calendar_events")
+                calendar_shared_available = True
+            except Exception:
+                calendar_events = []
+                calendar_shared_available = False
+            try:
                 role_rows = fetch_all_rows(client, "app_user_roles")
                 app_role = next((r.get("role") for r in role_rows if str(r.get("user_id")) == str(auth_result.user.id)), "viewer")
             except Exception:
@@ -1095,7 +1126,9 @@ class LoginWorker(QThread):
                 len(items),
                 {"items": items, "products": products, "components": components, "barcodes": barcodes,
                  "duty_locations": duty_locations, "aliases": aliases, "client": client,
-                 "auth_user_id": str(auth_result.user.id), "app_role": app_role},
+                 "auth_user_id": str(auth_result.user.id), "app_role": app_role,
+                 "calendar_events": calendar_events,
+                 "calendar_shared_available": calendar_shared_available},
             )
         except Exception as exc:
             self.failed.emit(str(exc))
@@ -1916,11 +1949,15 @@ class CalendarEventDialog(QDialog):
         self.info_edit.setPlaceholderText("일정에 표시할 간단한 정보를 입력하세요.")
         self.info_edit.setPlainText(str(self.event_data.get("info", "")))
         self.file_list = QListWidget()
+        for attachment in self.event_data.get("attachments") or []:
+            item = QListWidgetItem(str(attachment.get("name") or "첨부 파일"))
+            item.setData(Qt.ItemDataRole.UserRole, {"storage_path": attachment.get("path", ""), "name": attachment.get("name", "")})
+            self.file_list.addItem(item)
         saved_paths = self.event_data.get("file_paths") or [self.event_data.get("file_path", "")]
         for path in saved_paths:
             if path:
                 item = QListWidgetItem(Path(str(path)).name)
-                item.setData(Qt.ItemDataRole.UserRole, str(path))
+                item.setData(Qt.ItemDataRole.UserRole, {"local_path": str(path), "name": Path(str(path)).name})
                 self.file_list.addItem(item)
         self.file_list.itemDoubleClicked.connect(self.open_attachment)
         attachment_buttons = QHBoxLayout()
@@ -1962,14 +1999,14 @@ class CalendarEventDialog(QDialog):
             self, "첨부 파일 추가", "", "문서 파일 (*.pdf *.xls *.xlsx *.csv)"
         )
         existing = {
-            self.file_list.item(index).data(Qt.ItemDataRole.UserRole)
+            str((self.file_list.item(index).data(Qt.ItemDataRole.UserRole) or {}).get("local_path", ""))
             for index in range(self.file_list.count())
         }
         for path in paths:
             if path in existing:
                 continue
             item = QListWidgetItem(Path(path).name)
-            item.setData(Qt.ItemDataRole.UserRole, path)
+            item.setData(Qt.ItemDataRole.UserRole, {"local_path": path, "name": Path(path).name})
             self.file_list.addItem(item)
             existing.add(path)
 
@@ -1983,16 +2020,24 @@ class CalendarEventDialog(QDialog):
             self.open_attachment(item)
 
     def open_attachment(self, item: QListWidgetItem) -> None:
-        path = str(item.data(Qt.ItemDataRole.UserRole) or "")
+        attachment = item.data(Qt.ItemDataRole.UserRole) or {}
+        if attachment.get("storage_path"):
+            parent = self.parent()
+            if parent is not None and hasattr(parent, "download_shared_attachment"):
+                parent.download_shared_attachment(attachment, open_after=True)
+            return
+        path = str(attachment.get("local_path", ""))
         if not path or not Path(path).exists():
             QMessageBox.warning(self, "첨부 파일", "이 PC에서 첨부 파일을 찾을 수 없습니다.")
             return
         os.startfile(path)
 
     def values(self) -> dict:
-        file_paths = [
-            str(self.file_list.item(index).data(Qt.ItemDataRole.UserRole) or "")
-            for index in range(self.file_list.count())
+        entries = [self.file_list.item(index).data(Qt.ItemDataRole.UserRole) or {} for index in range(self.file_list.count())]
+        file_paths = [str(entry.get("local_path", "")) for entry in entries if entry.get("local_path")]
+        attachments = [
+            {"path": str(entry.get("storage_path", "")), "name": str(entry.get("name", ""))}
+            for entry in entries if entry.get("storage_path")
         ]
         return {
             "id": str(self.event_data.get("id") or uuid.uuid4()),
@@ -2000,6 +2045,7 @@ class CalendarEventDialog(QDialog):
             "title": self.title_edit.text().strip(),
             "info": self.info_edit.toPlainText().strip(),
             "file_paths": [path for path in file_paths if path],
+            "attachments": attachments,
         }
 
 
@@ -2017,7 +2063,7 @@ class MiniWidgetDialog(QDialog):
             | Qt.WindowType.WindowTitleHint
             | Qt.WindowType.WindowCloseButtonHint
         )
-        self.setFixedSize(380, 500)
+        self.setFixedSize(498, 500)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(14, 12, 14, 12)
         layout.setSpacing(8)
@@ -2166,7 +2212,7 @@ class MiniWidgetDialog(QDialog):
     def update_attachment_button(self, current=None, previous=None) -> None:
         event_row = self.selected_event()
         paths = (event_row or {}).get("file_paths") or [(event_row or {}).get("file_path", "")]
-        self.attachment_button.setEnabled(any(paths))
+        self.attachment_button.setEnabled(any(paths) or bool((event_row or {}).get("attachments")))
 
     def download_selected_attachments(self) -> None:
         event_row = self.selected_event()
@@ -2588,6 +2634,7 @@ class MainWindow(QMainWindow):
         self.calendar_widget.setMinimumHeight(310)
         self.calendar_widget.filesDropped.connect(self.add_calendar_files)
         self.calendar_widget.clicked.connect(self.refresh_calendar_event_list)
+        self.calendar_widget.activated.connect(self.open_calendar_date)
         self.calendar_widget.currentPageChanged.connect(self.sync_calendar_month_controls)
         self.calendar_year_combo.currentIndexChanged.connect(self.change_calendar_month)
         self.calendar_month_combo.currentIndexChanged.connect(self.change_calendar_month)
@@ -2633,6 +2680,7 @@ class MainWindow(QMainWindow):
         self.calendar_month_combo.blockSignals(False)
 
     def show_dashboard(self) -> None:
+        self.refresh_shared_calendar_events()
         self.refresh_calendar_display()
         self.page_stack.setCurrentWidget(self.dashboard_page)
 
@@ -2849,8 +2897,35 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "일정 제목", "캘린더에 표시할 제목을 입력하세요.")
             return
         self.calendar_events.append(values)
-        save_calendar_events(self.calendar_events)
+        self.save_calendar_event_record(values)
         self.refresh_calendar_display()
+
+    def open_calendar_date(self, date: QDate) -> None:
+        self.calendar_widget.setSelectedDate(date)
+        date_text = date.toString("yyyy-MM-dd")
+        day_events = [row for row in self.calendar_events if row.get("date") == date_text]
+        if not day_events:
+            dialog = CalendarEventDialog(default_date=date, parent=self)
+            if dialog.exec() != QDialog.DialogCode.Accepted:
+                return
+            values = dialog.values()
+            if not values["title"]:
+                QMessageBox.warning(self, "일정 제목", "캘린더에 표시할 제목을 입력하세요.")
+                return
+            self.calendar_events.append(values)
+            self.save_calendar_event_record(values)
+            self.refresh_calendar_display()
+            return
+        event_row = day_events[0]
+        if len(day_events) > 1:
+            labels = [str(row.get("title", "") or "제목 없는 일정") for row in day_events]
+            selected, ok = QInputDialog.getItem(
+                self, "일정 선택", f"{date_text} 일정", labels, 0, False
+            )
+            if not ok:
+                return
+            event_row = day_events[labels.index(selected)]
+        self.open_calendar_event_row(event_row)
 
     def refresh_calendar_display(self) -> None:
         if not hasattr(self, "calendar_widget"):
@@ -2896,6 +2971,7 @@ class MainWindow(QMainWindow):
             detail = str(row.get("info", "")).strip()
             file_paths = row.get("file_paths") or [row.get("file_path", "")]
             file_names = [Path(str(path)).name for path in file_paths if path]
+            file_names.extend(str(item.get("name") or "공용 첨부파일") for item in row.get("attachments") or [])
             if file_names:
                 attachment_text = f"첨부 파일 {len(file_names)}개 : {', '.join(file_names[:2])}"
                 if len(file_names) > 2:
@@ -2912,7 +2988,7 @@ class MainWindow(QMainWindow):
         event_id = current.data(Qt.ItemDataRole.UserRole) if current else None
         event_row = next((row for row in self.calendar_events if row.get("id") == event_id), None)
         paths = (event_row or {}).get("file_paths") or [(event_row or {}).get("file_path", "")]
-        self.calendar_download_button.setEnabled(any(paths))
+        self.calendar_download_button.setEnabled(any(paths) or bool((event_row or {}).get("attachments")))
 
     def download_calendar_attachments(self) -> None:
         item = self.calendar_event_list.currentItem()
@@ -2925,7 +3001,8 @@ class MainWindow(QMainWindow):
     def download_event_attachments(self, event_row: dict) -> None:
         paths = event_row.get("file_paths") or [event_row.get("file_path", "")]
         paths = [str(path) for path in paths if path]
-        if not paths:
+        attachments = list(event_row.get("attachments") or [])
+        if not paths and not attachments:
             QMessageBox.information(self, "첨부 파일", "다운로드할 첨부 파일이 없습니다.")
             return
         target_dir = QFileDialog.getExistingDirectory(self, "첨부 파일을 저장할 폴더 선택")
@@ -2945,16 +3022,65 @@ class MainWindow(QMainWindow):
                 suffix_number += 1
             shutil.copy2(source, target)
             saved += 1
+        for attachment in attachments:
+            try:
+                data = self.supabase_client.storage.from_(CALENDAR_ATTACHMENT_BUCKET).download(
+                    str(attachment.get("path", ""))
+                )
+                target = self.unique_download_path(Path(target_dir), str(attachment.get("name") or "첨부파일"))
+                target.write_bytes(data)
+                saved += 1
+            except Exception:
+                missing.append(str(attachment.get("name") or attachment.get("path") or "공용 첨부파일"))
         message = f"첨부 파일 {saved}개를 저장했습니다.\n{target_dir}"
         if missing:
             message += "\n\n이 PC에서 찾지 못한 파일: " + ", ".join(missing)
         QMessageBox.information(self, "첨부 파일 다운로드", message)
+
+    @staticmethod
+    def unique_download_path(folder: Path, file_name: str) -> Path:
+        target = folder / file_name
+        suffix_number = 1
+        while target.exists():
+            target = folder / f"{Path(file_name).stem} ({suffix_number}){Path(file_name).suffix}"
+            suffix_number += 1
+        return target
+
+    def download_shared_attachment(self, attachment: dict, open_after: bool = False) -> None:
+        if self.supabase_client is None:
+            QMessageBox.warning(self, "공용 첨부파일", "로그인 후 다운로드할 수 있습니다.")
+            return
+        if open_after:
+            target_dir = Path(os.getenv("TEMP", str(Path.home()))) / "REQM" / "calendar_attachments"
+            target_dir.mkdir(parents=True, exist_ok=True)
+        else:
+            selected = QFileDialog.getExistingDirectory(self, "첨부 파일을 저장할 폴더 선택")
+            if not selected:
+                return
+            target_dir = Path(selected)
+        try:
+            data = self.supabase_client.storage.from_(CALENDAR_ATTACHMENT_BUCKET).download(
+                str(attachment.get("storage_path") or attachment.get("path") or "")
+            )
+            target = self.unique_download_path(target_dir, str(attachment.get("name") or "첨부파일"))
+            target.write_bytes(data)
+        except Exception as exc:
+            QMessageBox.critical(self, "공용 첨부파일 다운로드 실패", str(exc))
+            return
+        if open_after:
+            os.startfile(target)
+        else:
+            QMessageBox.information(self, "첨부 파일 다운로드", f"첨부 파일을 저장했습니다.\n{target}")
 
     def edit_calendar_event(self, item: QListWidgetItem) -> None:
         event_id = item.data(Qt.ItemDataRole.UserRole)
         event_row = next((row for row in self.calendar_events if row.get("id") == event_id), None)
         if not event_row:
             return
+        self.open_calendar_event_row(event_row)
+
+    def open_calendar_event_row(self, event_row: dict) -> None:
+        event_id = event_row.get("id")
         dialog = CalendarEventDialog(event_row, parent=self)
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
@@ -2966,13 +3092,16 @@ class MainWindow(QMainWindow):
             )
             if answer == QMessageBox.StandardButton.Yes:
                 self.calendar_events = [row for row in self.calendar_events if row.get("id") != event_id]
+                self.delete_calendar_event_record(str(event_id), list(event_row.get("attachments") or []))
+                self.refresh_calendar_display()
+            return
         else:
             values = dialog.values()
             if not values["title"]:
                 QMessageBox.warning(self, "일정 제목", "캘린더에 표시할 제목을 입력하세요.")
                 return
             event_row.update(values)
-        save_calendar_events(self.calendar_events)
+        self.save_calendar_event_record(event_row)
         self.refresh_calendar_display()
 
     def refresh_output_formats(self, selected_id: str = "") -> None:
@@ -3061,6 +3190,7 @@ class MainWindow(QMainWindow):
         self.refresh_location_combo()
         self.is_admin = catalog.get("app_role") == "admin"
         migrated_safety_count = self.migrate_local_safety_stocks()
+        migrated_calendar_count = self.initialize_shared_calendar_events()
         self.db_button.setEnabled(self.is_admin)
         self.dashboard_db_button.setEnabled(self.is_admin)
         self.ecount_button.setEnabled(self.is_admin and bool(self.current_orders))
@@ -3082,7 +3212,124 @@ class MainWindow(QMainWindow):
             f"구성품 {len(catalog['components']):,}개 · 주소 복구 {restored_count:,}건 · "
             f"권한: {'관리자' if self.is_admin else '일반 사용자(조회 전용)'}"
             f"{' · 안전재고 공용 이전 ' + str(migrated_safety_count) + '건' if migrated_safety_count else ''}"
+            f"{' · 일정 공용 이전 ' + str(migrated_calendar_count) + '건' if migrated_calendar_count else ''}"
         )
+
+    def initialize_shared_calendar_events(self) -> int:
+        if self.supabase_client is None or not self.catalog.get("calendar_shared_available", False):
+            return 0
+        local_events = list(self.calendar_events)
+        local_paths = {
+            str(row.get("id", "")): list(row.get("file_paths") or [])
+            for row in local_events if row.get("id")
+        }
+        remote_rows = list(self.catalog.get("calendar_events", []))
+        remote_ids = {str(row.get("id", "")) for row in remote_rows}
+        migrated = 0
+        for row in local_events:
+            row.setdefault("id", str(uuid.uuid4()))
+            if str(row["id"]) in remote_ids:
+                continue
+            try:
+                self.save_calendar_event_record(row)
+                payload = calendar_event_payload(row)
+            except Exception:
+                continue
+            remote_rows.append({**payload})
+            remote_ids.add(str(row["id"]))
+            migrated += 1
+        self.catalog["calendar_events"] = remote_rows
+        self.calendar_events = [
+            calendar_event_from_remote(row, local_paths.get(str(row.get("id", "")), []))
+            for row in remote_rows
+        ]
+        save_calendar_events(self.calendar_events)
+        self.refresh_calendar_display()
+        return migrated
+
+    def refresh_shared_calendar_events(self) -> None:
+        if self.supabase_client is None or not self.catalog.get("calendar_shared_available", False):
+            return
+        local_paths = {
+            str(row.get("id", "")): list(row.get("file_paths") or [])
+            for row in self.calendar_events if row.get("id")
+        }
+        try:
+            remote_rows = fetch_all_rows(self.supabase_client, "calendar_events")
+        except Exception:
+            return
+        self.catalog["calendar_events"] = remote_rows
+        self.calendar_events = [
+            calendar_event_from_remote(row, local_paths.get(str(row.get("id", "")), []))
+            for row in remote_rows
+        ]
+        save_calendar_events(self.calendar_events)
+
+    def save_calendar_event_record(self, event_row: dict) -> None:
+        if self.supabase_client is None or not self.catalog.get("calendar_shared_available", False):
+            save_calendar_events(self.calendar_events)
+            return
+        event_row.setdefault("id", str(uuid.uuid4()))
+        uploaded = []
+        remaining_local_paths = []
+        for source_text in list(event_row.get("file_paths") or []):
+            source = Path(str(source_text))
+            if not source.is_file():
+                remaining_local_paths.append(str(source_text))
+                continue
+            if source.stat().st_size > MAX_CALENDAR_ATTACHMENT_SIZE:
+                QMessageBox.warning(self, "첨부파일 크기", f"{source.name}은 20MB를 초과해 업로드하지 않았습니다.")
+                remaining_local_paths.append(str(source))
+                continue
+            storage_path = f"{event_row['id']}/{uuid.uuid4().hex}{source.suffix.lower()}"
+            content_type = mimetypes.guess_type(source.name)[0] or "application/octet-stream"
+            try:
+                self.supabase_client.storage.from_(CALENDAR_ATTACHMENT_BUCKET).upload(
+                    storage_path,
+                    source.read_bytes(),
+                    file_options={"content-type": content_type, "upsert": "false"},
+                )
+            except Exception as exc:
+                QMessageBox.warning(self, "첨부파일 업로드 실패", f"{source.name}\n{exc}")
+                remaining_local_paths.append(str(source))
+                continue
+            uploaded.append({"path": storage_path, "name": source.name, "size": source.stat().st_size})
+        event_row["attachments"] = list(event_row.get("attachments") or []) + uploaded
+        event_row["file_paths"] = remaining_local_paths
+        save_calendar_events(self.calendar_events)
+        payload = calendar_event_payload(event_row)
+        event_row["id"] = payload["id"]
+        try:
+            self.supabase_client.table("calendar_events").upsert(payload, on_conflict="id").execute()
+            remote_row = next(
+                (row for row in self.catalog.get("calendar_events", []) if str(row.get("id")) == str(event_row["id"])),
+                None,
+            )
+            if remote_row is None:
+                self.catalog.setdefault("calendar_events", []).append(dict(payload))
+            else:
+                removed_paths = {
+                    str(row.get("path", "")) for row in remote_row.get("attachments") or []
+                } - {
+                    str(row.get("path", "")) for row in event_row.get("attachments") or []
+                }
+                remote_row.update(payload)
+                if removed_paths:
+                    self.supabase_client.storage.from_(CALENDAR_ATTACHMENT_BUCKET).remove(sorted(removed_paths))
+        except Exception as exc:
+            QMessageBox.warning(self, "공용 일정 저장 실패", f"이 PC에는 저장했지만 공용 DB 반영에 실패했습니다.\n{exc}")
+
+    def delete_calendar_event_record(self, event_id: str, attachments: list[dict] | None = None) -> None:
+        save_calendar_events(self.calendar_events)
+        if self.supabase_client is None or not self.catalog.get("calendar_shared_available", False):
+            return
+        try:
+            self.supabase_client.table("calendar_events").delete().eq("id", event_id).execute()
+            storage_paths = [str(row.get("path", "")) for row in (attachments or []) if row.get("path")]
+            if storage_paths:
+                self.supabase_client.storage.from_(CALENDAR_ATTACHMENT_BUCKET).remove(storage_paths)
+        except Exception as exc:
+            QMessageBox.warning(self, "공용 일정 삭제 실패", f"이 PC에서는 삭제했지만 공용 DB 반영에 실패했습니다.\n{exc}")
 
     def migrate_local_safety_stocks(self) -> int:
         items = self.catalog.get("items", [])

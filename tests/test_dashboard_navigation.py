@@ -1,14 +1,22 @@
 from __future__ import annotations
 
 import os
+import tempfile
 import unittest
 from unittest.mock import Mock, patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QDialog
 
-from main import InventoryPreviewDialog, MainWindow, MiniWidgetDialog, create_app_icon
+from main import (
+    InventoryPreviewDialog,
+    MainWindow,
+    MiniWidgetDialog,
+    calendar_event_from_remote,
+    calendar_event_payload,
+    create_app_icon,
+)
 
 
 class DashboardNavigationTests(unittest.TestCase):
@@ -30,6 +38,44 @@ class DashboardNavigationTests(unittest.TestCase):
             [button.text() for button in self.window.dashboard_cards],
             ["📦  출고 파일 변환", "▤  재고 조회"],
         )
+
+    def test_calendar_event_converts_between_local_and_shared_schema(self) -> None:
+        local = {
+            "id": "event-1", "date": "2026-08-20", "title": "공용 일정",
+            "info": "사용자 공유 정보", "file_paths": ["C:/local/file.xlsx"],
+            "attachments": [],
+        }
+        payload = calendar_event_payload(local)
+        restored = calendar_event_from_remote(payload, local["file_paths"])
+
+        self.assertEqual(payload["event_date"], "2026-08-20")
+        self.assertEqual(restored, local)
+
+    def test_shared_calendar_uploads_attachment_and_saves_storage_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            source = os.path.join(folder, "일정.xlsx")
+            with open(source, "wb") as stream:
+                stream.write(b"calendar attachment")
+            storage_bucket = Mock()
+            self.window.supabase_client = Mock()
+            self.window.supabase_client.storage.from_.return_value = storage_bucket
+            table_query = Mock()
+            table_query.upsert.return_value = table_query
+            table_query.execute.return_value = Mock(data=[])
+            self.window.supabase_client.table.return_value = table_query
+            self.window.catalog = {"calendar_shared_available": True, "calendar_events": []}
+            event = {
+                "id": "event-1", "date": "2026-08-20", "title": "공용 일정",
+                "info": "첨부 포함", "file_paths": [source], "attachments": [],
+            }
+            self.window.calendar_events = [event]
+
+            with patch("main.save_calendar_events"):
+                self.window.save_calendar_event_record(event)
+
+            storage_bucket.upload.assert_called_once()
+            self.assertEqual(event["file_paths"], [])
+            self.assertEqual(event["attachments"][0]["name"], "일정.xlsx")
 
     def test_main_window_stays_on_top_and_has_taskbar_icon(self) -> None:
         icon = create_app_icon()
@@ -115,7 +161,7 @@ class DashboardNavigationTests(unittest.TestCase):
             [button.property("widgetTarget") for button in widget.action_buttons],
             ["shipping", "calendar"],
         )
-        self.assertEqual((widget.width(), widget.height()), (380, 500))
+        self.assertEqual((widget.width(), widget.height()), (498, 500))
         self.assertEqual([button.text() for button in widget.action_buttons], ["📦  출고", "📅  일정"])
         self.assertEqual(
             widget.inventory_results.selectionMode(),
@@ -179,6 +225,36 @@ class DashboardNavigationTests(unittest.TestCase):
         widget.open_target("calendar")
         self.assertEqual(self.window.show_dashboard.call_count, 1)
         widget.deleteLater()
+
+    def test_double_clicking_empty_calendar_date_opens_new_event_dialog(self) -> None:
+        selected_date = self.window.calendar_widget.selectedDate()
+        self.window.calendar_events = []
+        dialog = Mock()
+        dialog.exec.return_value = QDialog.DialogCode.Accepted
+        dialog.values.return_value = {
+            "id": "new-event", "date": selected_date.toString("yyyy-MM-dd"),
+            "title": "신규 일정", "info": "입력 정보", "file_paths": [],
+        }
+        with (
+            patch("main.CalendarEventDialog", return_value=dialog) as opened,
+            patch("main.save_calendar_events"),
+        ):
+            self.window.open_calendar_date(selected_date)
+
+        opened.assert_called_once_with(default_date=selected_date, parent=self.window)
+        self.assertEqual(self.window.calendar_events[0]["info"], "입력 정보")
+
+    def test_double_clicking_scheduled_date_opens_saved_information(self) -> None:
+        selected_date = self.window.calendar_widget.selectedDate()
+        event = {
+            "id": "saved-event", "date": selected_date.toString("yyyy-MM-dd"),
+            "title": "기존 일정", "info": "저장된 정보", "file_paths": [],
+        }
+        self.window.calendar_events = [event]
+        with patch.object(self.window, "open_calendar_event_row") as opened:
+            self.window.open_calendar_date(selected_date)
+
+        opened.assert_called_once_with(event)
 
 
 if __name__ == "__main__":
