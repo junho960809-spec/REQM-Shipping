@@ -11,5 +11,8 @@
     "target_channel": "",
     "test_mode": false,
     "remarks": "REQM 출고 창고이동"
+  },
+  "as_daily": {
+    "note": "AS 사이트 계정은 프로그램의 '사이트 계정 설정'에서 Windows 암호화 저장소에 등록합니다."
   }
 }

@@ -38,7 +38,7 @@ class DashboardNavigationTests(unittest.TestCase):
     def test_dashboard_has_shipping_and_inventory_cards(self) -> None:
         self.assertEqual(
             [button.text() for button in self.window.dashboard_cards],
-            ["📦  출고 파일 변환", "▤  재고 조회"],
+            ["📦  출고 파일 변환", "▤  재고 조회", "🛠  AS 일일 현황"],
         )
 
     def test_updater_corrects_reqm_shortcuts_and_creates_desktop_shortcut(self) -> None:

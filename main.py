@@ -71,6 +71,7 @@ from ecount_credential_store import load_api_key
 from ecount_user_store import load_ecount_users
 from inventory_display_filter import filter_inventory_display_rows
 from inventory_safety_store import load_safety_stocks, save_safety_stock
+from as_daily_dialog import AsDailyDialog
 
 
 APP_DIR = Path(__file__).resolve().parent
@@ -91,7 +92,8 @@ DEFAULT_CONFIG = {
     },
 }
 ADMIN_USER_ID = "c7937d51-1a14-47aa-987e-6254c6c79014"
-APP_VERSION = "1.0.63"
+APP_VERSION = "1.0.64"
+TEST_MODE = os.getenv("REQM_TEST_MODE", "").strip().casefold() in {"1", "true", "yes"}
 UPDATE_BASE_URL = "https://jcslohuraqclhryeqxoc.supabase.co/storage/v1/object/public/reqm-updates"
 UPDATE_MANIFEST_URL = f"{UPDATE_BASE_URL}/manifest.json"
 RECENT_WORK_PATH = Path(os.getenv("LOCALAPPDATA", str(Path.home()))) / "REQM" / "recent_work.json"
@@ -2470,6 +2472,9 @@ class MainWindow(QMainWindow):
         self.update_button = QPushButton("업데이트")
         self.update_button.setObjectName("adminButton")
         self.update_button.setMaximumWidth(105)
+        if TEST_MODE:
+            self.update_button.setEnabled(False)
+            self.update_button.setToolTip("테스트 버전에서는 업데이트가 비활성화됩니다.")
         self.dashboard_button = QPushButton("←  메인으로")
         self.dashboard_button.setObjectName("adminButton")
         self.dashboard_button.setMaximumWidth(125)
@@ -2661,6 +2666,9 @@ class MainWindow(QMainWindow):
         self.dashboard_update_button.setObjectName("adminButton")
         self.dashboard_update_button.setFixedSize(92, 38)
         self.dashboard_update_button.clicked.connect(self.check_for_updates)
+        if TEST_MODE:
+            self.dashboard_update_button.setEnabled(False)
+            self.dashboard_update_button.setToolTip("테스트 버전에서는 업데이트가 비활성화됩니다.")
         self.dashboard_widget_button = QPushButton("미니 위젯")
         self.dashboard_widget_button.setObjectName("adminButton")
         self.dashboard_widget_button.setFixedSize(100, 38)
@@ -2685,13 +2693,20 @@ class MainWindow(QMainWindow):
             "이카운트 품목별 현재고 · 안전재고 실시간 확인",
         )
         inventory.clicked.connect(self.open_inventory_preview)
+        as_daily = self.dashboard_card(
+            "🛠  AS 일일 현황",
+            "AS 사이트 접수 조회 · 교환/반품 일일 엑셀 생성",
+        )
+        as_daily.clicked.connect(self.open_as_daily)
         shipment.setMaximumWidth(430)
         inventory.setMaximumWidth(430)
+        as_daily.setMaximumWidth(430)
         cards.addWidget(shipment, 0, 0)
         cards.addWidget(inventory, 0, 1)
+        cards.addWidget(as_daily, 1, 0)
         cards.setColumnStretch(0, 1)
         cards.setColumnStretch(1, 1)
-        self.dashboard_cards = [shipment, inventory]
+        self.dashboard_cards = [shipment, inventory, as_daily]
         layout.addLayout(cards)
 
         self.calendar_widget = CalendarDropWidget()
@@ -2778,6 +2793,9 @@ class MainWindow(QMainWindow):
 
     def open_inventory_preview(self) -> None:
         InventoryPreviewDialog(self).exec()
+
+    def open_as_daily(self) -> None:
+        AsDailyDialog(self).exec()
 
     def inventory_credentials(self) -> dict:
         config = load_config().get("ecount", {})
@@ -4048,7 +4066,8 @@ if __name__ == "__main__":
     app.setApplicationName("REQM")
     app.setOrganizationName("REQM")
     app.setWindowIcon(create_app_icon())
-    repair_shortcuts_on_startup()
+    if not TEST_MODE:
+        repair_shortcuts_on_startup()
     window = MainWindow()
     window.show()
     window.raise_()
