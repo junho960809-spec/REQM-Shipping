@@ -16,6 +16,7 @@ from main import (
     calendar_event_from_remote,
     calendar_event_payload,
     create_app_icon,
+    repair_shortcuts_on_startup,
     update_shortcuts_powershell,
 )
 
@@ -49,6 +50,25 @@ class DashboardNavigationTests(unittest.TestCase):
         self.assertIn("$shortcut.TargetPath = $target", script)
         self.assertIn("Join-Path $desktopPath 'REQM.lnk'", script)
         self.assertIn("Shortcut corrected:", script)
+
+    def test_updated_app_repairs_shortcuts_once_on_first_start(self) -> None:
+        with tempfile.TemporaryDirectory() as folder, patch("main.subprocess.Popen") as launched:
+            repair_dir = os.path.join(folder, "updates")
+
+            started = repair_shortcuts_on_startup(
+                current_exe=os.path.join(folder, "REQM.exe"),
+                app_version="1.0.63",
+                base_dir=os.path.abspath(repair_dir),
+            )
+
+            self.assertTrue(started)
+            launched.assert_called_once()
+            script_path = os.path.join(repair_dir, "repair_reqm_shortcuts_1.0.63.ps1")
+            self.assertTrue(os.path.exists(script_path))
+            with open(script_path, encoding="utf-8-sig") as stream:
+                script = stream.read()
+            self.assertIn("Startup shortcut repair:", script)
+            self.assertIn("shortcut_repaired_1.0.63.txt", script)
 
     def test_calendar_event_converts_between_local_and_shared_schema(self) -> None:
         local = {

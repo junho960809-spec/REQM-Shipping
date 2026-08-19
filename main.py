@@ -5,6 +5,7 @@ import os
 import ctypes
 import mimetypes
 import shutil
+import re
 import subprocess
 import uuid
 import urllib.request
@@ -90,7 +91,7 @@ DEFAULT_CONFIG = {
     },
 }
 ADMIN_USER_ID = "c7937d51-1a14-47aa-987e-6254c6c79014"
-APP_VERSION = "1.0.62"
+APP_VERSION = "1.0.63"
 UPDATE_BASE_URL = "https://jcslohuraqclhryeqxoc.supabase.co/storage/v1/object/public/reqm-updates"
 UPDATE_MANIFEST_URL = f"{UPDATE_BASE_URL}/manifest.json"
 RECENT_WORK_PATH = Path(os.getenv("LOCALAPPDATA", str(Path.home()))) / "REQM" / "recent_work.json"
@@ -249,6 +250,51 @@ def update_shortcuts_powershell() -> str:
         "    }\n"
         "}\n"
     )
+
+
+def repair_shortcuts_on_startup(
+    current_exe: Path | None = None,
+    app_version: str = APP_VERSION,
+    base_dir: Path | None = None,
+) -> bool:
+    """Repair REQM shortcuts once when an updated frozen executable first starts."""
+    if not getattr(sys, "frozen", False) and current_exe is None:
+        return False
+    target = Path(current_exe or sys.executable).resolve()
+    repair_dir = Path(base_dir) if base_dir is not None else (
+        Path(os.getenv("LOCALAPPDATA", str(Path.home()))) / "REQM" / "updates"
+    )
+    repair_dir.mkdir(parents=True, exist_ok=True)
+    safe_version = re.sub(r"[^0-9A-Za-z._-]", "_", str(app_version))
+    marker_path = repair_dir / f"shortcut_repaired_{safe_version}.txt"
+    if marker_path.exists():
+        return False
+    script_path = repair_dir / f"repair_reqm_shortcuts_{safe_version}.ps1"
+    log_path = repair_dir / "update.log"
+
+    def ps_quote(path: Path) -> str:
+        return str(path).replace("'", "''")
+
+    script = (
+        f"$target = '{ps_quote(target)}'\n"
+        f"$log = '{ps_quote(log_path)}'\n"
+        f"$marker = '{ps_quote(marker_path)}'\n"
+        "Add-Content -LiteralPath $log -Value ('Startup shortcut repair: ' + (Get-Date) + ' / ' + $target) -Encoding UTF8\n"
+        + update_shortcuts_powershell()
+        + "Set-Content -LiteralPath $marker -Value $target -Encoding UTF8\n"
+    )
+    try:
+        script_path.write_text(script, encoding="utf-8-sig")
+        subprocess.Popen(
+            [
+                "powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass",
+                "-WindowStyle", "Hidden", "-File", str(script_path),
+            ],
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        return True
+    except Exception:
+        return False
 
 
 class UpdateCheckWorker(QThread):
@@ -4002,6 +4048,7 @@ if __name__ == "__main__":
     app.setApplicationName("REQM")
     app.setOrganizationName("REQM")
     app.setWindowIcon(create_app_icon())
+    repair_shortcuts_on_startup()
     window = MainWindow()
     window.show()
     window.raise_()
