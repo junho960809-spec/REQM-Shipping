@@ -90,7 +90,7 @@ DEFAULT_CONFIG = {
     },
 }
 ADMIN_USER_ID = "c7937d51-1a14-47aa-987e-6254c6c79014"
-APP_VERSION = "1.0.61"
+APP_VERSION = "1.0.62"
 UPDATE_BASE_URL = "https://jcslohuraqclhryeqxoc.supabase.co/storage/v1/object/public/reqm-updates"
 UPDATE_MANIFEST_URL = f"{UPDATE_BASE_URL}/manifest.json"
 RECENT_WORK_PATH = Path(os.getenv("LOCALAPPDATA", str(Path.home()))) / "REQM" / "recent_work.json"
@@ -206,6 +206,49 @@ def version_key(value: str) -> tuple[int, ...]:
         digits = "".join(character for character in part if character.isdigit())
         parts.append(int(digits or 0))
     return tuple(parts)
+
+
+def update_shortcuts_powershell() -> str:
+    """Return the updater step that points known REQM shortcuts at the updated EXE."""
+    return (
+        "$shortcutFolders = @(\n"
+        "    [Environment]::GetFolderPath('Desktop'),\n"
+        "    [Environment]::GetFolderPath('StartMenu'),\n"
+        "    (Join-Path $env:APPDATA 'Microsoft\\Internet Explorer\\Quick Launch\\User Pinned\\TaskBar')\n"
+        ") | Where-Object { $_ -and (Test-Path -LiteralPath $_) } | Select-Object -Unique\n"
+        "$shortcutShell = New-Object -ComObject WScript.Shell\n"
+        "$shortcutNames = @('REQM', 'REQM 물류', 'REQM 물류 대시보드')\n"
+        "$correctedShortcuts = @()\n"
+        "foreach ($shortcutFolder in $shortcutFolders) {\n"
+        "    Get-ChildItem -LiteralPath $shortcutFolder -Filter '*.lnk' -File -Recurse -ErrorAction SilentlyContinue | ForEach-Object {\n"
+        "        if ($shortcutNames -contains $_.BaseName) {\n"
+        "            try {\n"
+        "                $shortcut = $shortcutShell.CreateShortcut($_.FullName)\n"
+        "                $shortcut.TargetPath = $target\n"
+        "                $shortcut.WorkingDirectory = Split-Path -Parent $target\n"
+        "                $shortcut.IconLocation = $target + ',0'\n"
+        "                $shortcut.Save()\n"
+        "                $correctedShortcuts += $_.FullName\n"
+        "                Add-Content -LiteralPath $log -Value ('Shortcut corrected: ' + $_.FullName) -Encoding UTF8\n"
+        "            } catch {\n"
+        "                Add-Content -LiteralPath $log -Value ('Shortcut correction failed: ' + $_.FullName + ' / ' + $_.Exception.Message) -Encoding UTF8\n"
+        "            }\n"
+        "        }\n"
+        "    }\n"
+        "}\n"
+        "$desktopPath = [Environment]::GetFolderPath('Desktop')\n"
+        "if ($desktopPath) {\n"
+        "    $desktopShortcutPath = Join-Path $desktopPath 'REQM.lnk'\n"
+        "    if ($correctedShortcuts -notcontains $desktopShortcutPath) {\n"
+        "        $desktopShortcut = $shortcutShell.CreateShortcut($desktopShortcutPath)\n"
+        "        $desktopShortcut.TargetPath = $target\n"
+        "        $desktopShortcut.WorkingDirectory = Split-Path -Parent $target\n"
+        "        $desktopShortcut.IconLocation = $target + ',0'\n"
+        "        $desktopShortcut.Save()\n"
+        "        Add-Content -LiteralPath $log -Value ('Desktop shortcut created: ' + $desktopShortcutPath) -Encoding UTF8\n"
+        "    }\n"
+        "}\n"
+    )
 
 
 class UpdateCheckWorker(QThread):
@@ -3481,6 +3524,8 @@ class MainWindow(QMainWindow):
             "    Add-Content -LiteralPath $log -Value 'Update failed: target remained locked.' -Encoding UTF8\n"
             "    exit 1\n"
             "}\n"
+            + update_shortcuts_powershell()
+            +
             "$env:PYINSTALLER_RESET_ENVIRONMENT = '1'\n"
             "Get-ChildItem Env: | Where-Object { $_.Name -like '_PYI_*' } | ForEach-Object { Remove-Item ('Env:' + $_.Name) -ErrorAction SilentlyContinue }\n"
             "Start-Sleep -Seconds 2\n"

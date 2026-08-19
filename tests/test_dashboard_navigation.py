@@ -16,6 +16,7 @@ from main import (
     calendar_event_from_remote,
     calendar_event_payload,
     create_app_icon,
+    update_shortcuts_powershell,
 )
 
 
@@ -38,6 +39,16 @@ class DashboardNavigationTests(unittest.TestCase):
             [button.text() for button in self.window.dashboard_cards],
             ["📦  출고 파일 변환", "▤  재고 조회"],
         )
+
+    def test_updater_corrects_reqm_shortcuts_and_creates_desktop_shortcut(self) -> None:
+        script = update_shortcuts_powershell()
+
+        self.assertIn("GetFolderPath('Desktop')", script)
+        self.assertIn("GetFolderPath('StartMenu')", script)
+        self.assertIn("User Pinned\\TaskBar", script)
+        self.assertIn("$shortcut.TargetPath = $target", script)
+        self.assertIn("Join-Path $desktopPath 'REQM.lnk'", script)
+        self.assertIn("Shortcut corrected:", script)
 
     def test_calendar_event_converts_between_local_and_shared_schema(self) -> None:
         local = {
