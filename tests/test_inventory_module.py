@@ -1,13 +1,21 @@
+import os
 import tempfile
 import unittest
 from pathlib import Path
 
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
 from openpyxl import Workbook, load_workbook
+from PySide6.QtWidgets import QApplication
 
 from inventory_module import InventoryDialog, InventoryRow, export_inventory_workbook, import_wekeep_rows
 
 
 class InventoryModuleTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.app = QApplication.instance() or QApplication([])
+
     def test_entry_rows_follow_reference_workbook_order(self):
         rows = InventoryDialog._initial_rows([{"item_code": "SHOULD-NOT-APPEAR", "item_name": "제외 품목"}])
 
@@ -15,6 +23,15 @@ class InventoryModuleTests(unittest.TestCase):
         self.assertEqual((rows[0].item_code, rows[0].item_name), ("QWC-Q1500GR", "[리큐엠] QWC-Q1500 무선충전기 그레이"))
         self.assertEqual((rows[-1].item_code, rows[-1].item_name), ("QMA-Bubblepad-Cr", "리큐엠 맥세이프 액세서리-버블패드_소프트 크림"))
         self.assertNotIn("SHOULD-NOT-APPEAR", {row.item_code for row in rows})
+
+    def test_entry_table_defaults_to_excel_source_order(self):
+        dialog = InventoryDialog([])
+        try:
+            self.assertEqual(dialog.sort_filter.currentText(), "엑셀 원본 순서")
+            self.assertEqual(dialog.entry_table.item(0, 0).text(), "QWC-Q1500GR")
+            self.assertEqual(dialog.entry_table.item(dialog.entry_table.rowCount() - 1, 0).text(), "QMA-Bubblepad-Cr")
+        finally:
+            dialog.close()
 
     def test_differences(self):
         row = InventoryRow("A", "품목", 10, 7, 5, 8)

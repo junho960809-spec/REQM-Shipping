@@ -260,7 +260,7 @@ class InventoryDialog(QDialog):
         self.location_filter = QComboBox()
         self.location_filter.addItems(["전체 위치", "본사 차이", "위킵 차이", "양쪽 차이"])
         self.sort_filter = QComboBox()
-        self.sort_filter.addItems(["차이 큰 순", "품목코드 순", "품목명 순"])
+        self.sort_filter.addItems(["엑셀 원본 순서", "차이 큰 순", "품목코드 순", "품목명 순"])
         tools.addWidget(self.search, 2)
         tools.addWidget(self.status_filter)
         tools.addWidget(self.location_filter)
@@ -356,12 +356,12 @@ class InventoryDialog(QDialog):
             if location == "양쪽 차이" and (row.headquarters_difference == 0 or row.wekeep_difference == 0):
                 continue
             indices.append(index)
-        sort = self.sort_filter.currentText() if hasattr(self, "sort_filter") else "차이 큰 순"
+        sort = self.sort_filter.currentText() if hasattr(self, "sort_filter") else "엑셀 원본 순서"
         if sort == "품목코드 순":
             indices.sort(key=lambda i: self.rows[i].item_code)
         elif sort == "품목명 순":
             indices.sort(key=lambda i: self.rows[i].item_name)
-        else:
+        elif sort == "차이 큰 순":
             indices.sort(key=lambda i: (-abs(self.rows[i].total_difference), self.rows[i].item_code))
         return indices
 
