@@ -72,6 +72,7 @@ from ecount_user_store import load_ecount_users
 from inventory_display_filter import filter_inventory_display_rows
 from inventory_safety_store import load_safety_stocks, save_safety_stock
 from as_daily_dialog import AsDailyDialog
+from inventory_module import InventoryDialog
 
 
 APP_DIR = Path(__file__).resolve().parent
@@ -2698,15 +2699,22 @@ class MainWindow(QMainWindow):
             "AS 사이트 접수 조회 · 교환/반품 일일 엑셀 생성",
         )
         as_daily.clicked.connect(self.open_as_daily)
+        weekly_inventory = self.dashboard_card(
+            "▦  주간 재고조사",
+            "본사 실재고 입력 · 위킵 엑셀 반영 · 차이 검토 및 결과 생성",
+        )
+        weekly_inventory.clicked.connect(self.open_weekly_inventory)
         shipment.setMaximumWidth(430)
         inventory.setMaximumWidth(430)
         as_daily.setMaximumWidth(430)
+        weekly_inventory.setMaximumWidth(430)
         cards.addWidget(shipment, 0, 0)
         cards.addWidget(inventory, 0, 1)
         cards.addWidget(as_daily, 1, 0)
+        cards.addWidget(weekly_inventory, 1, 1)
         cards.setColumnStretch(0, 1)
         cards.setColumnStretch(1, 1)
-        self.dashboard_cards = [shipment, inventory, as_daily]
+        self.dashboard_cards = [shipment, inventory, as_daily, weekly_inventory]
         layout.addLayout(cards)
 
         self.calendar_widget = CalendarDropWidget()
@@ -2796,6 +2804,10 @@ class MainWindow(QMainWindow):
 
     def open_as_daily(self) -> None:
         AsDailyDialog(self).exec()
+
+    def open_weekly_inventory(self) -> None:
+        catalog_items = self.catalog.get("items", []) if self.catalog else []
+        InventoryDialog(catalog_items, self).exec()
 
     def inventory_credentials(self) -> dict:
         config = load_config().get("ecount", {})

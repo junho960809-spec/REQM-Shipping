@@ -38,7 +38,7 @@ class DashboardNavigationTests(unittest.TestCase):
     def test_dashboard_has_shipping_and_inventory_cards(self) -> None:
         self.assertEqual(
             [button.text() for button in self.window.dashboard_cards],
-            ["📦  출고 파일 변환", "▤  재고 조회", "🛠  AS 일일 현황"],
+            ["📦  출고 파일 변환", "▤  재고 조회", "🛠  AS 일일 현황", "▦  주간 재고조사"],
         )
 
     def test_updater_corrects_reqm_shortcuts_and_creates_desktop_shortcut(self) -> None:
@@ -124,6 +124,13 @@ class DashboardNavigationTests(unittest.TestCase):
         with patch.object(InventoryPreviewDialog, "exec", return_value=0) as opened:
             self.window.dashboard_cards[1].click()
         opened.assert_called_once()
+
+    def test_weekly_inventory_card_opens_dialog(self) -> None:
+        with patch("main.InventoryDialog") as dialog_class:
+            dialog_class.return_value.exec.return_value = 0
+            self.window.dashboard_cards[3].click()
+        dialog_class.assert_called_once()
+        dialog_class.return_value.exec.assert_called_once()
 
     def test_inventory_preview_uses_shared_live_inventory_rows(self) -> None:
         dialog = InventoryPreviewDialog(self.window)
