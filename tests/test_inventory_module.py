@@ -2,6 +2,7 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -30,6 +31,20 @@ class InventoryModuleTests(unittest.TestCase):
             self.assertEqual(dialog.sort_filter.currentText(), "엑셀 원본 순서")
             self.assertEqual(dialog.entry_table.item(0, 0).text(), "QWC-Q1500GR")
             self.assertEqual(dialog.entry_table.item(dialog.entry_table.rowCount() - 1, 0).text(), "QMA-Bubblepad-Cr")
+        finally:
+            dialog.close()
+
+    def test_entry_edit_updates_only_the_changed_row(self):
+        dialog = InventoryDialog([])
+        try:
+            with patch.object(dialog, "refresh_entry_table") as full_entry_refresh, patch.object(dialog, "refresh_review_table") as review_refresh:
+                dialog.entry_table.item(0, 2).setText("10")
+
+            full_entry_refresh.assert_not_called()
+            review_refresh.assert_not_called()
+            self.assertEqual(dialog.entry_table.item(0, 4).text(), "+10")
+            self.assertEqual(dialog.entry_table.item(0, 8).text(), "+10")
+            self.assertEqual(dialog.entry_table.item(0, 9).text(), "차이")
         finally:
             dialog.close()
 

@@ -212,6 +212,7 @@ class InventoryDialog(QDialog):
         self.tabs.addTab(self._entry_tab(), "2  실재고 입력")
         self.tabs.addTab(self._import_tab(), "3  자료 최신화")
         self.tabs.addTab(self._review_tab(), "4  결과 검토")
+        self.tabs.currentChanged.connect(self.on_tab_changed)
         root.addWidget(self.tabs, 1)
 
     def _card(self, title_text: str, body_text: str, button_text: str, callback, enabled: bool = True) -> QFrame:
@@ -368,6 +369,9 @@ class InventoryDialog(QDialog):
     def refresh_all(self) -> None:
         self.refresh_entry_table()
         self.refresh_review_table()
+        self.update_dashboard_status()
+
+    def update_dashboard_status(self) -> None:
         differences = sum(row.total_difference != 0 for row in self.rows)
         reviewed = sum(row.reviewed for row in self.rows if row.total_difference != 0)
         self.dashboard_status.setText(
@@ -396,6 +400,35 @@ class InventoryDialog(QDialog):
         self.entry_table.blockSignals(False)
         self.entry_summary.setText(f"전체 {len(self.rows):,}개 중 {len(self.filtered_indices):,}개 표시 · 실재고 입력 즉시 차이가 계산됩니다.")
 
+    def update_entry_row(self, table_row: int, source_index: int) -> None:
+        row = self.rows[source_index]
+        values = {
+            2: row.headquarters_actual,
+            4: row.headquarters_difference,
+            5: row.wekeep_actual,
+            7: row.wekeep_difference,
+            8: row.total_difference,
+            9: "일치" if row.total_difference == 0 else "차이",
+        }
+        self.entry_table.blockSignals(True)
+        try:
+            for column, value in values.items():
+                item = self.entry_table.item(table_row, column)
+                if item is None:
+                    item = QTableWidgetItem()
+                    self.entry_table.setItem(table_row, column, item)
+                item.setData(Qt.ItemDataRole.UserRole, source_index)
+                if column in (4, 7, 8):
+                    numeric = int(value)
+                    item.setText(f"+{numeric}" if numeric > 0 else str(numeric))
+                    item.setFont(FontProxy.bold_font(item.font()))
+                    item.setForeground(QColor("#064fbd") if numeric > 0 else QColor("#d11f2f") if numeric < 0 else QColor("#536174"))
+                else:
+                    item.setText(str(value))
+                item.setBackground(QColor("white"))
+        finally:
+            self.entry_table.blockSignals(False)
+
     def on_entry_changed(self, table_row: int, column: int) -> None:
         if column not in (2, 5) or not (0 <= table_row < len(self.filtered_indices)):
             return
@@ -409,7 +442,16 @@ class InventoryDialog(QDialog):
             self.rows[source_index].headquarters_actual = value
         else:
             self.rows[source_index].wekeep_actual = value
-        self.refresh_all()
+        filtering_by_difference = self.status_filter.currentText() != "전체" or self.location_filter.currentText() != "전체 위치"
+        if self.sort_filter.currentText() == "차이 큰 순" or filtering_by_difference:
+            self.refresh_entry_table()
+        else:
+            self.update_entry_row(table_row, source_index)
+        self.update_dashboard_status()
+
+    def on_tab_changed(self, index: int) -> None:
+        if index == 3:
+            self.refresh_review_table()
 
     def refresh_review_table(self) -> None:
         indices = [index for index, row in enumerate(self.rows) if row.total_difference != 0]
