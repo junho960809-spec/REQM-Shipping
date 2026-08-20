@@ -9,7 +9,13 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from openpyxl import Workbook, load_workbook
 from PySide6.QtWidgets import QApplication
 
-from inventory_module import InventoryDialog, InventoryRow, export_inventory_workbook, import_wekeep_rows
+from inventory_module import (
+    InventoryDialog,
+    InventoryRow,
+    WeeklyEcountCredentialDialog,
+    export_inventory_workbook,
+    import_wekeep_rows,
+)
 
 
 class InventoryModuleTests(unittest.TestCase):
@@ -73,6 +79,20 @@ class InventoryModuleTests(unittest.TestCase):
             self.assertEqual(first.ecount_wekeep, 7)
         finally:
             dialog.close()
+
+    def test_weekly_dialog_saves_credentials_to_shared_stores(self):
+        with patch("inventory_module.load_ecount_users", return_value=[]), patch("inventory_module.upsert_ecount_user") as save_user, patch("inventory_module.save_api_key") as save_key:
+            dialog = WeeklyEcountCredentialDialog()
+            dialog.user_id.setEditText("JUNHO191")
+            dialog.employee_code.setText("EMP01")
+            dialog.api_key.setText("secret")
+            dialog.save_and_accept()
+
+        save_user.assert_called_once()
+        save_key.assert_called_once_with("JUNHO191", "secret")
+        self.assertEqual(dialog.credentials["company_code"], "304293")
+        self.assertEqual(dialog.credentials["zone"], "AB")
+        dialog.close()
 
     def test_differences(self):
         row = InventoryRow("A", "품목", 10, 7, 5, 8)

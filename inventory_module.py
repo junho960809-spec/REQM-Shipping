@@ -9,6 +9,8 @@ from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 from weekly_inventory_catalog import WEEKLY_INVENTORY_ITEMS
 from ecount_client import EcountClient
+from ecount_credential_store import load_api_key, save_api_key
+from ecount_user_store import load_ecount_users, upsert_ecount_user
 from PySide6.QtCore import QThread, QTimer, Signal, Qt
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
@@ -16,6 +18,7 @@ from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
     QDialog,
+    QDialogButtonBox,
     QFileDialog,
     QFormLayout,
     QFrame,
@@ -70,6 +73,74 @@ class WeeklyInventoryWorker(QThread):
             self.succeeded.emit(EcountClient(**self.credentials).get_inventory_by_location())
         except Exception as exc:
             self.failed.emit(str(exc))
+
+
+class WeeklyEcountCredentialDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.credentials: dict | None = None
+        self.profiles = load_ecount_users()
+        self.setWindowTitle("주간 재고조사 · 이카운트 API 정보")
+        self.setMinimumWidth(520)
+
+        self.company_code = QLineEdit("304293")
+        self.company_code.setReadOnly(True)
+        self.user_id = QComboBox()
+        self.user_id.setEditable(True)
+        self.user_id.addItems([profile["user_id"] for profile in self.profiles])
+        self.employee_code = QLineEdit()
+        self.employee_code.setPlaceholderText("이카운트 담당자코드")
+        self.api_key = QLineEdit()
+        self.api_key.setEchoMode(QLineEdit.EchoMode.Password)
+        self.api_key.setPlaceholderText("Windows 사용자 전용 암호화 저장")
+        self.zone = QLineEdit("AB")
+        self.zone.setReadOnly(True)
+
+        form = QFormLayout()
+        form.addRow("회사코드", self.company_code)
+        form.addRow("사용자 ID", self.user_id)
+        form.addRow("담당자코드", self.employee_code)
+        form.addRow("API 인증키", self.api_key)
+        form.addRow("존", self.zone)
+        guide = QLabel("저장한 사용자와 인증키는 창고이동 화면에서도 동일하게 사용할 수 있습니다.")
+        guide.setWordWrap(True)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
+        buttons.button(QDialogButtonBox.StandardButton.Save).setText("저장")
+        buttons.accepted.connect(self.save_and_accept)
+        buttons.rejected.connect(self.reject)
+        layout = QVBoxLayout(self)
+        layout.addWidget(guide)
+        layout.addLayout(form)
+        layout.addWidget(buttons)
+        self.user_id.currentTextChanged.connect(self.load_selected_user)
+        self.load_selected_user(self.user_id.currentText())
+
+    def load_selected_user(self, user_id: str) -> None:
+        profile = next((row for row in self.profiles if row["user_id"].casefold() == user_id.strip().casefold()), None)
+        self.employee_code.setText(profile["employee_code"] if profile else "")
+        self.api_key.setText(load_api_key(user_id))
+
+    def save_and_accept(self) -> None:
+        user_id = self.user_id.currentText().strip()
+        employee_code = self.employee_code.text().strip()
+        api_key = self.api_key.text().strip()
+        if not user_id or not employee_code or not api_key:
+            QMessageBox.warning(self, "입력 확인", "사용자 ID, 담당자코드, API 인증키를 모두 입력하세요.")
+            return
+        try:
+            upsert_ecount_user({"user_id": user_id, "employee_code": employee_code, "display_name": ""})
+            save_api_key(user_id, api_key)
+        except Exception as exc:
+            QMessageBox.warning(self, "API 정보 저장 실패", str(exc))
+            return
+        self.credentials = {
+            "company_code": self.company_code.text().strip(),
+            "user_id": user_id,
+            "api_key": api_key,
+            "zone": self.zone.text().strip(),
+            "test_mode": False,
+        }
+        self.accept()
 
 
 @dataclass
@@ -204,6 +275,7 @@ class InventoryDialog(QDialog):
         super().__init__(parent)
         self.main_window = parent
         self.ecount_worker: WeeklyInventoryWorker | None = None
+        self.ecount_credentials_override: dict | None = None
         self.setWindowTitle("REQM 주간 재고조사")
         self.resize(1480, 900)
         self.rows = self._initial_rows(catalog_items or [])
@@ -331,8 +403,10 @@ class InventoryDialog(QDialog):
     def _import_tab(self) -> QWidget:
         widget = QWidget()
         layout = QHBoxLayout(widget)
+        settings = self._card("이카운트 API 정보", "주간 재고조사 안에서 사용자 ID·담당자코드·API 인증키를 등록합니다.", "API 정보 입력/변경", self.open_ecount_settings)
         ecount = self._card("이카운트 API", "저장된 사용자와 API 키로 창고코드 100(본사)·300(위킵)의 최신 재고를 불러옵니다.", "이카운트 최신화", self.refresh_ecount)
         wekeep = self._card("위킵 Excel", "지원 열: 상품관리코드 / 상품명 / 시점재고\n현재 테스트 단계에서는 Excel 파일을 직접 불러옵니다.", "위킵 Excel 선택", self.load_wekeep)
+        layout.addWidget(settings)
         layout.addWidget(ecount)
         layout.addWidget(wekeep)
         return widget
@@ -513,9 +587,12 @@ class InventoryDialog(QDialog):
             QMessageBox.warning(self, "이카운트 연결", "이카운트 인증정보를 사용할 수 없습니다.")
             return
         try:
-            credentials = self.main_window.inventory_credentials()
+            credentials = self.ecount_credentials_override or self.main_window.inventory_credentials()
         except Exception as exc:
-            QMessageBox.warning(self, "이카운트 연결", str(exc))
+            if self.open_ecount_settings():
+                self.refresh_ecount()
+            else:
+                self.source_status.setText(f"이카운트 API 정보가 필요합니다 · {exc}")
             return
         self.source_status.setText("이카운트 본사·위킵 재고를 불러오는 중...")
         self.ecount_worker = WeeklyInventoryWorker(credentials)
@@ -523,6 +600,14 @@ class InventoryDialog(QDialog):
         self.ecount_worker.failed.connect(self.on_ecount_failed)
         self.ecount_worker.finished.connect(self.release_ecount_worker)
         self.ecount_worker.start()
+
+    def open_ecount_settings(self) -> bool:
+        dialog = WeeklyEcountCredentialDialog(self)
+        if dialog.exec() != QDialog.DialogCode.Accepted or not dialog.credentials:
+            return False
+        self.ecount_credentials_override = dialog.credentials
+        self.source_status.setText(f"이카운트 API 정보 저장 완료 · 사용자 {dialog.credentials['user_id']}")
+        return True
 
     def apply_ecount_rows(self, source_rows: list[dict]) -> int:
         targets = {row.item_code.casefold(): row for row in self.rows}
