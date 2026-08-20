@@ -15,7 +15,9 @@ from inventory_module import (
     WeeklyEcountCredentialDialog,
     export_inventory_workbook,
     import_wekeep_rows,
+    import_reference_workbook,
 )
+from weekly_inventory_store import load_item_prices, load_sales_rows, monthly_sales
 
 
 class InventoryModuleTests(unittest.TestCase):
@@ -50,7 +52,7 @@ class InventoryModuleTests(unittest.TestCase):
             review_refresh.assert_not_called()
             self.assertEqual(dialog.entry_table.item(0, 4).text(), "+10")
             self.assertEqual(dialog.entry_table.item(0, 8).text(), "+10")
-            self.assertEqual(dialog.entry_table.item(0, 9).text(), "차이")
+            self.assertEqual(dialog.entry_table.item(0, dialog.entry_table.columnCount() - 1).text(), "차이")
         finally:
             dialog.close()
 
@@ -128,9 +130,36 @@ class InventoryModuleTests(unittest.TestCase):
             self.assertEqual(workbook["실재고 전산비교"]["E5"].value, 7)
             self.assertEqual(workbook["실재고 전산비교"]["F5"].value, "=D5-E5")
             self.assertEqual(workbook["실재고 전산비교"]["L5"].value, "=J5-K5")
+            self.assertEqual(workbook["재고현황"]["I5"].value, "=IFERROR(VLOOKUP($C5,'단가 '!$A$3:$D$3,4,0),0)")
+            self.assertEqual(workbook["단가 "]["D3"].value, 0)
             self.assertEqual(str(workbook["재고현황"].freeze_panes), "A5")
             self.assertIn("B1:C2", {str(value) for value in workbook["재고현황"].merged_cells.ranges})
             workbook.close()
+
+    def test_reference_workbook_accumulates_without_duplicate_rows(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            source = Path(temp_dir) / "source.xlsx"
+            store = Path(temp_dir) / "store.sqlite3"
+            workbook = Workbook()
+            raw = workbook.active
+            raw.title = "RAWDATA_이카운트"
+            raw.append([None] * 16)
+            raw.append(["년", "월", "일", "요일", "주차", "구간", "구분", "일별", "거래처코드", "거래처", "품목코드", "품목명", "수량", "공급가액", "부가세", "합계"])
+            raw.append([2026, 8, 3, "월", "1W", "월초", "리큐엠", 20260803, "C1", "거래처", "QWC-Q1500GR", "품목", 3, 1000, 100, 1100])
+            raw.append([2026, 8, 3, "월", "1W", "월초", "리큐엠", 20260803, "C1", "거래처", "QWC-Q1500GR", "품목", 3, 1000, 100, 1100])
+            price = workbook.create_sheet("단가 ")
+            price.append(["회사명"])
+            price.append(["품목코드", "품목명", "재고단가", "재고단가(+v)"])
+            price.append(["QWC-Q1500GR", "품목", 1000, 1100])
+            workbook.save(source)
+            first = import_reference_workbook(source, store)
+            second = import_reference_workbook(source, store)
+
+            self.assertEqual((first["inserted"], first["duplicates"]), (2, 0))
+            self.assertEqual((second["inserted"], second["duplicates"]), (0, 2))
+            self.assertEqual(len(load_sales_rows(store)), 2)
+            self.assertEqual(monthly_sales([(2026, 8)], store)["qwc-q1500gr"][(2026, 8)], 6)
+            self.assertEqual(load_item_prices(store)["qwc-q1500gr"], 1100)
 
 
 if __name__ == "__main__":

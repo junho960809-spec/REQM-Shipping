@@ -49,13 +49,12 @@ def main() -> None:
     imoi = workbook["재고데이터-이모아이"]
     clear_values(imoi, 2, imoi.max_row, 1, 5)
 
-    replace_plain_sheet(
-        workbook,
-        "RAWDATA_이카운트",
-        ["기준일시", "창고코드", "창고명", "품목코드", "품목명", "현재고"],
-    )
+    raw = workbook["RAWDATA_이카운트"]
+    if raw.max_row > 2:
+        raw.delete_rows(3, raw.max_row - 2)
     replace_plain_sheet(workbook, "DAILY", ["현재 단계에서는 판매 데이터 제외"])
-    replace_plain_sheet(workbook, "단가 ", ["현재 단계에서는 단가 데이터 제외"])
+    prices = workbook["단가 "]
+    clear_values(prices, 3, prices.max_row, 1, 8)
 
     workbook.calculation.fullCalcOnLoad = True
     workbook.calculation.forceFullCalc = True

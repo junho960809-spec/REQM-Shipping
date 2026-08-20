@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from datetime import datetime
+from dataclasses import dataclass, field
+from datetime import date, datetime
 from pathlib import Path
 import sys
 
@@ -10,6 +10,16 @@ from weekly_inventory_catalog import WEEKLY_INVENTORY_ITEMS
 from ecount_client import EcountClient
 from ecount_credential_store import load_api_key, save_api_key
 from ecount_user_store import load_ecount_users, upsert_ecount_user
+from weekly_inventory_store import (
+    RAW_HEADERS,
+    add_sales_rows,
+    load_item_prices,
+    load_sales_rows,
+    monthly_sales,
+    recent_months,
+    sales_row_count,
+    save_item_prices,
+)
 from PySide6.QtCore import QThread, QTimer, Signal, Qt
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
@@ -70,6 +80,21 @@ class WeeklyInventoryWorker(QThread):
     def run(self) -> None:
         try:
             self.succeeded.emit(EcountClient(**self.credentials).get_inventory_by_location())
+        except Exception as exc:
+            self.failed.emit(str(exc))
+
+
+class WeeklyReferenceImportWorker(QThread):
+    succeeded = Signal(object)
+    failed = Signal(str)
+
+    def __init__(self, path: str):
+        super().__init__()
+        self.path = path
+
+    def run(self) -> None:
+        try:
+            self.succeeded.emit(import_reference_workbook(self.path))
         except Exception as exc:
             self.failed.emit(str(exc))
 
@@ -153,6 +178,8 @@ class InventoryRow:
     reason: str = ""
     action: str = ""
     reviewed: bool = False
+    unit_price: float = 0
+    sales_by_month: dict[tuple[int, int], float] = field(default_factory=dict)
 
     @property
     def headquarters_difference(self) -> int:
@@ -216,6 +243,36 @@ def import_wekeep_rows(path: str | Path) -> dict[str, tuple[str, int]]:
         workbook.close()
 
 
+def import_reference_workbook(path: str | Path, store_path: str | Path | None = None) -> dict[str, int]:
+    workbook = load_workbook(path, read_only=True, data_only=True)
+    try:
+        raw_name = next((name for name in workbook.sheetnames if name.strip() == "RAWDATA_이카운트"), None)
+        price_name = next((name for name in workbook.sheetnames if name.strip() == "단가"), None)
+        if raw_name is None or price_name is None:
+            raise ValueError("RAWDATA_이카운트와 단가 시트를 모두 포함한 Excel을 선택하세요.")
+        raw_sheet = workbook[raw_name]
+        inserted, duplicates = add_sales_rows(
+            raw_sheet.iter_rows(min_row=3, max_col=16, values_only=True), store_path
+        )
+        price_sheet = workbook[price_name]
+        prices = []
+        for values in price_sheet.iter_rows(min_row=3, max_col=4, values_only=True):
+            code, name, base_price, vat_price = values
+            if not str(code or "").strip():
+                continue
+            price = vat_price
+            if price in (None, "") and base_price not in (None, ""):
+                try:
+                    price = float(base_price) * 1.1
+                except (TypeError, ValueError):
+                    price = 0
+            prices.append((str(code).strip(), str(name or "").strip(), float(price or 0)))
+        price_count = save_item_prices(prices, store_path)
+        return {"inserted": inserted, "duplicates": duplicates, "prices": price_count}
+    finally:
+        workbook.close()
+
+
 def weekly_template_path() -> Path:
     base = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
     return base / "assets" / "weekly_inventory_template.xlsx"
@@ -225,6 +282,7 @@ def export_inventory_workbook(
     path: str | Path,
     rows: list[InventoryRow],
     template_path: str | Path | None = None,
+    raw_sales_rows: list[list] | None = None,
 ) -> None:
     template = Path(template_path) if template_path else weekly_template_path()
     if not template.exists():
@@ -236,6 +294,10 @@ def export_inventory_workbook(
     reqm_data = workbook["재고데이터-리큐엠"]
     wekeep_data = workbook["재고데이터-위킵"]
     raw_ecount = workbook["RAWDATA_이카운트"]
+    price_sheet = workbook[next(name for name in workbook.sheetnames if name.strip() == "단가")]
+    export_raw_rows = raw_sales_rows if raw_sales_rows is not None else load_sales_rows()
+    raw_last_row = max(3, len(export_raw_rows) + 2)
+    price_last_row = max(3, len(rows) + 2)
 
     overview_by_code = {
         str(overview.cell(row, 3).value or "").strip().casefold(): row
@@ -245,13 +307,31 @@ def export_inventory_workbook(
         str(comparison.cell(row, 3).value or "").strip().casefold(): row
         for row in range(5, 170)
     }
-    collected_at = datetime.now()
+    months = recent_months()
+    for offset, (year, month) in enumerate(months, 12):
+        overview.cell(1, offset).value = year
+        overview.cell(2, offset).value = month
+    price_sheet.cell(1, 1).value = f"회사명 : 주식회사 리큐엠 / {datetime.now():%Y/%m/%d}"
+    for column, value in enumerate(["품목코드", "품목명[규격]", "재고단가", "재고단가(+v)"], 1):
+        price_sheet.cell(2, column).value = value
+    for row_number in range(3, price_sheet.max_row + 1):
+        for column in range(1, 5):
+            price_sheet.cell(row_number, column).value = None
     for index, item in enumerate(rows):
         overview_row = overview_by_code.get(item.item_code.casefold())
         if overview_row:
             overview.cell(overview_row, 6).value = item.headquarters_actual
             overview.cell(overview_row, 7).value = item.wekeep_actual
             overview.cell(overview_row, 8).value = f"=SUM(F{overview_row}:G{overview_row})"
+            overview.cell(overview_row, 9).value = f"=IFERROR(VLOOKUP($C{overview_row},'단가 '!$A$3:$D${price_last_row},4,0),0)"
+            overview.cell(overview_row, 10).value = f"=H{overview_row}*I{overview_row}"
+            for column, (year, month) in enumerate(months, 12):
+                overview.cell(overview_row, column).value = (
+                    f'=SUMIFS(\'RAWDATA_이카운트\'!$M$3:$M${raw_last_row},'
+                    f"'RAWDATA_이카운트'!$A$3:$A${raw_last_row},{year},"
+                    f"'RAWDATA_이카운트'!$B$3:$B${raw_last_row},{month},"
+                    f"'RAWDATA_이카운트'!$K$3:$K${raw_last_row},$C{overview_row})"
+                )
 
         comparison_row = comparison_by_code.get(item.item_code.casefold())
         if comparison_row:
@@ -287,8 +367,18 @@ def export_inventory_workbook(
         for column, value in enumerate([item.item_code, item.item_name, item.wekeep_actual], 1):
             wekeep_data.cell(reqm_row, column).value = value
 
-        raw_ecount.append([collected_at, "100", "본사창고", item.item_code, item.item_name, item.ecount_headquarters])
-        raw_ecount.append([collected_at, "300", "위킵창고", item.item_code, item.item_name, item.ecount_wekeep])
+        price_row = index + 3
+        price_sheet.cell(price_row, 1).value = item.item_code
+        price_sheet.cell(price_row, 2).value = item.item_name
+        price_sheet.cell(price_row, 4).value = item.unit_price
+
+    if raw_ecount.max_row > 2:
+        raw_ecount.delete_rows(3, raw_ecount.max_row - 2)
+    for column in range(1, 17):
+        raw_ecount.cell(1, column).value = None
+        raw_ecount.cell(2, column).value = RAW_HEADERS[column - 1]
+    for sales_row in export_raw_rows:
+        raw_ecount.append(list(sales_row)[:16])
 
     workbook.calculation.fullCalcOnLoad = True
     workbook.calculation.forceFullCalc = True
@@ -299,16 +389,17 @@ def export_inventory_workbook(
 
 
 class InventoryDialog(QDialog):
-    HEADERS = ["품목코드", "품목명", "본사 실재고", "이카운트 본사", "본사 차이", "위킵 재고", "이카운트 위킵", "위킵 차이", "전체 차이", "판정"]
-
     def __init__(self, catalog_items: list[dict] | None = None, parent=None):
         super().__init__(parent)
         self.main_window = parent
         self.ecount_worker: WeeklyInventoryWorker | None = None
+        self.reference_worker: WeeklyReferenceImportWorker | None = None
         self.ecount_credentials_override: dict | None = None
         self.setWindowTitle("REQM 주간 재고조사")
         self.resize(1480, 900)
         self.rows = self._initial_rows(catalog_items or [])
+        self.sales_months = recent_months()
+        self._load_sales_and_prices()
         self.filtered_indices: list[int] = []
         self.current_review_index: int | None = None
         self._build_ui()
@@ -317,6 +408,14 @@ class InventoryDialog(QDialog):
     @staticmethod
     def _initial_rows(catalog_items: list[dict]) -> list[InventoryRow]:
         return [InventoryRow(item_code=code, item_name=name) for code, name in WEEKLY_INVENTORY_ITEMS]
+
+    def _load_sales_and_prices(self) -> None:
+        prices = load_item_prices()
+        sales = monthly_sales(self.sales_months)
+        for row in self.rows:
+            key = row.item_code.casefold()
+            row.unit_price = prices.get(key, 0)
+            row.sales_by_month = sales.get(key, {})
 
     def _build_ui(self) -> None:
         self.setStyleSheet("""
@@ -414,7 +513,10 @@ class InventoryDialog(QDialog):
         self.entry_summary.setObjectName("guide")
         layout.addWidget(self.entry_summary)
         self.entry_table = FastEntryTable()
-        self._prepare_table(self.entry_table, self.HEADERS)
+        headers = ["품목코드", "품목명", "본사 실재고", "이카운트 본사", "본사 차이", "위킵 재고", "이카운트 위킵", "위킵 차이", "전체 차이", "단가(+V)"]
+        headers.extend(f"{year}년 {month}월 판매" for year, month in self.sales_months)
+        headers.append("판정")
+        self._prepare_table(self.entry_table, headers)
         self.entry_table.setItemDelegate(SelectAllEditDelegate(self.entry_table))
         self.entry_table.setEditTriggers(
             QAbstractItemView.EditTrigger.CurrentChanged
@@ -436,9 +538,11 @@ class InventoryDialog(QDialog):
         settings = self._card("이카운트 API 정보", "주간 재고조사 안에서 사용자 ID·담당자코드·API 인증키를 등록합니다.", "API 정보 입력/변경", self.open_ecount_settings)
         ecount = self._card("이카운트 API", "저장된 사용자와 API 키로 창고코드 100(본사)·300(위킵)의 최신 재고를 불러옵니다.", "이카운트 최신화", self.refresh_ecount)
         wekeep = self._card("위킵 Excel", "지원 열: 상품관리코드 / 상품명 / 시점재고\n현재 테스트 단계에서는 Excel 파일을 직접 불러옵니다.", "위킵 Excel 선택", self.load_wekeep)
+        reference = self._card("판매 RAWDATA·단가", "기준 Excel의 RAWDATA는 삭제하지 않고 누적하며, 일자의 연도·월로 최근 5개월 판매수량을 계산합니다.", "기준 Excel 누적", self.load_reference)
         layout.addWidget(settings)
         layout.addWidget(ecount)
         layout.addWidget(wekeep)
+        layout.addWidget(reference)
         return widget
 
     def _review_tab(self) -> QWidget:
@@ -528,7 +632,7 @@ class InventoryDialog(QDialog):
         reviewed = sum(row.reviewed for row in self.rows if row.total_difference != 0)
         self.dashboard_status.setText(
             f"현재 품목 {len(self.rows):,}개 · 차이 품목 {differences:,}개 · 검토 완료 {reviewed:,}개\n"
-            "이카운트 API는 다음 단계에서 연결되며 현재는 화면과 Excel 흐름을 확인하는 테스트 버전입니다."
+            f"판매 RAWDATA 누적 {sales_row_count():,}행 · 단가는 기준 Excel의 단가 시트를 사용합니다."
         )
 
     def refresh_entry_table(self) -> None:
@@ -537,7 +641,9 @@ class InventoryDialog(QDialog):
         self.entry_table.setRowCount(len(self.filtered_indices))
         for table_row, source_index in enumerate(self.filtered_indices):
             row = self.rows[source_index]
-            values = [row.item_code, row.item_name, row.headquarters_actual, row.ecount_headquarters, row.headquarters_difference, row.wekeep_actual, row.ecount_wekeep, row.wekeep_difference, row.total_difference, "일치" if row.total_difference == 0 else "차이"]
+            values = [row.item_code, row.item_name, row.headquarters_actual, row.ecount_headquarters, row.headquarters_difference, row.wekeep_actual, row.ecount_wekeep, row.wekeep_difference, row.total_difference, round(row.unit_price)]
+            values.extend(round(row.sales_by_month.get(month, 0)) for month in self.sales_months)
+            values.append("일치" if row.total_difference == 0 else "차이")
             for column, value in enumerate(values):
                 item = QTableWidgetItem(str(value))
                 item.setData(Qt.ItemDataRole.UserRole, source_index)
@@ -560,7 +666,7 @@ class InventoryDialog(QDialog):
             5: row.wekeep_actual,
             7: row.wekeep_difference,
             8: row.total_difference,
-            9: "일치" if row.total_difference == 0 else "차이",
+            self.entry_table.columnCount() - 1: "일치" if row.total_difference == 0 else "차이",
         }
         self.entry_table.blockSignals(True)
         try:
@@ -739,6 +845,46 @@ class InventoryDialog(QDialog):
         self.refresh_all()
         QMessageBox.information(self, "위킵 재고 반영", f"{len(imported):,}개 행을 읽고 현재 목록의 {matched:,}개 품목에 반영했습니다.")
 
+    def load_reference(self) -> None:
+        if self.reference_worker is not None and self.reference_worker.isRunning():
+            self.source_status.setText("판매 RAWDATA와 단가를 누적하는 중...")
+            return
+        path, _ = QFileDialog.getOpenFileName(
+            self, "주간재고 기준 Excel 선택", "", "Excel 파일 (*.xlsx *.xlsm)"
+        )
+        if not path:
+            return
+        self.source_status.setText("판매 RAWDATA와 단가를 누적하는 중...")
+        self.reference_worker = WeeklyReferenceImportWorker(path)
+        self.reference_worker.succeeded.connect(self.on_reference_loaded)
+        self.reference_worker.failed.connect(self.on_reference_failed)
+        self.reference_worker.finished.connect(self.release_reference_worker)
+        self.reference_worker.start()
+
+    def on_reference_loaded(self, result: dict[str, int]) -> None:
+        self._load_sales_and_prices()
+        self.source_status.setText(
+            f"누적 완료 · 신규 {result['inserted']:,}행 · 중복 제외 {result['duplicates']:,}행 · 단가 {result['prices']:,}개"
+        )
+        self.refresh_all()
+        QMessageBox.information(
+            self,
+            "판매 RAWDATA·단가 반영",
+            f"판매자료 신규 {result['inserted']:,}행을 누적했습니다.\n"
+            f"이미 저장된 동일 자료 {result['duplicates']:,}행은 중복 합산하지 않았습니다.\n"
+            f"품목별 단가 {result['prices']:,}개를 갱신했습니다.",
+        )
+
+    def on_reference_failed(self, message: str) -> None:
+        self.source_status.setText("기준 Excel 누적 실패")
+        QMessageBox.critical(self, "기준 Excel 오류", message)
+
+    def release_reference_worker(self) -> None:
+        worker = self.reference_worker
+        self.reference_worker = None
+        if worker is not None:
+            worker.deleteLater()
+
     def export_result(self) -> None:
         default_name = f"REQM_주간재고조사_{datetime.now():%Y%m%d}.xlsx"
         path, _ = QFileDialog.getSaveFileName(self, "주간재고조사 Excel 저장", default_name, "Excel 파일 (*.xlsx)")
@@ -747,7 +893,7 @@ class InventoryDialog(QDialog):
         if not path.lower().endswith(".xlsx"):
             path += ".xlsx"
         try:
-            export_inventory_workbook(path, self.rows)
+            export_inventory_workbook(path, self.rows, raw_sales_rows=load_sales_rows())
         except Exception as exc:
             QMessageBox.critical(self, "Excel 생성 실패", str(exc))
             return
