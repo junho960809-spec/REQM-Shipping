@@ -8,10 +8,12 @@ from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 from weekly_inventory_catalog import WEEKLY_INVENTORY_ITEMS
-from PySide6.QtCore import Qt
+from ecount_client import EcountClient
+from PySide6.QtCore import QThread, QTimer, Signal, Qt
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QCheckBox,
+    QAbstractItemView,
     QComboBox,
     QDialog,
     QFileDialog,
@@ -24,6 +26,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QSpinBox,
+    QStyledItemDelegate,
     QTabWidget,
     QTableWidget,
     QTableWidgetItem,
@@ -31,6 +34,42 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+
+
+class SelectAllEditDelegate(QStyledItemDelegate):
+    def setEditorData(self, editor, index) -> None:
+        super().setEditorData(editor, index)
+        if isinstance(editor, QLineEdit):
+            QTimer.singleShot(0, editor.selectAll)
+
+
+class FastEntryTable(QTableWidget):
+    def keyPressEvent(self, event) -> None:
+        if event.key() in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace) and self.state() != QAbstractItemView.State.EditingState:
+            changed = False
+            for item in self.selectedItems():
+                if item.flags() & Qt.ItemFlag.ItemIsEditable:
+                    item.setText("0")
+                    changed = True
+            if changed:
+                event.accept()
+                return
+        super().keyPressEvent(event)
+
+
+class WeeklyInventoryWorker(QThread):
+    succeeded = Signal(object)
+    failed = Signal(str)
+
+    def __init__(self, credentials: dict):
+        super().__init__()
+        self.credentials = credentials
+
+    def run(self) -> None:
+        try:
+            self.succeeded.emit(EcountClient(**self.credentials).get_inventory_by_location())
+        except Exception as exc:
+            self.failed.emit(str(exc))
 
 
 @dataclass
@@ -163,6 +202,8 @@ class InventoryDialog(QDialog):
 
     def __init__(self, catalog_items: list[dict] | None = None, parent=None):
         super().__init__(parent)
+        self.main_window = parent
+        self.ecount_worker: WeeklyInventoryWorker | None = None
         self.setWindowTitle("REQM 주간 재고조사")
         self.resize(1480, 900)
         self.rows = self._initial_rows(catalog_items or [])
@@ -238,7 +279,7 @@ class InventoryDialog(QDialog):
         widget = QWidget()
         layout = QVBoxLayout(widget)
         cards = QHBoxLayout()
-        cards.addWidget(self._card("1. 이카운트 최신화", "품목과 본사·위킵 창고의 전산재고를 가져옵니다.", "API 준비 중", lambda: None, False))
+        cards.addWidget(self._card("1. 이카운트 최신화", "저장된 인증정보로 본사·위킵 창고의 전산재고를 가져옵니다.", "이카운트 최신화", self.refresh_ecount))
         cards.addWidget(self._card("2. 위킵 Excel 불러오기", "상품관리코드와 시점재고를 자동으로 반영합니다.", "Excel 파일 선택", self.load_wekeep))
         cards.addWidget(self._card("3. 본사 실재고 입력", "입력하는 즉시 본사·전체 차이를 다시 계산합니다.", "실재고 입력", lambda: self.tabs.setCurrentIndex(1)))
         cards.addWidget(self._card("4. 결과 Excel 생성", "검토 결과를 주간재고조사 파일로 저장합니다.", "결과 Excel 생성", self.export_result))
@@ -270,20 +311,27 @@ class InventoryDialog(QDialog):
         self.entry_summary = QLabel()
         self.entry_summary.setObjectName("guide")
         layout.addWidget(self.entry_summary)
-        self.entry_table = QTableWidget()
+        self.entry_table = FastEntryTable()
         self._prepare_table(self.entry_table, self.HEADERS)
+        self.entry_table.setItemDelegate(SelectAllEditDelegate(self.entry_table))
+        self.entry_table.setEditTriggers(
+            QAbstractItemView.EditTrigger.CurrentChanged
+            | QAbstractItemView.EditTrigger.SelectedClicked
+            | QAbstractItemView.EditTrigger.AnyKeyPressed
+        )
         layout.addWidget(self.entry_table, 1)
         self.search.textChanged.connect(self.refresh_entry_table)
         self.status_filter.currentIndexChanged.connect(self.refresh_entry_table)
         self.location_filter.currentIndexChanged.connect(self.refresh_entry_table)
         self.sort_filter.currentIndexChanged.connect(self.refresh_entry_table)
+        self.entry_table.cellClicked.connect(self.open_entry_editor)
         self.entry_table.cellChanged.connect(self.on_entry_changed)
         return widget
 
     def _import_tab(self) -> QWidget:
         widget = QWidget()
         layout = QHBoxLayout(widget)
-        ecount = self._card("이카운트 API", "회사·창고 매핑을 확인한 뒤 최신 전산재고를 불러옵니다. 이카운트 재고는 수정하지 않습니다.", "API 연결은 다음 단계", lambda: None, False)
+        ecount = self._card("이카운트 API", "저장된 사용자와 API 키로 창고코드 100(본사)·300(위킵)의 최신 재고를 불러옵니다.", "이카운트 최신화", self.refresh_ecount)
         wekeep = self._card("위킵 Excel", "지원 열: 상품관리코드 / 상품명 / 시점재고\n현재 테스트 단계에서는 Excel 파일을 직접 불러옵니다.", "위킵 Excel 선택", self.load_wekeep)
         layout.addWidget(ecount)
         layout.addWidget(wekeep)
@@ -429,6 +477,10 @@ class InventoryDialog(QDialog):
         finally:
             self.entry_table.blockSignals(False)
 
+    def open_entry_editor(self, table_row: int, column: int) -> None:
+        if column in (2, 5):
+            self.entry_table.editItem(self.entry_table.item(table_row, column))
+
     def on_entry_changed(self, table_row: int, column: int) -> None:
         if column not in (2, 5) or not (0 <= table_row < len(self.filtered_indices)):
             return
@@ -452,6 +504,64 @@ class InventoryDialog(QDialog):
     def on_tab_changed(self, index: int) -> None:
         if index == 3:
             self.refresh_review_table()
+
+    def refresh_ecount(self) -> None:
+        if self.ecount_worker is not None and self.ecount_worker.isRunning():
+            self.source_status.setText("이카운트 재고를 불러오는 중입니다...")
+            return
+        if self.main_window is None or not hasattr(self.main_window, "inventory_credentials"):
+            QMessageBox.warning(self, "이카운트 연결", "이카운트 인증정보를 사용할 수 없습니다.")
+            return
+        try:
+            credentials = self.main_window.inventory_credentials()
+        except Exception as exc:
+            QMessageBox.warning(self, "이카운트 연결", str(exc))
+            return
+        self.source_status.setText("이카운트 본사·위킵 재고를 불러오는 중...")
+        self.ecount_worker = WeeklyInventoryWorker(credentials)
+        self.ecount_worker.succeeded.connect(self.on_ecount_loaded)
+        self.ecount_worker.failed.connect(self.on_ecount_failed)
+        self.ecount_worker.finished.connect(self.release_ecount_worker)
+        self.ecount_worker.start()
+
+    def apply_ecount_rows(self, source_rows: list[dict]) -> int:
+        targets = {row.item_code.casefold(): row for row in self.rows}
+        for row in self.rows:
+            row.ecount_headquarters = 0
+            row.ecount_wekeep = 0
+        matched_codes: set[str] = set()
+        for source in source_rows:
+            code = str(source.get("code") or "").strip()
+            target = targets.get(code.casefold())
+            if target is None:
+                continue
+            try:
+                quantity = int(round(float(source.get("stock", 0) or 0)))
+            except (TypeError, ValueError):
+                quantity = 0
+            warehouse_code = str(source.get("warehouse_code") or "").strip()
+            if warehouse_code == "100":
+                target.ecount_headquarters += quantity
+                matched_codes.add(code.casefold())
+            elif warehouse_code == "300":
+                target.ecount_wekeep += quantity
+                matched_codes.add(code.casefold())
+        return len(matched_codes)
+
+    def on_ecount_loaded(self, source_rows: list[dict]) -> None:
+        matched = self.apply_ecount_rows(source_rows)
+        self.source_status.setText(f"이카운트 최신화 완료 · {datetime.now():%Y-%m-%d %H:%M:%S} · {matched:,}개 품목")
+        self.refresh_all()
+
+    def on_ecount_failed(self, message: str) -> None:
+        self.source_status.setText("이카운트 최신화 실패")
+        QMessageBox.critical(self, "이카운트 최신화 실패", message)
+
+    def release_ecount_worker(self) -> None:
+        worker = self.ecount_worker
+        self.ecount_worker = None
+        if worker is not None:
+            worker.deleteLater()
 
     def refresh_review_table(self) -> None:
         indices = [index for index, row in enumerate(self.rows) if row.total_difference != 0]

@@ -48,6 +48,32 @@ class InventoryModuleTests(unittest.TestCase):
         finally:
             dialog.close()
 
+    def test_entry_table_supports_single_click_and_any_key_editing(self):
+        dialog = InventoryDialog([])
+        try:
+            triggers = dialog.entry_table.editTriggers()
+            self.assertTrue(triggers & dialog.entry_table.EditTrigger.SelectedClicked)
+            self.assertTrue(triggers & dialog.entry_table.EditTrigger.AnyKeyPressed)
+        finally:
+            dialog.close()
+
+    def test_ecount_rows_map_exact_warehouse_codes_to_weekly_items(self):
+        dialog = InventoryDialog([])
+        try:
+            matched = dialog.apply_ecount_rows([
+                {"code": "QWC-Q1500GR", "warehouse_code": "100", "stock": 12},
+                {"code": "QWC-Q1500GR", "warehouse_code": "300", "stock": 7},
+                {"code": "QWC-Q1500GR", "warehouse_code": "CS001", "stock": 99},
+                {"code": "NOT-IN-WEEKLY-LIST", "warehouse_code": "100", "stock": 5},
+            ])
+
+            first = dialog.rows[0]
+            self.assertEqual(matched, 1)
+            self.assertEqual(first.ecount_headquarters, 12)
+            self.assertEqual(first.ecount_wekeep, 7)
+        finally:
+            dialog.close()
+
     def test_differences(self):
         row = InventoryRow("A", "품목", 10, 7, 5, 8)
         self.assertEqual(row.headquarters_difference, 3)
