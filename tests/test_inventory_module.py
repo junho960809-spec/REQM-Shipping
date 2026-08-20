@@ -4,10 +4,18 @@ from pathlib import Path
 
 from openpyxl import Workbook, load_workbook
 
-from inventory_module import InventoryRow, export_inventory_workbook, import_wekeep_rows
+from inventory_module import InventoryDialog, InventoryRow, export_inventory_workbook, import_wekeep_rows
 
 
 class InventoryModuleTests(unittest.TestCase):
+    def test_entry_rows_follow_reference_workbook_order(self):
+        rows = InventoryDialog._initial_rows([{"item_code": "SHOULD-NOT-APPEAR", "item_name": "제외 품목"}])
+
+        self.assertEqual(len(rows), 165)
+        self.assertEqual((rows[0].item_code, rows[0].item_name), ("QWC-Q1500GR", "[리큐엠] QWC-Q1500 무선충전기 그레이"))
+        self.assertEqual((rows[-1].item_code, rows[-1].item_name), ("QMA-Bubblepad-Cr", "리큐엠 맥세이프 액세서리-버블패드_소프트 크림"))
+        self.assertNotIn("SHOULD-NOT-APPEAR", {row.item_code for row in rows})
+
     def test_differences(self):
         row = InventoryRow("A", "품목", 10, 7, 5, 8)
         self.assertEqual(row.headquarters_difference, 3)

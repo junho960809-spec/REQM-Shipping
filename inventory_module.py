@@ -7,6 +7,7 @@ from pathlib import Path
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
+from weekly_inventory_catalog import WEEKLY_INVENTORY_ITEMS
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
@@ -172,15 +173,7 @@ class InventoryDialog(QDialog):
 
     @staticmethod
     def _initial_rows(catalog_items: list[dict]) -> list[InventoryRow]:
-        if not catalog_items:
-            return [InventoryRow(**vars(row)) for row in SAMPLE_ROWS]
-        rows = []
-        for source in catalog_items[:100]:
-            code = str(source.get("item_code") or "").strip()
-            name = str(source.get("standard_name") or source.get("item_name") or source.get("representative_name") or code).strip()
-            if code:
-                rows.append(InventoryRow(code, name))
-        return rows or [InventoryRow(**vars(row)) for row in SAMPLE_ROWS]
+        return [InventoryRow(item_code=code, item_name=name) for code, name in WEEKLY_INVENTORY_ITEMS]
 
     def _build_ui(self) -> None:
         self.setStyleSheet("""
