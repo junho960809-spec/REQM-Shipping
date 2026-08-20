@@ -116,8 +116,11 @@ class AsDailyDialog(QDialog):
         self.table.setHorizontalHeaderLabels(self.HEADERS)
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.table.setAlternatingRowColors(True)
-        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
-        self.table.horizontalHeader().setStretchLastSection(True)
+        header = self.table.horizontalHeader()
+        header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        header.setSectionResizeMode(5, QHeaderView.ResizeMode.Stretch)
+        for column, width in enumerate((90, 95, 75, 90, 85, 280, 125, 95, 150, 65, 190)):
+            self.table.setColumnWidth(column, width)
 
         filters = QHBoxLayout()
         for label, widget in [("시작일", self.start_date), ("종료일", self.end_date), ("접수 유형", self.receipt_type), ("진행상황", self.status)]:
@@ -164,14 +167,18 @@ class AsDailyDialog(QDialog):
 
     def show_records(self, records: list) -> None:
         self.records = records
+        self.table.setUpdatesEnabled(False)
         self.table.setRowCount(len(records))
-        for row, record in enumerate(records):
-            product = " ".join(part for part in (record.get("product", ""), record.get("color", "")) if part).strip()
-            values = ["반영 예정" if record.get("type") in {"교환", "반품"} else "확인 필요", record.get("receipt_date", ""), record.get("type", ""),
-                      record.get("name", ""), record.get("postcode", ""), record.get("address", ""), record.get("phone", ""),
-                      record.get("manufacture", ""), product, record.get("quantity", ""), record.get("reason", "")]
-            for column, value in enumerate(values):
-                self.table.setItem(row, column, QTableWidgetItem(str(value)))
+        try:
+            for row, record in enumerate(records):
+                product = " ".join(part for part in (record.get("product", ""), record.get("color", "")) if part).strip()
+                values = ["반영 예정" if record.get("type") in {"교환", "반품"} else "확인 필요", record.get("receipt_date", ""), record.get("type", ""),
+                          record.get("name", ""), record.get("postcode", ""), record.get("address", ""), record.get("phone", ""),
+                          record.get("manufacture", ""), product, record.get("quantity", ""), record.get("reason", "")]
+                for column, value in enumerate(values):
+                    self.table.setItem(row, column, QTableWidgetItem(str(value)))
+        finally:
+            self.table.setUpdatesEnabled(True)
         self.summary.setText(f"조회 {len(records):,}건 · 교환 {sum(r.get('type') == '교환' for r in records):,}건 · 반품 {sum(r.get('type') == '반품' for r in records):,}건")
         self.fetch_button.setEnabled(True)
         self.excel_button.setEnabled(bool(records))

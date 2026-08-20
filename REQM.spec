@@ -7,6 +7,7 @@ from PyInstaller.utils.hooks import collect_all
 
 pdf_datas, pdf_binaries, pdf_hidden = collect_all("pdfplumber")
 miner_datas, miner_binaries, miner_hidden = collect_all("pdfminer")
+playwright_datas, playwright_binaries, playwright_hidden = collect_all("playwright")
 python_runtime_dir = Path(sys.base_prefix)
 runtime_binaries = [
     (str(python_runtime_dir / dll_name), ".")
@@ -15,10 +16,10 @@ runtime_binaries = [
 ]
 
 a = Analysis(
-    ["main.py"], pathex=[], binaries=runtime_binaries + pdf_binaries + miner_binaries,
-    datas=pdf_datas + miner_datas + [("assets/direct_conversion_reference.xlsx", "assets")],
-    hiddenimports=pdf_hidden + miner_hidden, hookspath=[], hooksconfig={}, runtime_hooks=[],
-    excludes=[], noarchive=False, optimize=0,
+    ["main.py"], pathex=[], binaries=runtime_binaries + pdf_binaries + miner_binaries + playwright_binaries,
+    datas=pdf_datas + miner_datas + playwright_datas + [("assets/direct_conversion_reference.xlsx", "assets")],
+    hiddenimports=pdf_hidden + miner_hidden + playwright_hidden, hookspath=[], hooksconfig={}, runtime_hooks=[],
+    excludes=[], noarchive=False, optimize=1,
 )
 pyz = PYZ(a.pure)
 exe = EXE(

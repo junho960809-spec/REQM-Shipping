@@ -27,7 +27,7 @@ python main.py
 ## 빌드
 
 ```powershell
-pyinstaller --noconfirm --clean REQM_1_0_35.spec
+pyinstaller --noconfirm --clean REQM.spec
 ```
 
 `config.example.json`을 `config.json`으로 복사해 사용하며 실제 인증키와 비밀번호는 커밋하지 않습니다.
