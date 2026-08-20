@@ -3,10 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+import sys
 
-from openpyxl import Workbook, load_workbook
-from openpyxl.styles import Alignment, Font, PatternFill
-from openpyxl.utils import get_column_letter
+from openpyxl import load_workbook
 from weekly_inventory_catalog import WEEKLY_INVENTORY_ITEMS
 from ecount_client import EcountClient
 from ecount_credential_store import load_api_key, save_api_key
@@ -217,55 +216,86 @@ def import_wekeep_rows(path: str | Path) -> dict[str, tuple[str, int]]:
         workbook.close()
 
 
-def export_inventory_workbook(path: str | Path, rows: list[InventoryRow]) -> None:
-    workbook = Workbook()
-    overview = workbook.active
-    overview.title = "재고현황"
-    comparison = workbook.create_sheet("실재고 전산비교")
-    inventory_data = workbook.create_sheet("재고데이터")
-    reqm_data = workbook.create_sheet("재고데이터-리큐엠")
-    wekeep_data = workbook.create_sheet("재고데이터-위킵")
-    raw_ecount = workbook.create_sheet("RAWDATA_이카운트")
+def weekly_template_path() -> Path:
+    base = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
+    return base / "assets" / "weekly_inventory_template.xlsx"
 
-    headers = ["품목코드", "품목명", "본사 실재고", "이카운트 본사", "본사 차이", "위킵 재고", "이카운트 위킵", "위킵 차이", "전체 차이", "판정"]
-    overview.append(["REQM 주간 재고조사", datetime.now().strftime("%Y-%m-%d %H:%M")])
-    overview.append(headers)
-    comparison.append(headers + ["차이 원인", "조치 내용", "검토 완료"])
-    inventory_data.append(["품목코드", "품목명", "본사창고", "위킵창고", "본사 실재고", "위킵 실재고", "전체 차이"])
-    reqm_data.append(["품목코드", "품목명", "01-위킵창고", "01-본사창고", "03-불량창고(본사)"])
-    wekeep_data.append(["상품관리코드", "상품명", "시점재고"])
-    raw_ecount.append(["구분", "창고", "품목코드", "품목명", "수량", "수집시각"])
 
-    for item in rows:
-        base = [
-            item.item_code, item.item_name, item.headquarters_actual, item.ecount_headquarters,
-            item.headquarters_difference, item.wekeep_actual, item.ecount_wekeep,
-            item.wekeep_difference, item.total_difference, "일치" if item.total_difference == 0 else "차이",
+def export_inventory_workbook(
+    path: str | Path,
+    rows: list[InventoryRow],
+    template_path: str | Path | None = None,
+) -> None:
+    template = Path(template_path) if template_path else weekly_template_path()
+    if not template.exists():
+        raise FileNotFoundError(f"주간 재고조사 Excel 템플릿을 찾을 수 없습니다: {template}")
+    workbook = load_workbook(template, data_only=False)
+    overview = workbook["재고현황"]
+    comparison = workbook["실재고 전산비교"]
+    inventory_data = workbook["재고데이터"]
+    reqm_data = workbook["재고데이터-리큐엠"]
+    wekeep_data = workbook["재고데이터-위킵"]
+    raw_ecount = workbook["RAWDATA_이카운트"]
+
+    overview_by_code = {
+        str(overview.cell(row, 3).value or "").strip().casefold(): row
+        for row in range(5, 170)
+    }
+    comparison_by_code = {
+        str(comparison.cell(row, 3).value or "").strip().casefold(): row
+        for row in range(5, 170)
+    }
+    collected_at = datetime.now()
+    for index, item in enumerate(rows):
+        overview_row = overview_by_code.get(item.item_code.casefold())
+        if overview_row:
+            overview.cell(overview_row, 6).value = item.headquarters_actual
+            overview.cell(overview_row, 7).value = item.wekeep_actual
+            overview.cell(overview_row, 8).value = f"=SUM(F{overview_row}:G{overview_row})"
+
+        comparison_row = comparison_by_code.get(item.item_code.casefold())
+        if comparison_row:
+            values = {
+                4: item.headquarters_actual,
+                5: item.ecount_headquarters,
+                6: f"=D{comparison_row}-E{comparison_row}",
+                7: item.wekeep_actual,
+                8: item.ecount_wekeep,
+                9: f"=G{comparison_row}-H{comparison_row}",
+                10: f"=D{comparison_row}+G{comparison_row}",
+                11: f"=E{comparison_row}+H{comparison_row}",
+                12: f"=J{comparison_row}-K{comparison_row}",
+                13: " / ".join(value for value in (item.reason, item.action, "검토완료" if item.reviewed else "") if value),
+                14: 0,
+                15: 0,
+                16: f"=O{comparison_row}-N{comparison_row}",
+            }
+            for column, value in values.items():
+                comparison.cell(comparison_row, column).value = value
+
+        data_row = index + 3
+        data_values = [
+            item.item_code, item.item_name, item.ecount_wekeep, item.ecount_headquarters, 0, None,
+            0, 0, 0, f"=G{data_row}+C{data_row}", f"=H{data_row}+D{data_row}", f"=I{data_row}+E{data_row}",
         ]
-        overview.append(base)
-        comparison.append(base + [item.reason, item.action, "완료" if item.reviewed else "미처리"])
-        inventory_data.append([item.item_code, item.item_name, item.ecount_headquarters, item.ecount_wekeep, item.headquarters_actual, item.wekeep_actual, item.total_difference])
-        reqm_data.append([item.item_code, item.item_name, item.ecount_wekeep, item.ecount_headquarters, 0])
-        wekeep_data.append([item.item_code, item.item_name, item.wekeep_actual])
-        raw_ecount.append(["현재고", "본사창고", item.item_code, item.item_name, item.ecount_headquarters, datetime.now()])
-        raw_ecount.append(["현재고", "위킵창고", item.item_code, item.item_name, item.ecount_wekeep, datetime.now()])
+        for column, value in enumerate(data_values, 1):
+            inventory_data.cell(data_row, column).value = value
 
-    navy = PatternFill("solid", fgColor="17365D")
-    teal = PatternFill("solid", fgColor="0D9488")
-    for sheet in workbook.worksheets:
-        header_row = 2 if sheet is overview else 1
-        for cell in sheet[header_row]:
-            cell.fill = navy
-            cell.font = Font(color="FFFFFF", bold=True)
-            cell.alignment = Alignment(horizontal="center")
-        sheet.freeze_panes = f"A{header_row + 1}"
-        sheet.auto_filter.ref = sheet.dimensions
-        for column in range(1, sheet.max_column + 1):
-            width = max(len(str(sheet.cell(row, column).value or "")) for row in range(1, min(sheet.max_row, 80) + 1))
-            sheet.column_dimensions[get_column_letter(column)].width = min(max(width + 3, 11), 42)
-    overview["A1"].fill = teal
-    overview["A1"].font = Font(color="FFFFFF", bold=True, size=16)
+        reqm_row = index + 2
+        for column, value in enumerate([item.item_code, item.item_name, item.ecount_wekeep, item.ecount_headquarters, 0], 1):
+            reqm_data.cell(reqm_row, column).value = value
+        for column, value in enumerate([item.item_code, item.item_name, item.wekeep_actual], 1):
+            wekeep_data.cell(reqm_row, column).value = value
+
+        raw_ecount.append([collected_at, "100", "본사창고", item.item_code, item.item_name, item.ecount_headquarters])
+        raw_ecount.append([collected_at, "300", "위킵창고", item.item_code, item.item_name, item.ecount_wekeep])
+
+    workbook.calculation.fullCalcOnLoad = True
+    workbook.calculation.forceFullCalc = True
+    workbook.calculation.calcMode = "auto"
+    workbook.active = workbook.sheetnames.index("재고현황")
     workbook.save(path)
+    workbook.close()
 
 
 class InventoryDialog(QDialog):

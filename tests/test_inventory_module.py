@@ -115,15 +115,22 @@ class InventoryModuleTests(unittest.TestCase):
     def test_export_inventory_workbook(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             path = Path(temp_dir) / "inventory.xlsx"
-            export_inventory_workbook(path, [InventoryRow("A", "품목", 10, 7, 5, 8)])
+            export_inventory_workbook(path, [InventoryRow("QWC-Q1500GR", "품목", 10, 7, 5, 8)])
             workbook = load_workbook(path, data_only=False)
             self.assertEqual(
                 workbook.sheetnames,
-                ["재고현황", "실재고 전산비교", "재고데이터", "재고데이터-리큐엠", "재고데이터-위킵", "RAWDATA_이카운트"],
+                ["재고현황", "실재고 전산비교", "재고데이터", "재고데이터-리큐엠", "재고데이터-위킵", "재고데이터-이모아이", "RAWDATA_이카운트", "DAILY", "단가 "],
             )
-            self.assertEqual(workbook["재고현황"]["E3"].value, 3)
-            self.assertEqual(workbook["재고현황"]["H3"].value, -3)
-            self.assertEqual(workbook["재고현황"]["I3"].value, 0)
+            self.assertEqual(workbook["재고현황"]["F5"].value, 10)
+            self.assertEqual(workbook["재고현황"]["G5"].value, 5)
+            self.assertEqual(workbook["재고현황"]["H5"].value, "=SUM(F5:G5)")
+            self.assertEqual(workbook["실재고 전산비교"]["D5"].value, 10)
+            self.assertEqual(workbook["실재고 전산비교"]["E5"].value, 7)
+            self.assertEqual(workbook["실재고 전산비교"]["F5"].value, "=D5-E5")
+            self.assertEqual(workbook["실재고 전산비교"]["L5"].value, "=J5-K5")
+            self.assertEqual(str(workbook["재고현황"].freeze_panes), "A5")
+            self.assertIn("B1:C2", {str(value) for value in workbook["재고현황"].merged_cells.ranges})
+            workbook.close()
 
 
 if __name__ == "__main__":
