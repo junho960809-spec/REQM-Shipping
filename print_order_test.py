@@ -7,10 +7,10 @@ from difflib import SequenceMatcher
 from datetime import datetime
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QDate, QTimer, QThread, Signal
-from PySide6.QtGui import QColor, QFont, QKeySequence
+from PySide6.QtCore import Qt, QDate, QTimer, QThread, Signal, QUrl
+from PySide6.QtGui import QColor, QDesktopServices, QFont, QKeySequence
 from PySide6.QtWidgets import (
-    QApplication, QComboBox, QDateEdit, QDialog, QFileDialog, QFormLayout,
+    QApplication, QComboBox, QDateEdit, QFileDialog, QFormLayout,
     QFrame, QHBoxLayout, QLabel, QLineEdit, QListWidget, QMainWindow,
     QMessageBox, QPushButton, QStackedWidget, QTableWidget, QTableWidgetItem,
     QTextEdit, QVBoxLayout, QWidget,
@@ -270,7 +270,7 @@ class PrintOrderTestWindow(QMainWindow):
         self.order_source.setMaximumHeight(145)
         self.analysis_status = QLabel("발주서를 연결하면 자동 분석합니다."); self.analysis_status.setWordWrap(True); self.analysis_status.setObjectName("muted")
         analyze = QPushButton("발주서 분석 및 자동 채우기"); analyze.setObjectName("primary"); analyze.clicked.connect(self.analyze_source)
-        raw = QPushButton("분석 원문 보기"); raw.clicked.connect(self.show_analysis_text)
+        raw = QPushButton("발주서 원본 보기"); raw.clicked.connect(self.show_source_file)
         source_actions = QHBoxLayout(); source_actions.addWidget(analyze, 2); source_actions.addWidget(raw, 1)
         self.ai_file=FileDropBox("AI 원본 파일","Adobe Illustrator · .ai"); self.ai_file.setMaximumHeight(125)
         self.preview_file=FileDropBox("시안 이미지","PNG · JPG · PDF · Ctrl+V", accept_clipboard_image=True); self.preview_file.setMaximumHeight(155)
@@ -427,14 +427,16 @@ class PrintOrderTestWindow(QMainWindow):
         if worker is not None:
             worker.deleteLater()
 
-    def show_analysis_text(self):
-        if self.last_analysis is None:
-            QMessageBox.information(self, "분석 원문", "먼저 발주서를 분석하세요.")
+    def show_source_file(self):
+        if not self.order_source.path:
+            QMessageBox.information(self, "발주서 원본", "먼저 발주서 파일이나 이미지를 연결하세요.")
             return
-        dialog = QDialog(self); dialog.setWindowTitle("발주서 분석 원문"); dialog.resize(900, 650)
-        layout = QVBoxLayout(dialog); text = QTextEdit(); text.setReadOnly(True); text.setPlainText(self.last_analysis.raw_text)
-        layout.addWidget(text); close = QPushButton("닫기"); close.clicked.connect(dialog.accept); layout.addWidget(close)
-        dialog.exec()
+        source = Path(self.order_source.path)
+        if not source.exists():
+            QMessageBox.warning(self, "발주서 원본", "연결한 원본 파일을 찾을 수 없습니다.\n파일을 다시 선택해 주세요.")
+            return
+        if not QDesktopServices.openUrl(QUrl.fromLocalFile(str(source.resolve()))):
+            QMessageBox.warning(self, "발주서 원본", "원본 파일을 열 수 있는 프로그램을 찾지 못했습니다.")
 
     def apply_sample(self):
         self.customer.setCurrentText("고려기프트"); self.product.setCurrentText("일체형 듀얼"); self.quantity.setText("300")

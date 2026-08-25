@@ -89,6 +89,18 @@ class PrintOrderPrototypeTests(unittest.TestCase):
         finally:
             window.close()
 
+    def test_source_view_opens_original_file_in_default_viewer(self):
+        window = PrintOrderTestWindow()
+        try:
+            window.order_source.set_file(__file__)
+            with patch("print_order_test.QDesktopServices.openUrl", return_value=True) as open_url:
+                window.show_source_file()
+            open_url.assert_called_once()
+            self.assertTrue(open_url.call_args.args[0].isLocalFile())
+            self.assertEqual(Path(open_url.call_args.args[0].toLocalFile()).resolve(), Path(__file__).resolve())
+        finally:
+            window.close()
+
 
 if __name__ == "__main__":
     unittest.main()
