@@ -93,8 +93,8 @@ class FileDropBox(QFrame):
 
 
 class PrintOrderTestWindow(QMainWindow):
-    def __init__(self):
-        super().__init__()
+    def __init__(self, parent=None):
+        super().__init__(parent)
         self.setWindowTitle("REQM · 인쇄 발주 자동화 테스트")
         self.resize(1500, 900)
         self.setStyleSheet("""
@@ -132,7 +132,7 @@ class PrintOrderTestWindow(QMainWindow):
         self.menu.setCurrentRow(0)
         side.addWidget(brand)
         side.addWidget(self.menu, 1)
-        version = QLabel("TEST · 웹 등록 비활성화")
+        version = QLabel("1차 적용 · 웹 등록 비활성화")
         version.setStyleSheet("color:#9db2ca;padding:20px")
         side.addWidget(version)
         shell.addWidget(sidebar)

@@ -73,6 +73,7 @@ from inventory_display_filter import filter_inventory_display_rows
 from inventory_safety_store import load_safety_stocks, save_safety_stock
 from as_daily_dialog import AsDailyDialog
 from inventory_module import InventoryDialog
+from print_order_test import PrintOrderTestWindow
 
 
 APP_DIR = Path(__file__).resolve().parent
@@ -2343,6 +2344,7 @@ class MainWindow(QMainWindow):
         self.worker = None
         self.update_worker = None
         self.mini_widget = None
+        self.print_order_window = None
         self.matcher = None
         self.supabase_client = None
         self.catalog: dict = {}
@@ -2704,17 +2706,24 @@ class MainWindow(QMainWindow):
             "본사 실재고 입력 · 위킵 엑셀 반영 · 차이 검토 및 결과 생성",
         )
         weekly_inventory.clicked.connect(self.open_weekly_inventory)
+        print_order = self.dashboard_card(
+            "▣  인쇄 발주 관리",
+            "발주 정보 입력 · AI/시안 연결 · 등록 미리보기 및 진행 현황",
+        )
+        print_order.clicked.connect(self.open_print_order)
         shipment.setMaximumWidth(430)
         inventory.setMaximumWidth(430)
         as_daily.setMaximumWidth(430)
         weekly_inventory.setMaximumWidth(430)
+        print_order.setMaximumWidth(430)
         cards.addWidget(shipment, 0, 0)
         cards.addWidget(inventory, 0, 1)
         cards.addWidget(as_daily, 1, 0)
         cards.addWidget(weekly_inventory, 1, 1)
+        cards.addWidget(print_order, 2, 0)
         cards.setColumnStretch(0, 1)
         cards.setColumnStretch(1, 1)
-        self.dashboard_cards = [shipment, inventory, as_daily, weekly_inventory]
+        self.dashboard_cards = [shipment, inventory, as_daily, weekly_inventory, print_order]
         layout.addLayout(cards)
 
         self.calendar_widget = CalendarDropWidget()
@@ -2808,6 +2817,13 @@ class MainWindow(QMainWindow):
     def open_weekly_inventory(self) -> None:
         catalog_items = self.catalog.get("items", []) if self.catalog else []
         InventoryDialog(catalog_items, self).exec()
+
+    def open_print_order(self) -> None:
+        if self.print_order_window is None:
+            self.print_order_window = PrintOrderTestWindow(self)
+        self.print_order_window.show()
+        self.print_order_window.raise_()
+        self.print_order_window.activateWindow()
 
     def inventory_credentials(self) -> dict:
         config = load_config().get("ecount", {})
