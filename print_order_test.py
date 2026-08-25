@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sys
 import os
+import re
 from datetime import datetime
 from pathlib import Path
 
@@ -14,6 +15,7 @@ from PySide6.QtWidgets import (
     QTextEdit, QVBoxLayout, QWidget,
 )
 from playwright.sync_api import sync_playwright
+from print_order_analyzer import AnalysisResult, analyze_order_document
 
 
 SAMPLE_ORDERS = [
@@ -80,13 +82,29 @@ class PrintOrderWebWorker(QThread):
             self.failed.emit(str(exc))
 
 
+class PrintOrderAnalysisWorker(QThread):
+    succeeded = Signal(object)
+    failed = Signal(str)
+
+    def __init__(self, path: str):
+        super().__init__()
+        self.path = path
+
+    def run(self):
+        try:
+            self.succeeded.emit(analyze_order_document(self.path))
+        except Exception as exc:
+            self.failed.emit(str(exc))
+
+
 class FileDropBox(QFrame):
-    def __init__(self, title: str, extensions: str, accept_clipboard_image: bool = False, parent=None):
+    def __init__(self, title: str, extensions: str, accept_clipboard_image: bool = False, file_prefix: str = "시안캡처", parent=None):
         super().__init__(parent)
         self.setAcceptDrops(True)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.path = ""
         self.accept_clipboard_image = accept_clipboard_image
+        self.file_prefix = file_prefix
         self.setObjectName("dropBox")
         layout = QVBoxLayout(self)
         self.title = QLabel(title)
@@ -144,7 +162,7 @@ class FileDropBox(QFrame):
             return
         output_dir = Path(os.getenv("LOCALAPPDATA", str(Path.home()))) / "REQM" / "print_order_attachments"
         output_dir.mkdir(parents=True, exist_ok=True)
-        path = output_dir / f"시안캡처_{datetime.now():%Y%m%d_%H%M%S_%f}.png"
+        path = output_dir / f"{self.file_prefix}_{datetime.now():%Y%m%d_%H%M%S_%f}.png"
         if not image.save(str(path), "PNG"):
             self.status.setText("클립보드 이미지를 저장하지 못했습니다.")
             return
@@ -155,6 +173,8 @@ class PrintOrderTestWindow(QMainWindow):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.web_worker = None
+        self.analysis_worker = None
+        self.last_analysis = None
         self.setWindowTitle("REQM · 인쇄 발주 자동화 테스트")
         self.resize(1500, 900)
         self.setStyleSheet("""
@@ -219,6 +239,21 @@ class PrintOrderTestWindow(QMainWindow):
         for index, text in enumerate(["1  발주 정보", "2  파일 연결", "3  검토", "4  웹 등록"]):
             tag = QLabel(text); tag.setObjectName("stepDone" if index == 0 else "step"); steps.addWidget(tag)
         steps.addStretch(1); layout.addLayout(steps)
+        source_row = QHBoxLayout()
+        self.order_source = FileDropBox(
+            "발주서 가져오기",
+            "이미지·PDF·Excel을 끌어놓거나 캡처 후 Ctrl+V",
+            accept_clipboard_image=True,
+            file_prefix="발주서캡처",
+        )
+        self.order_source.setMaximumHeight(145)
+        source_actions = QVBoxLayout()
+        self.analysis_status = QLabel("발주서를 연결하면 업체와 공통 필드를 자동 분석합니다.")
+        self.analysis_status.setWordWrap(True); self.analysis_status.setObjectName("muted")
+        analyze = QPushButton("발주서 분석 및 자동 채우기"); analyze.setObjectName("primary"); analyze.clicked.connect(self.analyze_source)
+        raw = QPushButton("분석 원문 보기"); raw.clicked.connect(self.show_analysis_text)
+        source_actions.addWidget(self.analysis_status); source_actions.addStretch(1); source_actions.addWidget(analyze); source_actions.addWidget(raw)
+        source_row.addWidget(self.order_source, 2); source_row.addLayout(source_actions, 1); layout.addLayout(source_row)
         body = QHBoxLayout(); form_card = QFrame(); form_card.setObjectName("card")
         form_box = QVBoxLayout(form_card); form = QFormLayout(); form.setSpacing(12)
         self.customer = QComboBox(); self.customer.setEditable(True); self.customer.addItems(["고려기프트", "한양대학교", "신규 거래처 입력"])
@@ -234,8 +269,6 @@ class PrintOrderTestWindow(QMainWindow):
         form_box.addLayout(form)
         files = QVBoxLayout(); self.ai_file=FileDropBox("AI 원본 파일","Adobe Illustrator · .ai"); self.preview_file=FileDropBox("시안 이미지","캡처 후 Ctrl+V · PNG · JPG · PDF", accept_clipboard_image=True)
         files.addWidget(self.ai_file); files.addWidget(self.preview_file)
-        auto = QPushButton("발주서에서 자동 채우기"); auto.setObjectName("primary"); auto.clicked.connect(self.apply_sample)
-        files.addWidget(auto)
         body.addWidget(form_card,2); body.addLayout(files,1); layout.addLayout(body,1)
         actions=QHBoxLayout(); self.validation=QLabel("필수항목 12개 중 10개 확인 · 첨부파일 2개 필요"); self.validation.setObjectName("muted")
         check=QPushButton("누락 검사"); check.clicked.connect(self.validate_order)
@@ -282,6 +315,87 @@ class PrintOrderTestWindow(QMainWindow):
         for r,row in enumerate(rows):
             for c,v in enumerate(row): table.setItem(r,c,QTableWidgetItem(v))
         layout.addWidget(table,1); return page
+
+    def analyze_source(self):
+        if not self.order_source.path:
+            QMessageBox.information(self, "발주서 선택", "이미지·PDF·Excel 파일을 선택하거나 캡처 이미지를 붙여넣으세요.")
+            return
+        if self.analysis_worker is not None and self.analysis_worker.isRunning():
+            return
+        self.analysis_status.setText("발주서 내용을 분석하는 중...")
+        self.analysis_worker = PrintOrderAnalysisWorker(self.order_source.path)
+        self.analysis_worker.succeeded.connect(self.apply_analysis)
+        self.analysis_worker.failed.connect(self.analysis_failed)
+        self.analysis_worker.finished.connect(self.release_analysis_worker)
+        self.analysis_worker.start()
+
+    def apply_analysis(self, result: AnalysisResult):
+        self.last_analysis = result
+        fields = result.fields
+        if result.vendor:
+            self.customer.setCurrentText(result.vendor)
+        if fields.get("product"):
+            self.product.setCurrentText(fields["product"])
+        if fields.get("quantity"):
+            numeric = re.sub(r"[^0-9]", "", fields["quantity"])
+            if numeric:
+                self.quantity.setText(numeric)
+        if fields.get("printing"):
+            self.printing.setText(fields["printing"])
+        recipient_contact = " / ".join(value for value in (fields.get("recipient", ""), fields.get("contact", "")) if value)
+        if recipient_contact:
+            self.contact.setText(recipient_contact)
+        if fields.get("address"):
+            self.address.setText(fields["address"])
+        for option in ["선물포장", "기본패키지", "벌크", "OEM포장"]:
+            if option in fields.get("packaging", ""):
+                self.packaging.setCurrentText(option)
+                break
+        for option in ["퀵 선불", "퀵 착불", "택배", "기타"]:
+            if option.replace(" ", "") in fields.get("delivery", "").replace(" ", ""):
+                self.delivery.setCurrentText(option)
+                break
+        raw_date = fields.get("request_date", "")
+        date_match = re.search(r"(20\d{2})?\D*(\d{1,2})\D+(\d{1,2})", raw_date)
+        if date_match:
+            year = int(date_match.group(1) or QDate.currentDate().year())
+            parsed = QDate(year, int(date_match.group(2)), int(date_match.group(3)))
+            if parsed.isValid():
+                self.request_date.setDate(parsed)
+        confidence_values = [value for value in result.confidence.values() if value]
+        average = round(sum(confidence_values) / len(confidence_values)) if confidence_values else 0
+        self.analysis_status.setText(
+            f"{result.vendor} · {result.source_type} 분석 완료 · 평균 신뢰도 {average}%\n"
+            "자동 입력값을 원본과 비교하고 노란색 항목을 확인하세요."
+        )
+        widget_map = {
+            "product": self.product, "quantity": self.quantity, "printing": self.printing,
+            "address": self.address, "contact": self.contact,
+        }
+        for key, widget in widget_map.items():
+            score = result.confidence.get(key, 0)
+            widget.setToolTip(f"발주서 분석 신뢰도 {score}%")
+            widget.setStyleSheet("background:#fff7d6" if score and score < 85 else "")
+        self.validate_order()
+
+    def analysis_failed(self, message: str):
+        self.analysis_status.setText("발주서 분석 실패")
+        QMessageBox.critical(self, "발주서 분석 실패", message)
+
+    def release_analysis_worker(self):
+        worker = self.analysis_worker
+        self.analysis_worker = None
+        if worker is not None:
+            worker.deleteLater()
+
+    def show_analysis_text(self):
+        if self.last_analysis is None:
+            QMessageBox.information(self, "분석 원문", "먼저 발주서를 분석하세요.")
+            return
+        dialog = QDialog(self); dialog.setWindowTitle("발주서 분석 원문"); dialog.resize(900, 650)
+        layout = QVBoxLayout(dialog); text = QTextEdit(); text.setReadOnly(True); text.setPlainText(self.last_analysis.raw_text)
+        layout.addWidget(text); close = QPushButton("닫기"); close.clicked.connect(dialog.accept); layout.addWidget(close)
+        dialog.exec()
 
     def apply_sample(self):
         self.customer.setCurrentText("고려기프트"); self.product.setCurrentText("일체형 듀얼"); self.quantity.setText("300")

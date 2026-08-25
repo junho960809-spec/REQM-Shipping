@@ -8,6 +8,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtGui import QImage, QColor
 from PySide6.QtWidgets import QApplication
 from print_order_test import PrintOrderTestWindow
+from print_order_analyzer import AnalysisResult
 
 
 class PrintOrderPrototypeTests(unittest.TestCase):
@@ -51,6 +52,23 @@ class PrintOrderPrototypeTests(unittest.TestCase):
             self.assertEqual(window.menu.currentRow(), 3)
             self.assertIsNone(window.web_worker)
             self.assertEqual(window.order_payload()["packaging"], "선물포장")
+        finally:
+            window.close()
+
+    def test_analysis_result_populates_common_order_fields(self):
+        window = PrintOrderTestWindow()
+        try:
+            result = AnalysisResult(
+                "이미지 OCR", "고려기프트",
+                {"recipient":"홍길동","contact":"010-1234-5678","address":"서울 영등포구","request_date":"2026-09-01","product":"Q1500 그레이","quantity":"300개","printing":"전면 인쇄","packaging":"선물포장","delivery":"택배"},
+                {"recipient":70,"contact":70,"address":70,"request_date":70,"product":70,"quantity":70,"printing":70,"packaging":70,"delivery":70},
+                "원문",
+            )
+            window.apply_analysis(result)
+            self.assertEqual(window.customer.currentText(), "고려기프트")
+            self.assertEqual(window.quantity.text(), "300")
+            self.assertEqual(window.request_date.date().toString("yyyy-MM-dd"), "2026-09-01")
+            self.assertIn("홍길동", window.contact.text())
         finally:
             window.close()
 
