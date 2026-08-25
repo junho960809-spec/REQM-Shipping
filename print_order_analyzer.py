@@ -13,7 +13,7 @@ from openpyxl import load_workbook
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff"}
 FIELD_ALIASES = {
     "item_code": ("품목코드", "상품코드", "제품코드", "모델코드"),
-    "recipient": ("수령인", "성명", "받는사람", "받는 사람", "배송처", "수취인"),
+    "recipient": ("수령인", "받는사람", "받는 사람", "수취인"),
     "contact": ("연락처", "휴대폰", "핸드폰", "전화번호", "TEL", "전화"),
     "address": ("배송지", "배송주소", "받는곳", "받는 곳", "주소"),
     "request_date": ("납기", "납기일", "출고일", "출고요청일", "발송일"),
@@ -86,10 +86,44 @@ def _after_alias(text: str, aliases: tuple[str, ...], limit: int = 80) -> str:
     return ""
 
 
+def _recipient_near_delivery(text: str) -> str:
+    """배송 정보에 속한 이름만 찾고 발주/디자인 담당자는 제외한다."""
+    lines = [_clean(line) for line in text.splitlines() if _clean(line)]
+    name_pattern = re.compile(r"(?<![가-힣])([가-힣]{2,4})(?![가-힣])")
+    ignored = {
+        "담당자", "디자이너", "발주담당", "서울", "부산", "대구", "인천", "광주", "대전",
+        "울산", "세종", "경기", "강원", "충북", "충남", "전북", "전남", "경북", "경남", "제주",
+        "배송지", "배송주소", "수취인", "연락처", "휴대폰", "전화번호", "받는사람", "받는",
+    }
+    for index, line in enumerate(lines):
+        if "담당자" in line or "디자이너" in line:
+            continue
+        delivery_context = any(word in line for word in ("배송", "수취", "받는", "주소"))
+        if not delivery_context:
+            continue
+        province = re.search(r"서울|부산|대구|인천|광주|대전|울산|세종|경기|강원|충북|충남|전북|전남|경북|경남|제주", line)
+        name_area = line[:province.start()] if province else line
+        candidates = [name for name in name_pattern.findall(name_area) if name not in ignored]
+        if candidates:
+            return candidates[0]
+        # 표 형식 OCR에서는 '성명' 행이 주소/수취인 행 바로 옆 줄로 풀릴 수 있다.
+        for neighbor in lines[max(0, index - 1):index + 2]:
+            if "담당자" in neighbor or "디자이너" in neighbor or "성명" not in neighbor:
+                continue
+            candidates = [name for name in name_pattern.findall(neighbor.replace("성명", "")) if name not in ignored]
+            if candidates:
+                return candidates[0]
+    return ""
+
+
 def analyze_text(text: str, source_type: str = "텍스트") -> AnalysisResult:
     normalized = text.replace("\r", "\n")
     vendor = "고려기프트" if "고려기프트" in normalized or "고켴기프" in normalized else "신규 업체"
     fields = {key: _after_alias(normalized, aliases) for key, aliases in FIELD_ALIASES.items()}
+    if fields["recipient"] and (re.search(r"\d", fields["recipient"]) or fields["recipient"].startswith("번호")):
+        fields["recipient"] = ""
+    if not fields["recipient"]:
+        fields["recipient"] = _recipient_near_delivery(normalized)
 
     phones = re.findall(r"0\d{1,2}[- )]\d{3,4}[- ]\d{4}", normalized)
     mobile_phones = [phone for phone in phones if phone.startswith("010")]

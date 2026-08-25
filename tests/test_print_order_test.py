@@ -85,6 +85,7 @@ class PrintOrderPrototypeTests(unittest.TestCase):
             self.assertLessEqual(window.order_source.maximumHeight(), 145)
             self.assertLessEqual(window.ai_file.maximumHeight(), 125)
             self.assertLessEqual(window.preview_file.maximumHeight(), 155)
+            self.assertEqual(window.order_source.parentWidget().width(), 340)
         finally:
             window.close()
 
