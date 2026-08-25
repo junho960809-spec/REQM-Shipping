@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import sys
+import os
+from datetime import datetime
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QDate, QTimer
-from PySide6.QtGui import QColor, QFont
+from PySide6.QtGui import QColor, QFont, QKeySequence
 from PySide6.QtWidgets import (
     QApplication, QComboBox, QDateEdit, QDialog, QFileDialog, QFormLayout,
     QFrame, QHBoxLayout, QLabel, QLineEdit, QListWidget, QMainWindow,
@@ -20,10 +22,12 @@ SAMPLE_ORDERS = [
 
 
 class FileDropBox(QFrame):
-    def __init__(self, title: str, extensions: str, parent=None):
+    def __init__(self, title: str, extensions: str, accept_clipboard_image: bool = False, parent=None):
         super().__init__(parent)
         self.setAcceptDrops(True)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.path = ""
+        self.accept_clipboard_image = accept_clipboard_image
         self.setObjectName("dropBox")
         layout = QVBoxLayout(self)
         self.title = QLabel(title)
@@ -36,6 +40,11 @@ class FileDropBox(QFrame):
         layout.addWidget(self.title)
         layout.addWidget(self.status, 1)
         layout.addWidget(button)
+        if accept_clipboard_image:
+            paste = QPushButton("클립보드 이미지 붙여넣기  Ctrl+V")
+            paste.setObjectName("primary")
+            paste.clicked.connect(self.paste_clipboard_image)
+            layout.addWidget(paste)
 
     def choose_file(self):
         path, _ = QFileDialog.getOpenFileName(self, "첨부파일 선택")
@@ -57,6 +66,30 @@ class FileDropBox(QFrame):
         urls = event.mimeData().urls()
         if urls:
             self.set_file(urls[0].toLocalFile())
+
+    def mousePressEvent(self, event):
+        self.setFocus()
+        super().mousePressEvent(event)
+
+    def keyPressEvent(self, event):
+        if self.accept_clipboard_image and event.matches(QKeySequence.StandardKey.Paste):
+            self.paste_clipboard_image()
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
+    def paste_clipboard_image(self):
+        image = QApplication.clipboard().image()
+        if image.isNull():
+            self.status.setText("클립보드에 이미지가 없습니다.\n캡처 후 다시 Ctrl+V를 눌러주세요.")
+            return
+        output_dir = Path(os.getenv("LOCALAPPDATA", str(Path.home()))) / "REQM" / "print_order_attachments"
+        output_dir.mkdir(parents=True, exist_ok=True)
+        path = output_dir / f"시안캡처_{datetime.now():%Y%m%d_%H%M%S_%f}.png"
+        if not image.save(str(path), "PNG"):
+            self.status.setText("클립보드 이미지를 저장하지 못했습니다.")
+            return
+        self.set_file(str(path))
 
 
 class PrintOrderTestWindow(QMainWindow):
@@ -132,15 +165,14 @@ class PrintOrderTestWindow(QMainWindow):
         self.product = QComboBox(); self.product.setEditable(True); self.product.addItems(["Q1500 그레이", "Q1500 화이트", "일체형 듀얼"])
         self.quantity = QLineEdit("300"); self.printing = QLineEdit("전면 / 로고 1도 인쇄")
         self.device = QLineEdit("Q1500"); self.packaging = QComboBox(); self.packaging.addItems(["선물포장","기본패키지","벌크","OEM포장"])
-        self.gender = QComboBox(); self.gender.addItems(["없음","포함"])
         self.address = QLineEdit("서울 영등포구 양산로 43")
         self.delivery = QComboBox(); self.delivery.addItems(["택배","퀵 선불","퀵 착불","기타"])
         self.contact = QLineEdit("홍길동 / 010-0000-0000")
         self.request_date = QDateEdit(QDate.currentDate().addDays(7)); self.request_date.setCalendarPopup(True); self.request_date.setDisplayFormat("yyyy-MM-dd")
         self.note = QTextEdit("시안 확인 후 생산 진행 바랍니다."); self.note.setMaximumHeight(72)
-        for label, widget in [("발주처",self.customer),("품명",self.product),("총수량",self.quantity),("인쇄내용",self.printing),("기기명",self.device),("포장",self.packaging),("8핀 젠더",self.gender),("주소",self.address),("배송",self.delivery),("담당자·연락처",self.contact),("출고요청일",self.request_date),("비고",self.note)]: form.addRow(label,widget)
+        for label, widget in [("발주처",self.customer),("품명",self.product),("총수량",self.quantity),("인쇄내용",self.printing),("기기명",self.device),("포장",self.packaging),("주소",self.address),("배송",self.delivery),("담당자·연락처",self.contact),("출고요청일",self.request_date),("비고",self.note)]: form.addRow(label,widget)
         form_box.addLayout(form)
-        files = QVBoxLayout(); self.ai_file=FileDropBox("AI 원본 파일","Adobe Illustrator · .ai"); self.preview_file=FileDropBox("시안 이미지","PNG · JPG · PDF")
+        files = QVBoxLayout(); self.ai_file=FileDropBox("AI 원본 파일","Adobe Illustrator · .ai"); self.preview_file=FileDropBox("시안 이미지","캡처 후 Ctrl+V · PNG · JPG · PDF", accept_clipboard_image=True)
         files.addWidget(self.ai_file); files.addWidget(self.preview_file)
         auto = QPushButton("발주서에서 자동 채우기"); auto.setObjectName("primary"); auto.clicked.connect(self.apply_sample)
         files.addWidget(auto)
@@ -200,7 +232,7 @@ class PrintOrderTestWindow(QMainWindow):
         if not hasattr(self,"preview_text"): return
         self.preview_title.setText(f"{self.customer.currentText()} · {self.product.currentText()} · {self.quantity.text()}개")
         self.preview_text.setText(
-            f"포장: {self.packaging.currentText()}    |    젠더: {self.gender.currentText()}\n\n"
+            f"포장: {self.packaging.currentText()}\n\n"
             f"인쇄내용: {self.printing.text()}    |    기기명: {self.device.text()}\n\n"
             f"주소: {self.address.text()}\n배송: {self.delivery.currentText()}    |    출고요청일: {self.request_date.date().toString('yyyy-MM-dd')}\n\n"
             f"담당자: {self.contact.text()}\n비고: {self.note.toPlainText()}\n\n"
