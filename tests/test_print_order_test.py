@@ -1,6 +1,7 @@
 import os
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -35,6 +36,21 @@ class PrintOrderPrototypeTests(unittest.TestCase):
             window.preview_file.paste_clipboard_image()
             self.assertTrue(window.preview_file.path.endswith(".png"))
             self.assertTrue(Path(window.preview_file.path).exists())
+        finally:
+            window.close()
+
+    def test_web_registration_is_enabled_but_requires_runtime_credentials(self):
+        window = PrintOrderTestWindow()
+        try:
+            window.ai_file.set_file(__file__)
+            window.preview_file.set_file(__file__)
+            self.assertTrue(window.web_submit_button.isEnabled())
+            with patch("print_order_test.QMessageBox.information") as notice:
+                window.submit_to_web()
+            notice.assert_called_once()
+            self.assertEqual(window.menu.currentRow(), 3)
+            self.assertIsNone(window.web_worker)
+            self.assertEqual(window.order_payload()["packaging"], "선물포장")
         finally:
             window.close()
 

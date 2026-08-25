@@ -5,7 +5,7 @@ import os
 from datetime import datetime
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QDate, QTimer
+from PySide6.QtCore import Qt, QDate, QTimer, QThread, Signal
 from PySide6.QtGui import QColor, QFont, QKeySequence
 from PySide6.QtWidgets import (
     QApplication, QComboBox, QDateEdit, QDialog, QFileDialog, QFormLayout,
@@ -13,12 +13,71 @@ from PySide6.QtWidgets import (
     QMessageBox, QPushButton, QStackedWidget, QTableWidget, QTableWidgetItem,
     QTextEdit, QVBoxLayout, QWidget,
 )
+from playwright.sync_api import sync_playwright
 
 
 SAMPLE_ORDERS = [
     ["고려기프트", "일체형 듀얼", "300", "2026-08-26", "검토 전"],
     ["한양대학교", "Q1500 그레이", "300", "2026-09-01", "등록 완료"],
 ]
+
+ORDER_BOARD_URL = "http://orora.ipdisk.co.kr:8000/apache/gnuboard5/bbs/board.php?bo_table=Order"
+ORDER_WRITE_URL = "http://orora.ipdisk.co.kr:8000/apache/gnuboard5/bbs/write.php?bo_table=Order"
+CHROME_PATHS = (
+    Path("C:/Program Files/Google/Chrome/Application/chrome.exe"),
+    Path("C:/Program Files (x86)/Google/Chrome/Application/chrome.exe"),
+)
+
+
+class PrintOrderWebWorker(QThread):
+    succeeded = Signal(str)
+    failed = Signal(str)
+
+    def __init__(self, credentials: dict[str, str], order: dict[str, str]):
+        super().__init__()
+        self.credentials = credentials
+        self.order = order
+
+    def run(self):
+        try:
+            chrome = next((path for path in CHROME_PATHS if path.exists()), None)
+            if chrome is None:
+                raise RuntimeError("Google Chrome을 찾지 못했습니다.")
+            with sync_playwright() as playwright:
+                browser = playwright.chromium.launch(executable_path=str(chrome), headless=True)
+                try:
+                    page = browser.new_page()
+                    page.goto(ORDER_BOARD_URL, wait_until="domcontentloaded", timeout=30_000)
+                    if page.locator("#login_id").count():
+                        page.locator("#login_id").fill(self.credentials["user_id"])
+                        page.locator("#login_pw").fill(self.credentials["password"])
+                        page.locator('input[type="submit"]').click()
+                        page.wait_for_load_state("domcontentloaded", timeout=30_000)
+                    if page.locator("#login_id").count():
+                        raise RuntimeError("로그인에 실패했습니다. 아이디와 비밀번호를 확인하세요.")
+                    page.goto(ORDER_WRITE_URL, wait_until="domcontentloaded", timeout=30_000)
+                    fields = {
+                        "wr_subject": "customer", "wr_5": "product", "wr_6": "quantity",
+                        "wr_9": "printing", "wr_4": "device", "wr_1": "address",
+                        "wr_2": "contact", "wr_10": "request_date", "wr_content": "note",
+                    }
+                    for field_name, order_key in fields.items():
+                        page.locator(f'[name="{field_name}"]').fill(self.order[order_key])
+                    page.locator(f'input[name="wr_7"][value="{self.order["packaging"]}"]').check()
+                    page.locator('input[name="wr_8"][value="없음"]').check()
+                    page.locator(f'input[name="wr_3"][value="{self.order["delivery"]}"]').check()
+                    file_inputs = page.locator('input[name="bf_file[]"]')
+                    file_inputs.nth(0).set_input_files(self.order["ai_file"])
+                    file_inputs.nth(1).set_input_files(self.order["preview_file"])
+                    page.locator('#btn_submit[type="submit"]').click()
+                    page.wait_for_load_state("domcontentloaded", timeout=30_000)
+                    if "write.php" in page.url:
+                        raise RuntimeError("웹사이트가 등록 완료 화면으로 이동하지 않았습니다.")
+                    self.succeeded.emit(page.url)
+                finally:
+                    browser.close()
+        except Exception as exc:
+            self.failed.emit(str(exc))
 
 
 class FileDropBox(QFrame):
@@ -95,6 +154,7 @@ class FileDropBox(QFrame):
 class PrintOrderTestWindow(QMainWindow):
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.web_worker = None
         self.setWindowTitle("REQM · 인쇄 발주 자동화 테스트")
         self.resize(1500, 900)
         self.setStyleSheet("""
@@ -132,7 +192,7 @@ class PrintOrderTestWindow(QMainWindow):
         self.menu.setCurrentRow(0)
         side.addWidget(brand)
         side.addWidget(self.menu, 1)
-        version = QLabel("1차 적용 · 웹 등록 비활성화")
+        version = QLabel("웹 등록 테스트 활성화")
         version.setStyleSheet("color:#9db2ca;padding:20px")
         side.addWidget(version)
         shell.addWidget(sidebar)
@@ -185,13 +245,15 @@ class PrintOrderTestWindow(QMainWindow):
 
     def build_preview_page(self):
         page=QWidget(); layout=QVBoxLayout(page); layout.setContentsMargins(28,22,28,22)
-        self.page_header("등록 미리보기", "웹 게시판에 입력될 내용을 확인합니다. 테스트 버전은 실제 등록하지 않습니다.",layout)
+        self.page_header("등록 미리보기", "웹 게시판에 실제 입력될 내용을 확인한 뒤 최종 등록합니다.",layout)
         card=QFrame(); card.setObjectName("card"); box=QVBoxLayout(card)
         self.preview_title=QLabel("고려기프트 · Q1500 그레이 · 300개"); self.preview_title.setStyleSheet("font-size:20px;font-weight:900")
         self.preview_text=QLabel(); self.preview_text.setWordWrap(True); self.preview_text.setStyleSheet("font-size:14px;line-height:1.7;padding:15px")
         box.addWidget(self.preview_title); box.addWidget(self.preview_text); box.addStretch(1)
         warning=QLabel("안전장치: 작성완료 버튼을 누르기 전 사용자 확인을 한 번 더 받습니다."); warning.setStyleSheet("background:#fff7ed;color:#9a3412;padding:13px;border-radius:8px")
-        box.addWidget(warning); disabled=QPushButton("웹 등록 (테스트 비활성화)"); disabled.setEnabled(False); box.addWidget(disabled)
+        box.addWidget(warning)
+        self.web_submit_button=QPushButton("기존 게시판에 등록"); self.web_submit_button.setObjectName("primary")
+        self.web_submit_button.clicked.connect(self.submit_to_web); box.addWidget(self.web_submit_button)
         layout.addWidget(card,1); self.update_preview(); return page
 
     def build_status_page(self):
@@ -209,6 +271,12 @@ class PrintOrderTestWindow(QMainWindow):
     def build_settings_page(self):
         page=QWidget(); layout=QVBoxLayout(page); layout.setContentsMargins(28,22,28,22)
         self.page_header("거래처·품목 자동완성", "반복 발주 시 주소, 담당자, 포장, 배송 방식을 자동으로 채우는 기준정보입니다.",layout)
+        login_card=QFrame(); login_card.setObjectName("card"); login_form=QFormLayout(login_card)
+        self.web_id=QLineEdit(); self.web_id.setPlaceholderText("사내게시판 아이디")
+        self.web_password=QLineEdit(); self.web_password.setEchoMode(QLineEdit.EchoMode.Password); self.web_password.setPlaceholderText("실행 중에만 사용 · 저장하지 않음")
+        login_form.addRow("게시판 아이디",self.web_id); login_form.addRow("게시판 비밀번호",self.web_password)
+        security=QLabel("HTTP 사이트이므로 계정은 저장하지 않습니다. 프로그램을 다시 열면 재입력해야 합니다."); security.setStyleSheet("color:#c2410c;padding:8px")
+        login_form.addRow("",security); layout.addWidget(login_card)
         table=QTableWidget(3,5); table.setHorizontalHeaderLabels(["거래처","기본 주소","담당자","기본 배송","최근 사용 품목"]); table.horizontalHeader().setStretchLastSection(True)
         rows=[["고려기프트","서울 영등포구","김담당","택배","일체형 듀얼"],["한양대학교","서울 성동구","박담당","퀵 선불","Q1500 그레이"],["신규 거래처","미등록","미등록","택배","-"]]
         for r,row in enumerate(rows):
@@ -241,6 +309,65 @@ class PrintOrderTestWindow(QMainWindow):
 
     def open_preview(self):
         self.update_preview(); self.menu.setCurrentRow(1)
+
+    def order_payload(self) -> dict[str, str]:
+        return {
+            "customer": self.customer.currentText().strip(),
+            "product": self.product.currentText().strip(),
+            "quantity": self.quantity.text().strip(),
+            "packaging": self.packaging.currentText(),
+            "printing": self.printing.text().strip(),
+            "device": self.device.text().strip(),
+            "address": self.address.text().strip(),
+            "delivery": self.delivery.currentText(),
+            "contact": self.contact.text().strip(),
+            "request_date": self.request_date.date().toString("yyyy-MM-dd"),
+            "note": self.note.toPlainText().strip(),
+            "ai_file": self.ai_file.path,
+            "preview_file": self.preview_file.path,
+        }
+
+    def submit_to_web(self):
+        self.validate_order()
+        if not self.ai_file.path or not self.preview_file.path:
+            QMessageBox.warning(self, "첨부 확인", "AI 파일과 시안 이미지를 모두 연결하세요.")
+            return
+        if not self.web_id.text().strip() or not self.web_password.text():
+            QMessageBox.information(self, "로그인 정보", "거래처·품목 설정에서 게시판 아이디와 비밀번호를 입력하세요.")
+            self.menu.setCurrentRow(3)
+            return
+        answer = QMessageBox.question(
+            self,
+            "웹 등록 최종 확인",
+            f"{self.customer.currentText()} / {self.product.currentText()} / {self.quantity.text()}개를\n"
+            "오로라모바일 인쇄 진행 리스트에 실제 등록합니다. 계속할까요?",
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        if self.web_worker is not None and self.web_worker.isRunning():
+            return
+        self.web_submit_button.setEnabled(False)
+        self.web_submit_button.setText("웹 등록 중...")
+        credentials = {"user_id": self.web_id.text().strip(), "password": self.web_password.text()}
+        self.web_worker = PrintOrderWebWorker(credentials, self.order_payload())
+        self.web_worker.succeeded.connect(self.on_web_succeeded)
+        self.web_worker.failed.connect(self.on_web_failed)
+        self.web_worker.finished.connect(self.release_web_worker)
+        self.web_worker.start()
+
+    def on_web_succeeded(self, url: str):
+        QMessageBox.information(self, "웹 등록 완료", f"인쇄 발주가 등록되었습니다.\n{url}")
+
+    def on_web_failed(self, message: str):
+        QMessageBox.critical(self, "웹 등록 실패", message)
+
+    def release_web_worker(self):
+        worker = self.web_worker
+        self.web_worker = None
+        self.web_submit_button.setEnabled(True)
+        self.web_submit_button.setText("기존 게시판에 등록")
+        if worker is not None:
+            worker.deleteLater()
 
 
 def main():
