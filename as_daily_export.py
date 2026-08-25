@@ -2,9 +2,30 @@ from __future__ import annotations
 
 from copy import copy
 from pathlib import Path
+import re
 
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Alignment, Font, PatternFill
+
+
+def _comparison_text(value: str) -> str:
+    without_notes = re.sub(r"\([^)]*\)", "", str(value or ""))
+    return re.sub(r"[^0-9A-Za-z가-힣]", "", without_notes).casefold()
+
+
+def clean_memo(reason: str, memo: str) -> str:
+    """사유와 중복되는 메모 조각 및 구분 슬래시를 엑셀 비고에서 제거한다."""
+    reason_key = _comparison_text(reason)
+    remaining: list[str] = []
+    for part in re.split(r"[/／]+", str(memo or "")):
+        text = part.strip(" \t\r\n,;·-")
+        if not text:
+            continue
+        part_key = _comparison_text(text)
+        if reason_key and part_key == reason_key:
+            continue
+        remaining.append(text)
+    return ", ".join(remaining)
 
 
 def _copy_row_style(sheet, source: int, target: int, start_col: int = 2, end_col: int = 11) -> None:
@@ -76,7 +97,7 @@ def export_as_daily(records: list[dict], output_path: str, template_path: str = 
         product = " ".join(part for part in (record.get("product", ""), record.get("color", "")) if part).strip()
         values = [record.get("name", ""), record.get("postcode", ""), record.get("address", ""), record.get("phone", ""),
                   record.get("manufacture", ""), product, int(record.get("quantity") or 0), record.get("reason", ""),
-                  record.get("memo", ""), record.get("invoice", "")]
+                  clean_memo(record.get("reason", ""), record.get("memo", "")), record.get("invoice", "")]
         for column, value in enumerate(values, 2):
             sheet.cell(index, column).value = value
 
@@ -84,7 +105,8 @@ def export_as_daily(records: list[dict], output_path: str, template_path: str = 
         _copy_row_style(sheet, return_title + 2, index)
         product = " ".join(part for part in (record.get("product", ""), record.get("color", "")) if part).strip()
         values = [record.get("name", ""), record.get("manufacture", "") or "확인불가", record.get("reason", ""), product,
-                  record.get("receipt_date", ""), "", record.get("purchase_place", ""), "", "", record.get("memo", "")]
+                  record.get("receipt_date", ""), "", record.get("purchase_place", ""), "", "",
+                  clean_memo(record.get("reason", ""), record.get("memo", ""))]
         for column, value in enumerate(values, 2):
             sheet.cell(index, column).value = value
 

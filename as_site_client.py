@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from html.parser import HTMLParser
 from http.cookiejar import CookieJar
@@ -149,8 +150,12 @@ class AsSiteClient:
                 "invoice": values[14] if len(values) > 14 else "",
                 "memo": values[15] if len(values) > 15 else "",
             }
-            self._add_detail(record)
             rows.append(record)
+        if rows:
+            # 상세 페이지는 서로 독립적이므로 제한된 동시 요청으로 일일 조회 시간을 줄인다.
+            # 작업자 수를 작게 유지해 AS 사이트에 과도한 부하를 주지 않는다.
+            with ThreadPoolExecutor(max_workers=min(6, len(rows))) as executor:
+                list(executor.map(self._add_detail, rows))
         return rows
 
     def _add_detail(self, record: dict) -> None:
