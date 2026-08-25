@@ -136,7 +136,7 @@ class DashboardNavigationTests(unittest.TestCase):
         with patch("main.PrintOrderTestWindow") as window_class:
             print_window = window_class.return_value
             self.window.dashboard_cards[4].click()
-        window_class.assert_called_once_with(self.window)
+        window_class.assert_called_once_with(self.window, catalog_items=[])
         print_window.show.assert_called_once()
         print_window.raise_.assert_called_once()
         print_window.activateWindow.assert_called_once()

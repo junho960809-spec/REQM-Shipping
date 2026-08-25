@@ -72,6 +72,22 @@ class PrintOrderPrototypeTests(unittest.TestCase):
         finally:
             window.close()
 
+    def test_db_product_name_and_automatic_note_are_applied(self):
+        items = [{"item_code": "A530734", "standard_name": "소문 듀얼 도킹형 보조배터리 5000mAh", "is_active": True}]
+        window = PrintOrderTestWindow(catalog_items=items)
+        try:
+            self.assertEqual(window.note.toPlainText(), "인쇄 X  포장 O")
+            window.ai_file.set_file(__file__)
+            self.assertEqual(window.note.toPlainText(), "인쇄 O  포장 O")
+            window.packaging.setCurrentText("기본패키지")
+            self.assertEqual(window.note.toPlainText(), "인쇄 O  포장 X")
+            self.assertEqual(window.database_product_name("OCR 품명", "A530734"), items[0]["standard_name"])
+            self.assertLessEqual(window.order_source.maximumHeight(), 145)
+            self.assertLessEqual(window.ai_file.maximumHeight(), 125)
+            self.assertLessEqual(window.preview_file.maximumHeight(), 155)
+        finally:
+            window.close()
+
 
 if __name__ == "__main__":
     unittest.main()

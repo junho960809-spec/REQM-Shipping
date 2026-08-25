@@ -3,6 +3,7 @@ from __future__ import annotations
 import sys
 import os
 import re
+from difflib import SequenceMatcher
 from datetime import datetime
 from pathlib import Path
 
@@ -98,6 +99,8 @@ class PrintOrderAnalysisWorker(QThread):
 
 
 class FileDropBox(QFrame):
+    fileChanged = Signal(str)
+
     def __init__(self, title: str, extensions: str, accept_clipboard_image: bool = False, file_prefix: str = "시안캡처", parent=None):
         super().__init__(parent)
         self.setAcceptDrops(True)
@@ -107,6 +110,8 @@ class FileDropBox(QFrame):
         self.file_prefix = file_prefix
         self.setObjectName("dropBox")
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(10, 8, 10, 8)
+        layout.setSpacing(5)
         self.title = QLabel(title)
         self.title.setStyleSheet("font-size:15px;font-weight:800;color:#17365d")
         self.status = QLabel(f"{extensions}\n파일을 끌어놓거나 선택하세요")
@@ -134,6 +139,7 @@ class FileDropBox(QFrame):
         self.setProperty("ready", True)
         self.style().unpolish(self)
         self.style().polish(self)
+        self.fileChanged.emit(path)
 
     def dragEnterEvent(self, event):
         if event.mimeData().hasUrls():
@@ -170,8 +176,9 @@ class FileDropBox(QFrame):
 
 
 class PrintOrderTestWindow(QMainWindow):
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, catalog_items=None):
         super().__init__(parent)
+        self.catalog_items = [item for item in (catalog_items or []) if item.get("is_active", True)]
         self.web_worker = None
         self.analysis_worker = None
         self.last_analysis = None
@@ -239,42 +246,73 @@ class PrintOrderTestWindow(QMainWindow):
         for index, text in enumerate(["1  발주 정보", "2  파일 연결", "3  검토", "4  웹 등록"]):
             tag = QLabel(text); tag.setObjectName("stepDone" if index == 0 else "step"); steps.addWidget(tag)
         steps.addStretch(1); layout.addLayout(steps)
-        source_row = QHBoxLayout()
-        self.order_source = FileDropBox(
-            "발주서 가져오기",
-            "이미지·PDF·Excel을 끌어놓거나 캡처 후 Ctrl+V",
-            accept_clipboard_image=True,
-            file_prefix="발주서캡처",
-        )
-        self.order_source.setMaximumHeight(145)
-        source_actions = QVBoxLayout()
-        self.analysis_status = QLabel("발주서를 연결하면 업체와 공통 필드를 자동 분석합니다.")
-        self.analysis_status.setWordWrap(True); self.analysis_status.setObjectName("muted")
-        analyze = QPushButton("발주서 분석 및 자동 채우기"); analyze.setObjectName("primary"); analyze.clicked.connect(self.analyze_source)
-        raw = QPushButton("분석 원문 보기"); raw.clicked.connect(self.show_analysis_text)
-        source_actions.addWidget(self.analysis_status); source_actions.addStretch(1); source_actions.addWidget(analyze); source_actions.addWidget(raw)
-        source_row.addWidget(self.order_source, 2); source_row.addLayout(source_actions, 1); layout.addLayout(source_row)
         body = QHBoxLayout(); form_card = QFrame(); form_card.setObjectName("card")
         form_box = QVBoxLayout(form_card); form = QFormLayout(); form.setSpacing(12)
         self.customer = QComboBox(); self.customer.setEditable(True); self.customer.addItems(["고려기프트", "한양대학교", "신규 거래처 입력"])
-        self.product = QComboBox(); self.product.setEditable(True); self.product.addItems(["Q1500 그레이", "Q1500 화이트", "일체형 듀얼"])
+        self.product = QComboBox(); self.product.setEditable(True)
+        db_names = list(dict.fromkeys(
+            str(item.get("standard_name", "")).strip() for item in self.catalog_items
+            if str(item.get("standard_name", "")).strip()
+        ))
+        self.product.addItems(db_names or ["Q1500 그레이", "Q1500 화이트", "일체형 듀얼"])
         self.quantity = QLineEdit("300"); self.printing = QLineEdit("전면 / 로고 1도 인쇄")
         self.device = QLineEdit("Q1500"); self.packaging = QComboBox(); self.packaging.addItems(["선물포장","기본패키지","벌크","OEM포장"])
         self.address = QLineEdit("서울 영등포구 양산로 43")
         self.delivery = QComboBox(); self.delivery.addItems(["택배","퀵 선불","퀵 착불","기타"])
         self.contact = QLineEdit("홍길동 / 010-0000-0000")
         self.request_date = QDateEdit(QDate.currentDate().addDays(7)); self.request_date.setCalendarPopup(True); self.request_date.setDisplayFormat("yyyy-MM-dd")
-        self.note = QTextEdit("시안 확인 후 생산 진행 바랍니다."); self.note.setMaximumHeight(72)
+        self.note = QTextEdit(); self.note.setMaximumHeight(72)
         for label, widget in [("발주처",self.customer),("품명",self.product),("총수량",self.quantity),("인쇄내용",self.printing),("기기명",self.device),("포장",self.packaging),("주소",self.address),("배송",self.delivery),("담당자·연락처",self.contact),("출고요청일",self.request_date),("비고",self.note)]: form.addRow(label,widget)
         form_box.addLayout(form)
-        files = QVBoxLayout(); self.ai_file=FileDropBox("AI 원본 파일","Adobe Illustrator · .ai"); self.preview_file=FileDropBox("시안 이미지","캡처 후 Ctrl+V · PNG · JPG · PDF", accept_clipboard_image=True)
-        files.addWidget(self.ai_file); files.addWidget(self.preview_file)
+        files = QVBoxLayout(); files.setSpacing(8)
+        self.order_source = FileDropBox("발주서 가져오기", "이미지 · PDF · Excel · Ctrl+V", accept_clipboard_image=True, file_prefix="발주서캡처")
+        self.order_source.setMaximumHeight(145)
+        self.analysis_status = QLabel("발주서를 연결하면 자동 분석합니다."); self.analysis_status.setWordWrap(True); self.analysis_status.setObjectName("muted")
+        analyze = QPushButton("발주서 분석 및 자동 채우기"); analyze.setObjectName("primary"); analyze.clicked.connect(self.analyze_source)
+        raw = QPushButton("분석 원문 보기"); raw.clicked.connect(self.show_analysis_text)
+        source_actions = QHBoxLayout(); source_actions.addWidget(analyze, 2); source_actions.addWidget(raw, 1)
+        self.ai_file=FileDropBox("AI 원본 파일","Adobe Illustrator · .ai"); self.ai_file.setMaximumHeight(125)
+        self.preview_file=FileDropBox("시안 이미지","PNG · JPG · PDF · Ctrl+V", accept_clipboard_image=True); self.preview_file.setMaximumHeight(155)
+        files.addWidget(self.order_source); files.addWidget(self.analysis_status); files.addLayout(source_actions)
+        files.addWidget(self.ai_file); files.addWidget(self.preview_file); files.addStretch(1)
+        self.ai_file.fileChanged.connect(self.update_auto_note)
+        self.packaging.currentTextChanged.connect(self.update_auto_note)
+        self.update_auto_note()
         body.addWidget(form_card,2); body.addLayout(files,1); layout.addLayout(body,1)
         actions=QHBoxLayout(); self.validation=QLabel("필수항목 12개 중 10개 확인 · 첨부파일 2개 필요"); self.validation.setObjectName("muted")
         check=QPushButton("누락 검사"); check.clicked.connect(self.validate_order)
         preview=QPushButton("등록 미리보기"); preview.setObjectName("primary"); preview.clicked.connect(self.open_preview)
         actions.addWidget(self.validation); actions.addStretch(1); actions.addWidget(check); actions.addWidget(preview); layout.addLayout(actions)
         return page
+
+    @staticmethod
+    def _match_key(value: str) -> str:
+        return re.sub(r"[^0-9A-Za-z가-힣]", "", value).casefold()
+
+    def database_product_name(self, extracted_name: str, extracted_code: str = "") -> str:
+        code_key = self._match_key(extracted_code)
+        if code_key:
+            for item in self.catalog_items:
+                if self._match_key(str(item.get("item_code", ""))) == code_key:
+                    return str(item.get("standard_name", "")).strip() or extracted_name
+        name_key = self._match_key(extracted_name)
+        if not name_key:
+            return extracted_name
+        best_name, best_score = extracted_name, 0.0
+        for item in self.catalog_items:
+            name = str(item.get("standard_name", "")).strip()
+            candidate = self._match_key(name)
+            if not candidate:
+                continue
+            score = 1.0 if name_key in candidate or candidate in name_key else SequenceMatcher(None, name_key, candidate).ratio()
+            if score > best_score:
+                best_name, best_score = name, score
+        return best_name if best_score >= 0.72 else extracted_name
+
+    def update_auto_note(self, *_):
+        printing = "O" if getattr(self, "ai_file", None) and self.ai_file.path else "X"
+        packaging = "O" if self.packaging.currentText() == "선물포장" else "X"
+        self.note.setPlainText(f"인쇄 {printing}  포장 {packaging}")
 
     def build_preview_page(self):
         page=QWidget(); layout=QVBoxLayout(page); layout.setContentsMargins(28,22,28,22)
@@ -334,8 +372,8 @@ class PrintOrderTestWindow(QMainWindow):
         fields = result.fields
         if result.vendor:
             self.customer.setCurrentText(result.vendor)
-        if fields.get("product"):
-            self.product.setCurrentText(fields["product"])
+        if fields.get("product") or fields.get("item_code"):
+            self.product.setCurrentText(self.database_product_name(fields.get("product", ""), fields.get("item_code", "")))
         if fields.get("quantity"):
             numeric = re.sub(r"[^0-9]", "", fields["quantity"])
             if numeric:
@@ -491,6 +529,7 @@ def main():
         index=sys.argv.index("--screenshots")
         output=Path(sys.argv[index+1]); output.mkdir(parents=True,exist_ok=True)
         def capture():
+            window.order_source.set_file("C:/orders/고려기프트_발주서.pdf")
             window.ai_file.set_file("C:/orders/고려기프트_일체형듀얼_300.ai")
             window.preview_file.set_file("C:/orders/고려기프트_시안.png")
             window.validate_order()

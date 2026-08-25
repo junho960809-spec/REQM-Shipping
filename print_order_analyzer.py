@@ -12,6 +12,7 @@ from openpyxl import load_workbook
 
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff"}
 FIELD_ALIASES = {
+    "item_code": ("품목코드", "상품코드", "제품코드", "모델코드"),
     "recipient": ("수령인", "성명", "받는사람", "받는 사람", "배송처", "수취인"),
     "contact": ("연락처", "휴대폰", "핸드폰", "전화번호", "TEL", "전화"),
     "address": ("배송지", "배송주소", "받는곳", "받는 곳", "주소"),

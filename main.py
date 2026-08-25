@@ -2820,7 +2820,8 @@ class MainWindow(QMainWindow):
 
     def open_print_order(self) -> None:
         if self.print_order_window is None:
-            self.print_order_window = PrintOrderTestWindow(self)
+            catalog_items = self.catalog.get("items", []) if self.catalog else []
+            self.print_order_window = PrintOrderTestWindow(self, catalog_items=catalog_items)
         self.print_order_window.show()
         self.print_order_window.raise_()
         self.print_order_window.activateWindow()
