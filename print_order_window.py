@@ -175,7 +175,7 @@ class FileDropBox(QFrame):
         self.set_file(str(path))
 
 
-class PrintOrderTestWindow(QMainWindow):
+class PrintOrderWindow(QMainWindow):
     def __init__(self, parent=None, catalog_items=None):
         super().__init__(parent)
         self.catalog_items = [item for item in (catalog_items or []) if item.get("is_active", True)]
@@ -527,7 +527,7 @@ class PrintOrderTestWindow(QMainWindow):
 
 def main():
     app=QApplication(sys.argv)
-    window=PrintOrderTestWindow(); window.show()
+    window=PrintOrderWindow(); window.show()
     if "--screenshots" in sys.argv:
         index=sys.argv.index("--screenshots")
         output=Path(sys.argv[index+1]); output.mkdir(parents=True,exist_ok=True)

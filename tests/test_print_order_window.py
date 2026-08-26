@@ -7,17 +7,17 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtGui import QImage, QColor
 from PySide6.QtWidgets import QApplication
-from print_order_test import PrintOrderTestWindow
+from print_order_window import PrintOrderWindow
 from print_order_analyzer import AnalysisResult
 
 
-class PrintOrderPrototypeTests(unittest.TestCase):
+class PrintOrderWindowTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.app = QApplication.instance() or QApplication([])
 
     def test_has_four_workflow_pages_and_web_submit_is_disabled(self):
-        window = PrintOrderTestWindow()
+        window = PrintOrderWindow()
         try:
             self.assertEqual(window.menu.count(), 4)
             self.assertEqual(window.stack.count(), 4)
@@ -28,7 +28,7 @@ class PrintOrderPrototypeTests(unittest.TestCase):
             window.close()
 
     def test_gender_field_is_removed_and_clipboard_image_can_be_attached(self):
-        window = PrintOrderTestWindow()
+        window = PrintOrderWindow()
         try:
             self.assertFalse(hasattr(window, "gender"))
             image = QImage(20, 20, QImage.Format.Format_ARGB32)
@@ -41,12 +41,12 @@ class PrintOrderPrototypeTests(unittest.TestCase):
             window.close()
 
     def test_web_registration_is_enabled_but_requires_runtime_credentials(self):
-        window = PrintOrderTestWindow()
+        window = PrintOrderWindow()
         try:
             window.ai_file.set_file(__file__)
             window.preview_file.set_file(__file__)
             self.assertTrue(window.web_submit_button.isEnabled())
-            with patch("print_order_test.QMessageBox.information") as notice:
+            with patch("print_order_window.QMessageBox.information") as notice:
                 window.submit_to_web()
             notice.assert_called_once()
             self.assertEqual(window.menu.currentRow(), 3)
@@ -56,7 +56,7 @@ class PrintOrderPrototypeTests(unittest.TestCase):
             window.close()
 
     def test_analysis_result_populates_common_order_fields(self):
-        window = PrintOrderTestWindow()
+        window = PrintOrderWindow()
         try:
             result = AnalysisResult(
                 "이미지 OCR", "고려기프트",
@@ -74,7 +74,7 @@ class PrintOrderPrototypeTests(unittest.TestCase):
 
     def test_db_product_name_and_automatic_note_are_applied(self):
         items = [{"item_code": "A530734", "standard_name": "소문 듀얼 도킹형 보조배터리 5000mAh", "is_active": True}]
-        window = PrintOrderTestWindow(catalog_items=items)
+        window = PrintOrderWindow(catalog_items=items)
         try:
             self.assertEqual(window.note.toPlainText(), "인쇄 X  포장 O")
             window.ai_file.set_file(__file__)
@@ -90,10 +90,10 @@ class PrintOrderPrototypeTests(unittest.TestCase):
             window.close()
 
     def test_source_view_opens_original_file_in_default_viewer(self):
-        window = PrintOrderTestWindow()
+        window = PrintOrderWindow()
         try:
             window.order_source.set_file(__file__)
-            with patch("print_order_test.QDesktopServices.openUrl", return_value=True) as open_url:
+            with patch("print_order_window.QDesktopServices.openUrl", return_value=True) as open_url:
                 window.show_source_file()
             open_url.assert_called_once()
             self.assertTrue(open_url.call_args.args[0].isLocalFile())

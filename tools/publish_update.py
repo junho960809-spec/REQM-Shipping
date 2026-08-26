@@ -1,7 +1,7 @@
 """REQM 자동 업데이트 파일을 Supabase Storage에 안전하게 배포한다.
 
 새 실행 파일 청크와 manifest를 모두 올리고 공개 manifest 검증까지 끝난 뒤에만
-이전 버전의 `REQM_*.exe.part*` 파일을 삭제한다. 29CM 확장 ZIP은 삭제하지 않는다.
+이전 버전의 `REQM_*.exe.part*` 파일을 삭제한다.
 
 사용 예:
   set SUPABASE_SERVICE_ROLE_KEY=...

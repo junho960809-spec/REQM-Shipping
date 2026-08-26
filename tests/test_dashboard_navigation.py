@@ -59,10 +59,25 @@ class DashboardNavigationTests(unittest.TestCase):
             self.assertLess(button.width(), 300)
 
     def test_release_spec_includes_all_runtime_assets(self) -> None:
-        spec = (Path(__file__).resolve().parents[1] / "REQM.spec").read_text(encoding="utf-8")
+        root = Path(__file__).resolve().parents[1]
+        spec = (root / "REQM.spec").read_text(encoding="utf-8")
         self.assertIn("assets/direct_conversion_reference.xlsx", spec)
         self.assertIn("assets/weekly_inventory_template.xlsx", spec)
         self.assertIn("assets/windows_ocr.ps1", spec)
+        self.assertEqual([path.name for path in root.glob("*.spec")], ["REQM.spec"])
+
+    def test_removed_marketplace_automation_is_not_in_production_root(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        legacy_modules = (
+            "marketplace_29cm_executor.py",
+            "marketplace_automation_settings.py",
+            "marketplace_bridge_server.py",
+            "marketplace_catalog_store.py",
+            "marketplace_option_store.py",
+        )
+        self.assertFalse(any((root / name).exists() for name in legacy_modules))
+        extension_dir = root / "extensions" / "reqm-marketplace-bridge"
+        self.assertFalse(extension_dir.exists() and any(extension_dir.iterdir()))
 
     def test_startup_login_is_independent_from_hidden_main_window(self) -> None:
         dialog = Mock()
@@ -163,7 +178,7 @@ class DashboardNavigationTests(unittest.TestCase):
         dialog_class.return_value.exec.assert_called_once()
 
     def test_print_order_card_opens_management_window(self) -> None:
-        with patch("main.PrintOrderTestWindow") as window_class:
+        with patch("main.PrintOrderWindow") as window_class:
             print_window = window_class.return_value
             self.window.dashboard_cards[4].click()
         window_class.assert_called_once_with(self.window, catalog_items=[])
