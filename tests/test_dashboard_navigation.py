@@ -8,12 +8,13 @@ from unittest.mock import Mock, patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtWidgets import QApplication, QDialog
+from PySide6.QtWidgets import QApplication, QDialog, QFrame
 
 from main import (
     InventoryPreviewDialog,
     MainWindow,
     MiniWidgetDialog,
+    StartupLoginDialog,
     calendar_event_from_remote,
     calendar_event_payload,
     create_app_icon,
@@ -41,6 +42,14 @@ class DashboardNavigationTests(unittest.TestCase):
             [button.text() for button in self.window.dashboard_cards],
             ["📦  출고 파일 변환", "▤  재고 조회", "🛠  AS 일일 현황", "▦  주간 재고조사", "▣  인쇄 발주 관리"],
         )
+
+    def test_startup_login_uses_restored_card_design(self) -> None:
+        dialog = StartupLoginDialog()
+        self.assertEqual(dialog.size().width(), 520)
+        self.assertIsNotNone(dialog.findChild(QFrame, "loginBrandCard"))
+        self.assertIsNotNone(dialog.findChild(QFrame, "loginFormCard"))
+        self.assertEqual(dialog.email.placeholderText(), "프로그램 계정 이메일")
+        dialog.close()
 
     def test_dashboard_cards_fit_their_title_in_compact_buttons(self) -> None:
         for button in self.window.dashboard_cards:

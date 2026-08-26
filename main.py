@@ -94,7 +94,7 @@ DEFAULT_CONFIG = {
     },
 }
 ADMIN_USER_ID = "c7937d51-1a14-47aa-987e-6254c6c79014"
-APP_VERSION = "1.0.67"
+APP_VERSION = "1.0.68"
 TEST_MODE = os.getenv("REQM_TEST_MODE", "").strip().casefold() in {"1", "true", "yes"}
 UPDATE_BASE_URL = "https://jcslohuraqclhryeqxoc.supabase.co/storage/v1/object/public/reqm-updates"
 UPDATE_MANIFEST_URL = f"{UPDATE_BASE_URL}/manifest.json"
@@ -1237,44 +1237,89 @@ class StartupLoginDialog(QDialog):
         self.setWindowTitle("REQM 로그인")
         self.setWindowIcon(QApplication.windowIcon())
         self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
-        self.setFixedSize(470, 330)
+        self.setFixedSize(520, 420)
         self.setModal(True)
+        self.setStyleSheet("""
+            QDialog#startupLogin { background: #f7f7f3; color: #151515; font-family: '맑은 고딕'; font-size: 13px; }
+            QFrame#loginBrandCard { background: #e3f6f3; border: none; border-radius: 22px; }
+            QLabel#loginLogo { background: #12b8a6; color: #ffffff; border-radius: 13px; font-size: 22px; font-weight: 900; }
+            QLabel#loginEyebrow { color: #16877f; font-size: 11px; font-weight: 800; letter-spacing: 2px; }
+            QLabel#loginTitle { color: #111111; font-size: 27px; font-weight: 900; }
+            QLabel#loginHint, QLabel#loginMessage { color: #626662; font-size: 12px; }
+            QFrame#loginFormCard { background: #ffffff; border: 1px solid #e3e3df; border-radius: 20px; }
+            QLineEdit { background: #ffffff; color: #171717; border: 1px solid #d8d8d3; border-radius: 13px; padding: 11px 14px; font-size: 13px; }
+            QLineEdit:focus { border: 1px solid #38aaa3; }
+            QPushButton { background: #ffffff; color: #151515; border: 1px solid #cacac5; border-radius: 14px; padding: 10px 16px; font-weight: 700; }
+            QPushButton:hover { background: #e9f8f6; border-color: #48bdb7; }
+            QPushButton#primaryButton { background: #121212; color: #ffffff; border: none; padding: 12px 20px; font-size: 14px; }
+            QPushButton#primaryButton:hover { background: #2f6662; }
+            QPushButton:disabled { background: #e9e9e5; color: #a6a7a4; }
+        """)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(36, 30, 36, 28)
-        layout.setSpacing(13)
-        title = QLabel("REQM 로그인")
-        title.setObjectName("dashboardTitle")
+        layout.setContentsMargins(28, 26, 28, 26)
+        layout.setSpacing(14)
+
+        brand_card = QFrame()
+        brand_card.setObjectName("loginBrandCard")
+        brand_layout = QHBoxLayout(brand_card)
+        brand_layout.setContentsMargins(20, 17, 20, 17)
+        brand_layout.setSpacing(14)
+        logo = QLabel("R")
+        logo.setObjectName("loginLogo")
+        logo.setFixedSize(48, 48)
+        logo.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        brand_text = QVBoxLayout()
+        brand_text.setSpacing(2)
+        eyebrow = QLabel("REQM OPERATIONS")
+        eyebrow.setObjectName("loginEyebrow")
+        title = QLabel("물류 업무를 시작합니다")
+        title.setObjectName("loginTitle")
+        brand_text.addWidget(eyebrow)
+        brand_text.addWidget(title)
+        brand_layout.addWidget(logo)
+        brand_layout.addLayout(brand_text, 1)
+
+        form_card = QFrame()
+        form_card.setObjectName("loginFormCard")
+        form_layout = QVBoxLayout(form_card)
+        form_layout.setContentsMargins(20, 18, 20, 18)
+        form_layout.setSpacing(11)
         subtitle = QLabel("등록된 프로그램 계정으로 로그인해 주세요.")
-        subtitle.setObjectName("dashboardHint")
+        subtitle.setObjectName("loginHint")
         self.email = QLineEdit()
-        self.email.setPlaceholderText("이메일")
+        self.email.setPlaceholderText("프로그램 계정 이메일")
+        self.email.setFixedHeight(43)
         self.password = QLineEdit()
         self.password.setPlaceholderText("비밀번호")
         self.password.setEchoMode(QLineEdit.EchoMode.Password)
+        self.password.setFixedHeight(43)
         self.message = QLabel("로그인 후 물류 대시보드를 사용할 수 있습니다.")
-        self.message.setObjectName("dashboardHint")
+        self.message.setObjectName("loginMessage")
         self.message.setWordWrap(True)
         self.login_button = QPushButton("로그인")
         self.login_button.setObjectName("primaryButton")
-        self.login_button.setFixedHeight(46)
+        self.login_button.setFixedHeight(44)
         cancel_button = QPushButton("종료")
+        cancel_button.setFixedHeight(44)
+        cancel_button.setFixedWidth(88)
         cancel_button.clicked.connect(self.reject)
         self.login_button.clicked.connect(self.start_login)
         self.email.returnPressed.connect(self.start_login)
         self.password.returnPressed.connect(self.start_login)
 
-        layout.addWidget(title)
-        layout.addWidget(subtitle)
-        layout.addSpacing(6)
-        layout.addWidget(self.email)
-        layout.addWidget(self.password)
-        layout.addWidget(self.message)
-        layout.addStretch(1)
+        form_layout.addWidget(subtitle)
+        form_layout.addWidget(self.email)
+        form_layout.addWidget(self.password)
+        form_layout.addWidget(self.message)
         buttons = QHBoxLayout()
+        buttons.setSpacing(10)
         buttons.addWidget(cancel_button)
         buttons.addWidget(self.login_button, 1)
-        layout.addLayout(buttons)
+        form_layout.addLayout(buttons)
+
+        layout.addWidget(brand_card)
+        layout.addWidget(form_card, 1)
 
     def start_login(self) -> None:
         email = self.email.text().strip()

@@ -4,7 +4,7 @@
 
 ## 기준 버전
 
-- 애플리케이션: `1.0.65`
+- 애플리케이션: `1.0.68`
 - 원본 저장소 기준 브랜치: `main`
 - 이카운트 회사코드: `304293`
 - 이카운트 ZONE: `AB`
@@ -39,5 +39,5 @@ pyinstaller --noconfirm --clean REQM.spec
 
 ```powershell
 $env:SUPABASE_SERVICE_ROLE_KEY = "Supabase service_role 키"
-python tools/publish_update.py C:\release\reqm-shipping-update-1.0.65
+python tools/publish_update.py C:\release\reqm-shipping-update-1.0.68
 ```
