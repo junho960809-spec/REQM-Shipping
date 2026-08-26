@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import Mock, patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -47,6 +48,12 @@ class DashboardNavigationTests(unittest.TestCase):
             self.assertEqual(button.height(), 68)
             self.assertEqual(button.width(), expected_width)
             self.assertLess(button.width(), 300)
+
+    def test_release_spec_includes_all_runtime_assets(self) -> None:
+        spec = (Path(__file__).resolve().parents[1] / "REQM.spec").read_text(encoding="utf-8")
+        self.assertIn("assets/direct_conversion_reference.xlsx", spec)
+        self.assertIn("assets/weekly_inventory_template.xlsx", spec)
+        self.assertIn("assets/windows_ocr.ps1", spec)
 
     def test_updater_corrects_reqm_shortcuts_and_creates_desktop_shortcut(self) -> None:
         script = update_shortcuts_powershell()
