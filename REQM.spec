@@ -18,6 +18,7 @@ runtime_binaries = [
 a = Analysis(
     ["main.py"], pathex=[], binaries=runtime_binaries + pdf_binaries + miner_binaries + playwright_binaries,
     datas=pdf_datas + miner_datas + playwright_datas + [
+        ("assets/app_icon.png", "assets"),
         ("assets/direct_conversion_reference.xlsx", "assets"),
         ("assets/weekly_inventory_template.xlsx", "assets"),
         ("assets/windows_ocr.ps1", "assets"),
@@ -30,5 +31,6 @@ exe = EXE(
     pyz, a.scripts, a.binaries, a.datas, [], name="REQM", debug=False,
     bootloader_ignore_signals=False, strip=False, upx=False, console=False,
     disable_windowed_traceback=False, argv_emulation=False, target_arch=None,
+    icon="assets/app_icon.ico",
     codesign_identity=None, entitlements_file=None,
 )

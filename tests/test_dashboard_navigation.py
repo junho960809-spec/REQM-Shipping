@@ -61,6 +61,8 @@ class DashboardNavigationTests(unittest.TestCase):
     def test_release_spec_includes_all_runtime_assets(self) -> None:
         root = Path(__file__).resolve().parents[1]
         spec = (root / "REQM.spec").read_text(encoding="utf-8")
+        self.assertIn("assets/app_icon.png", spec)
+        self.assertIn('icon="assets/app_icon.ico"', spec)
         self.assertIn("assets/direct_conversion_reference.xlsx", spec)
         self.assertIn("assets/weekly_inventory_template.xlsx", spec)
         self.assertIn("assets/windows_ocr.ps1", spec)
