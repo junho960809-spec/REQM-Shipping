@@ -55,6 +55,13 @@ class DashboardNavigationTests(unittest.TestCase):
         self.assertIn("assets/weekly_inventory_template.xlsx", spec)
         self.assertIn("assets/windows_ocr.ps1", spec)
 
+    def test_startup_login_is_independent_from_hidden_main_window(self) -> None:
+        dialog = Mock()
+        dialog.exec.return_value = QDialog.DialogCode.Rejected
+        with patch("main.StartupLoginDialog", return_value=dialog) as opened:
+            self.assertFalse(self.window.require_startup_login())
+        opened.assert_called_once_with(None)
+
     def test_updater_corrects_reqm_shortcuts_and_creates_desktop_shortcut(self) -> None:
         script = update_shortcuts_powershell()
 

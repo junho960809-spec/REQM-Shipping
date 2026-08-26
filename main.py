@@ -2633,7 +2633,7 @@ class MainWindow(QMainWindow):
         self.refresh_output_formats()
 
     def require_startup_login(self) -> bool:
-        dialog = StartupLoginDialog(self)
+        dialog = StartupLoginDialog(None)
         if dialog.exec() != QDialog.DialogCode.Accepted or not dialog.catalog:
             return False
         self.email.setText(dialog.email.text().strip())
