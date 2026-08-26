@@ -94,7 +94,7 @@ DEFAULT_CONFIG = {
     },
 }
 ADMIN_USER_ID = "c7937d51-1a14-47aa-987e-6254c6c79014"
-APP_VERSION = "1.0.66"
+APP_VERSION = "1.0.67"
 TEST_MODE = os.getenv("REQM_TEST_MODE", "").strip().casefold() in {"1", "true", "yes"}
 UPDATE_BASE_URL = "https://jcslohuraqclhryeqxoc.supabase.co/storage/v1/object/public/reqm-updates"
 UPDATE_MANIFEST_URL = f"{UPDATE_BASE_URL}/manifest.json"
@@ -2609,6 +2609,10 @@ class MainWindow(QMainWindow):
         self.page_stack.addWidget(self.work_page)
         self.setCentralWidget(self.page_stack)
         self.page_stack.setCurrentWidget(self.dashboard_page)
+        for button in self.dashboard_cards:
+            button.ensurePolished()
+            text_width = button.fontMetrics().horizontalAdvance(button.text())
+            button.setFixedWidth(text_width + 64)
         self.login_button.clicked.connect(self.login)
         self.settings_button.clicked.connect(self.open_account_settings)
         self.update_button.clicked.connect(self.check_for_updates)
@@ -2640,7 +2644,7 @@ class MainWindow(QMainWindow):
     def dashboard_card(self, title: str, description: str) -> QPushButton:
         button = QPushButton(title)
         button.setObjectName("dashboardCard")
-        button.setFixedHeight(118)
+        button.setFixedHeight(68)
         return button
 
     def build_dashboard_page(self) -> QWidget:
@@ -2711,18 +2715,13 @@ class MainWindow(QMainWindow):
             "발주 정보 입력 · AI/시안 연결 · 등록 미리보기 및 진행 현황",
         )
         print_order.clicked.connect(self.open_print_order)
-        shipment.setMaximumWidth(430)
-        inventory.setMaximumWidth(430)
-        as_daily.setMaximumWidth(430)
-        weekly_inventory.setMaximumWidth(430)
-        print_order.setMaximumWidth(430)
-        cards.addWidget(shipment, 0, 0)
-        cards.addWidget(inventory, 0, 1)
-        cards.addWidget(as_daily, 1, 0)
-        cards.addWidget(weekly_inventory, 1, 1)
-        cards.addWidget(print_order, 2, 0)
-        cards.setColumnStretch(0, 1)
-        cards.setColumnStretch(1, 1)
+        card_alignment = Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop
+        cards.addWidget(shipment, 0, 0, card_alignment)
+        cards.addWidget(inventory, 0, 1, card_alignment)
+        cards.addWidget(as_daily, 1, 0, card_alignment)
+        cards.addWidget(weekly_inventory, 1, 1, card_alignment)
+        cards.addWidget(print_order, 2, 0, card_alignment)
+        cards.setColumnStretch(2, 1)
         self.dashboard_cards = [shipment, inventory, as_daily, weekly_inventory, print_order]
         layout.addLayout(cards)
 
@@ -4098,9 +4097,6 @@ if __name__ == "__main__":
     if not TEST_MODE:
         repair_shortcuts_on_startup()
     window = MainWindow()
-    window.show()
-    window.raise_()
-    window.activateWindow()
     if not window.require_startup_login():
         window.close()
         sys.exit(0)

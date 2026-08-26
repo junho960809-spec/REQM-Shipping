@@ -41,6 +41,13 @@ class DashboardNavigationTests(unittest.TestCase):
             ["📦  출고 파일 변환", "▤  재고 조회", "🛠  AS 일일 현황", "▦  주간 재고조사", "▣  인쇄 발주 관리"],
         )
 
+    def test_dashboard_cards_fit_their_title_in_compact_buttons(self) -> None:
+        for button in self.window.dashboard_cards:
+            expected_width = button.fontMetrics().horizontalAdvance(button.text()) + 64
+            self.assertEqual(button.height(), 68)
+            self.assertEqual(button.width(), expected_width)
+            self.assertLess(button.width(), 300)
+
     def test_updater_corrects_reqm_shortcuts_and_creates_desktop_shortcut(self) -> None:
         script = update_shortcuts_powershell()
 
