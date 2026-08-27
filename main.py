@@ -16,7 +16,7 @@ from urllib.parse import quote
 from pathlib import Path
 
 from PySide6.QtCore import QDate, QTime, Qt, QThread, Signal, QTimer
-from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPixmap, QTextCharFormat
+from PySide6.QtGui import QAction, QColor, QFont, QIcon, QPainter, QPixmap, QTextCharFormat
 from PySide6.QtWidgets import (
     QApplication,
     QAbstractSpinBox,
@@ -38,10 +38,12 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QMainWindow,
+    QMenu,
     QMessageBox,
     QPushButton,
     QStackedWidget,
     QSpinBox,
+    QSystemTrayIcon,
     QTableWidget,
     QTableWidgetItem,
     QTimeEdit,
@@ -99,7 +101,7 @@ DEFAULT_CONFIG = {
     },
 }
 ADMIN_USER_ID = "c7937d51-1a14-47aa-987e-6254c6c79014"
-APP_VERSION = "1.0.82"
+APP_VERSION = "1.0.83"
 TEST_MODE = os.getenv("REQM_TEST_MODE", "").strip().casefold() in {"1", "true", "yes"}
 UPDATE_BASE_URL = "https://jcslohuraqclhryeqxoc.supabase.co/storage/v1/object/public/reqm-updates"
 UPDATE_MANIFEST_URL = f"{UPDATE_BASE_URL}/manifest.json"
@@ -2114,11 +2116,11 @@ class WeKeepReportDialog(QDialog):
         for row in self.selected.values():
             if int(row.get("threshold", 0) or 0) == 30:
                 row["threshold"] = 0
-        self.setWindowTitle("재고 보고")
+        self.setWindowTitle("재고 알림")
         self.resize(1360, 620)
         self.setMinimumWidth(1180)
         layout = QVBoxLayout(self)
-        title = QLabel("재고 보고"); title.setStyleSheet("font-size:20px;font-weight:800")
+        title = QLabel("재고 알림"); title.setStyleSheet("font-size:20px;font-weight:800")
         title_row = QHBoxLayout(); title_row.addWidget(title); title_row.addStretch(1)
         title_row.addWidget(QLabel("자동 실행 시간"))
         self.schedule_time = QTimeEdit(); self.schedule_time.setDisplayFormat("HH:mm"); self.schedule_time.setTime(QTime.fromString(self.report_config.get("schedule_time", "09:00"), "HH:mm")); self.schedule_time.setFixedWidth(86)
@@ -2169,7 +2171,7 @@ class WeKeepReportDialog(QDialog):
         if item_code.casefold() in self.selected: self.selected[item_code.casefold()]["threshold"] = value
 
     def save(self) -> None:
-        save_wekeep_report_config(list(self.selected.values()), self.schedule_time.time().toString("HH:mm")); QMessageBox.information(self, "재고 보고 저장", f"선택 품목 {len(self.selected):,}개와 자동 실행 시간을 이 PC에 저장했습니다.")
+        save_wekeep_report_config(list(self.selected.values()), self.schedule_time.time().toString("HH:mm")); QMessageBox.information(self, "재고 알림 저장", f"선택 품목 {len(self.selected):,}개와 자동 실행 시간을 이 PC에 저장했습니다.")
 
     def open_login(self) -> None:
         self.save(); subprocess.Popen([sys.executable, "--wekeep-login"]); QMessageBox.information(self, "위킵 로그인", "열린 Chrome 창에서 위킵에 로그인한 뒤 창을 닫으세요.")
@@ -2182,7 +2184,7 @@ class WeKeepReportDialog(QDialog):
         except Exception as exc: QMessageBox.critical(self, "자동 실행 등록 실패", str(exc))
 
     def disable_schedule(self) -> None:
-        try: remove_daily_task(); QMessageBox.information(self, "자동 실행 해제", "재고 보고 자동 실행을 해제했습니다.")
+        try: remove_daily_task(); QMessageBox.information(self, "자동 실행 해제", "재고 알림 자동 실행을 해제했습니다.")
         except Exception as exc: QMessageBox.critical(self, "자동 실행 해제 실패", str(exc))
 
 
@@ -2213,6 +2215,9 @@ class MainWindow(QMainWindow):
         self.inventory_last_request_monotonic = 0.0
         self.inventory_last_success_monotonic = 0.0
         self.inventory_alerted_codes: set[str] = set()
+        self.tray_icon = None
+        self._tray_enabled = False
+        self._exit_requested = False
         self.inventory_timer = QTimer(self)
         self.inventory_timer.setInterval(120_000)
         self.inventory_timer.timeout.connect(self.refresh_inventory)
@@ -2493,6 +2498,51 @@ class MainWindow(QMainWindow):
         self.on_success(dialog.item_count, dialog.catalog)
         return True
 
+    def setup_tray_icon(self) -> None:
+        """Keep a logged-in REQM session available after the main window is closed."""
+        if self._tray_enabled or not QSystemTrayIcon.isSystemTrayAvailable():
+            return
+        tray = QSystemTrayIcon(self.windowIcon(), self)
+        menu = QMenu(self)
+        open_action = QAction("REQM 열기", menu)
+        quit_action = QAction("프로그램 종료", menu)
+        open_action.triggered.connect(self.restore_from_tray)
+        quit_action.triggered.connect(self.quit_from_tray)
+        menu.addAction(open_action)
+        menu.addSeparator()
+        menu.addAction(quit_action)
+        tray.setContextMenu(menu)
+        tray.activated.connect(lambda reason: self.restore_from_tray() if reason == QSystemTrayIcon.ActivationReason.Trigger else None)
+        tray.setToolTip("REQM 출고 관리")
+        tray.show()
+        self.tray_icon = tray
+        self._tray_enabled = True
+
+    def restore_from_tray(self) -> None:
+        self.showNormal()
+        self.raise_()
+        self.activateWindow()
+
+    def quit_from_tray(self) -> None:
+        self._exit_requested = True
+        if self.tray_icon:
+            self.tray_icon.hide()
+        self.close()
+
+    def closeEvent(self, event) -> None:
+        if self._tray_enabled and not self._exit_requested:
+            self.hide()
+            event.ignore()
+            if self.tray_icon:
+                self.tray_icon.showMessage(
+                    "REQM 출고 관리",
+                    "프로그램이 알림 영역에서 계속 실행 중입니다. 아이콘을 클릭하면 다시 열립니다.",
+                    QSystemTrayIcon.MessageIcon.Information,
+                    3000,
+                )
+            return
+        event.accept()
+
     def dashboard_card(self, title: str, description: str) -> QPushButton:
         button = QPushButton(title)
         button.setObjectName("dashboardCard")
@@ -2521,7 +2571,7 @@ class MainWindow(QMainWindow):
         self.dashboard_db_button.setFixedSize(92, 38)
         self.dashboard_db_button.setEnabled(False)
         self.dashboard_db_button.clicked.connect(self.open_db_manager)
-        self.dashboard_wekeep_report_button = QPushButton("재고 보고")
+        self.dashboard_wekeep_report_button = QPushButton("재고 알림")
         self.dashboard_wekeep_report_button.setObjectName("adminButton")
         self.dashboard_wekeep_report_button.setFixedSize(92, 38)
         self.dashboard_wekeep_report_button.clicked.connect(self.open_wekeep_report)
@@ -3172,6 +3222,7 @@ class MainWindow(QMainWindow):
         self.worker.start()
 
     def on_success(self, count: int, catalog: dict) -> None:
+        self.setup_tray_icon()
         self.login_button.setEnabled(True)
         self.b2c_button.setEnabled(True)
         self.b2b_button.setEnabled(True)
@@ -3509,7 +3560,7 @@ class MainWindow(QMainWindow):
     def open_wekeep_report(self) -> None:
         items = self.catalog.get("items", []) if self.catalog else []
         if not items:
-            QMessageBox.warning(self, "재고 보고", "먼저 로그인하여 품목 DB를 불러오세요.")
+            QMessageBox.warning(self, "재고 알림", "먼저 로그인하여 품목 DB를 불러오세요.")
             return
         WeKeepReportDialog(items, self).exec()
         self.reload_catalog_after_db_change()
@@ -3966,6 +4017,7 @@ if __name__ == "__main__":
     remove_legacy_transfer_credentials()
     register_windows_app_id()
     app = QApplication(sys.argv)
+    app.setQuitOnLastWindowClosed(False)
     app.setApplicationName("REQM")
     app.setOrganizationName("REQM")
     app.setWindowIcon(create_app_icon())
