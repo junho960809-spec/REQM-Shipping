@@ -117,7 +117,7 @@ class InventoryModuleTests(unittest.TestCase):
     def test_export_inventory_workbook(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             path = Path(temp_dir) / "inventory.xlsx"
-            export_inventory_workbook(path, [InventoryRow("QWC-Q1500GR", "품목", 10, 7, 5, 8)])
+            export_inventory_workbook(path, [InventoryRow("QWC-Q1500GR", "품목", 10, 7, 5, 8)], raw_sales_rows=[])
             workbook = load_workbook(path, data_only=False)
             self.assertEqual(
                 workbook.sheetnames,

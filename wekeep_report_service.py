@@ -63,6 +63,7 @@ def remove_daily_task() -> None:
 
 def launch_wekeep_context(playwright, *, headless: bool):
     """Prefer Chrome and transparently fall back to Edge when Chrome is unavailable."""
+    launch_errors = []
     for channel in ("chrome", "msedge"):
         try:
             return playwright.chromium.launch_persistent_context(
@@ -70,10 +71,12 @@ def launch_wekeep_context(playwright, *, headless: bool):
                 args=["--disable-gpu"],
             )
         except Exception as exc:
+            launch_errors.append(f"{channel}: {exc}")
             continue
     raise RuntimeError(
         "Google Chrome 또는 Microsoft Edge를 찾지 못했습니다. "
-        "두 브라우저 중 하나를 설치한 뒤 다시 실행하세요."
+        "두 브라우저 중 하나를 설치한 뒤 다시 실행하세요.\n"
+        + " / ".join(launch_errors)
     )
 
 def open_login_window() -> None:
@@ -100,7 +103,11 @@ def collect_inventory_rows(playwright, codes: list[str], *, headless: bool) -> l
         for code in codes:
             page.locator("#productManageCode-search").fill(code)
             page.locator("button.searchBtn").click()
-            page.wait_for_timeout(900)
+            page.wait_for_function(
+                """code => { const clean = value => String(value || '').replace(/\\s+/g, ' ').trim(); const table = [...document.querySelectorAll('table')].find(table => { const headers = [...table.querySelectorAll('th')].map(cell => clean(cell.textContent)); return headers.includes('상품관리코드') && headers.includes('가용재고'); }); if (!table) return false; const headers = [...table.querySelectorAll('th')].map(cell => clean(cell.textContent)); const codeIndex = headers.indexOf('상품관리코드'); const rows = [...table.querySelectorAll('tbody tr')]; return rows.some(row => { const cells = [...row.querySelectorAll('td')].map(cell => clean(cell.textContent)); return cells.length <= 1 || String(cells[codeIndex] || '').toLocaleLowerCase() === String(code).toLocaleLowerCase(); }); }""",
+                arg=code,
+                timeout=10_000,
+            )
             rows.extend(page.evaluate("""() => { const c=v=>String(v||'').replace(/\\s+/g,' ').trim(); const t=[...document.querySelectorAll('table')].find(t=>{const h=[...t.querySelectorAll('th')].map(x=>c(x.textContent));return h.includes('상품관리코드')&&h.includes('가용재고')}); if(!t)throw Error('재고 목록을 찾지 못했습니다.'); const h=[...t.querySelectorAll('th')].map(x=>c(x.textContent)),ci=h.indexOf('상품관리코드'),si=h.indexOf('가용재고'),ni=h.findIndex(x=>x.startsWith('상품명')); return [...t.querySelectorAll('tbody tr')].map(tr=>{const x=[...tr.querySelectorAll('td')].map(td=>c(td.textContent));return {code:x[ci],name:x[ni],stock:Number((x[si]||'').replace(/,/g,''))}}) }"""))
         return rows
     finally:

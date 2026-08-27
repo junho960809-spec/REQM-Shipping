@@ -22,7 +22,8 @@ RAW_HEADERS = [
 def _connect(path: str | Path | None = None):
     target = Path(path) if path else STORE_PATH
     target.parent.mkdir(parents=True, exist_ok=True)
-    connection = sqlite3.connect(target)
+    connection = sqlite3.connect(target, timeout=10)
+    connection.execute("PRAGMA busy_timeout=10000")
     connection.execute("PRAGMA journal_mode=WAL")
     connection.execute(
         """

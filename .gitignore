@@ -19,6 +19,14 @@ outputs/
 *.pkg
 *.pyz
 
+# Local build diagnostics and obsolete portable build helpers
+build-*.out
+build-*.err
+test-suite-*.out
+test-suite-*.err
+REQM_portable.spec
+assets/REQM_실행.bat
+
 # Editor and operating-system files
 .idea/
 .vscode/
