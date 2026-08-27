@@ -15,11 +15,13 @@ from datetime import datetime
 from urllib.parse import quote
 from pathlib import Path
 
-from PySide6.QtCore import QDate, Qt, QThread, Signal, QTimer
+from PySide6.QtCore import QDate, QTime, Qt, QThread, Signal, QTimer
 from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPixmap, QTextCharFormat
 from PySide6.QtWidgets import (
     QApplication,
+    QAbstractSpinBox,
     QCalendarWidget,
+    QCheckBox,
     QComboBox,
     QDialog,
     QDialogButtonBox,
@@ -39,8 +41,10 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QStackedWidget,
+    QSpinBox,
     QTableWidget,
     QTableWidgetItem,
+    QTimeEdit,
     QTextEdit,
     QAbstractItemView,
     QVBoxLayout,
@@ -74,6 +78,7 @@ from inventory_safety_store import load_safety_stocks, save_safety_stock
 from as_daily_dialog import AsDailyDialog
 from inventory_module import InventoryDialog
 from print_order_window import PrintOrderWindow
+from wekeep_report_service import load_config as load_wekeep_report_config, save_config as save_wekeep_report_config, register_daily_task, remove_daily_task, open_login_window, run_report, TASK_NAME
 
 
 APP_DIR = Path(__file__).resolve().parent
@@ -94,7 +99,7 @@ DEFAULT_CONFIG = {
     },
 }
 ADMIN_USER_ID = "c7937d51-1a14-47aa-987e-6254c6c79014"
-APP_VERSION = "1.0.71"
+APP_VERSION = "1.0.80"
 TEST_MODE = os.getenv("REQM_TEST_MODE", "").strip().casefold() in {"1", "true", "yes"}
 UPDATE_BASE_URL = "https://jcslohuraqclhryeqxoc.supabase.co/storage/v1/object/public/reqm-updates"
 UPDATE_MANIFEST_URL = f"{UPDATE_BASE_URL}/manifest.json"
@@ -2087,6 +2092,100 @@ class MiniWidgetDialog(QDialog):
             self.main_window.activateWindow()
         event.accept()
 
+class TypedOnlySpinBox(QSpinBox):
+    """Accept typed quantities only; never step values with pointer controls."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
+        self.setKeyboardTracking(False)
+        self.setAccelerated(False)
+
+    def wheelEvent(self, event) -> None:
+        event.ignore()
+
+
+class WeKeepReportDialog(QDialog):
+    def __init__(self, items: list[dict], parent=None):
+        super().__init__(parent)
+        self.items = [item for item in items if item.get("is_active", True) and item.get("item_code")]
+        self.report_config = load_wekeep_report_config()
+        self.selected = {str(row["item_code"]).casefold(): dict(row) for row in self.report_config.get("selected_items", []) if row.get("item_code")}
+        for row in self.selected.values():
+            if int(row.get("threshold", 0) or 0) == 30:
+                row["threshold"] = 0
+        self.setWindowTitle("재고 보고")
+        self.resize(1360, 620)
+        self.setMinimumWidth(1180)
+        layout = QVBoxLayout(self)
+        title = QLabel("재고 보고"); title.setStyleSheet("font-size:20px;font-weight:800")
+        title_row = QHBoxLayout(); title_row.addWidget(title); title_row.addStretch(1)
+        title_row.addWidget(QLabel("자동 실행 시간"))
+        self.schedule_time = QTimeEdit(); self.schedule_time.setDisplayFormat("HH:mm"); self.schedule_time.setTime(QTime.fromString(self.report_config.get("schedule_time", "09:00"), "HH:mm")); self.schedule_time.setFixedWidth(86)
+        title_row.addWidget(self.schedule_time)
+        guide = QLabel("품목명·내부 품목코드·위킵 상품관리코드 중 하나로 검색합니다. 선택값은 이 PC에만 저장됩니다."); guide.setWordWrap(True)
+        self.search = QLineEdit(); self.search.setPlaceholderText("품목명 또는 코드 검색")
+        self.table = QTableWidget(0, 5); self.table.setHorizontalHeaderLabels(["선택", "내부 품목코드", "품목명", "위킵 상품관리코드", "소량 기준"])
+        header = self.table.horizontalHeader()
+        header.setStretchLastSection(False)
+        header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
+        for column, width in ((0, 88), (1, 220), (2, 360), (3, 300), (4, 130)):
+            self.table.setColumnWidth(column, width)
+        table_font = self.table.font(); table_font.setPointSize(10); self.table.setFont(table_font)
+        self.table.setWordWrap(False)
+        layout.addLayout(title_row); layout.addWidget(guide); layout.addWidget(self.search); layout.addWidget(self.table, 1)
+        buttons = QHBoxLayout()
+        for label, callback in (("위킵 로그인", self.open_login), ("자동 실행 켜기", self.enable_schedule), ("자동 실행 끄기", self.disable_schedule), ("저장", self.save), ("닫기", self.accept)):
+            button = QPushButton(label); button.clicked.connect(callback); buttons.addWidget(button)
+        layout.addLayout(buttons)
+        self.search.textChanged.connect(self.refresh)
+        self.refresh()
+
+    def refresh(self) -> None:
+        query = self.search.text().strip().casefold()
+        rows = [item for item in self.items if not query or query in " ".join(str(item.get(key, "")) for key in ("item_code", "standard_name", "wekeep_product_code")).casefold()]
+        self.table.setRowCount(len(rows))
+        for index, item in enumerate(rows):
+            code, key = str(item["item_code"]).strip(), str(item["item_code"]).casefold()
+            saved = self.selected.get(key, {})
+            checked = QCheckBox(); checked.setChecked(key in self.selected); checked.toggled.connect(lambda value, row=item: self.toggle_item(row, value))
+            check_holder = QWidget(); check_layout = QHBoxLayout(check_holder); check_layout.setContentsMargins(0, 0, 0, 0); check_layout.addWidget(checked, 0, Qt.AlignmentFlag.AlignCenter); self.table.setCellWidget(index, 0, check_holder)
+            for column, value in ((1, code), (2, str(item.get("standard_name") or ""))):
+                cell = QTableWidgetItem(value); cell.setFlags(cell.flags() & ~Qt.ItemFlag.ItemIsEditable); cell.setToolTip(value); self.table.setItem(index, column, cell)
+            wekeep_value = str(saved.get("wekeep_code") or item.get("wekeep_product_code") or code)
+            wekeep = QLineEdit(wekeep_value); wekeep.setToolTip(wekeep_value); wekeep.setStyleSheet("padding: 4px 8px; border-radius: 9px;"); wekeep.textChanged.connect(lambda value, item_code=code: self.update_mapping(item_code, value)); self.table.setCellWidget(index, 3, wekeep)
+            threshold = TypedOnlySpinBox(); threshold.setRange(0, 100000); threshold.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter); threshold.setValue(int(saved.get("threshold", 0))); threshold.valueChanged.connect(lambda value, item_code=code: self.update_threshold(item_code, value)); self.table.setCellWidget(index, 4, threshold)
+
+    def toggle_item(self, item: dict, checked: bool) -> None:
+        code = str(item["item_code"]).strip(); key = code.casefold()
+        if checked: self.selected[key] = {"item_code": code, "item_name": str(item.get("standard_name") or ""), "wekeep_code": str(item.get("wekeep_product_code") or code), "threshold": 0}
+        else: self.selected.pop(key, None)
+
+    def update_mapping(self, item_code: str, value: str) -> None:
+        if item_code.casefold() in self.selected: self.selected[item_code.casefold()]["wekeep_code"] = value.strip()
+
+    def update_threshold(self, item_code: str, value: int) -> None:
+        if item_code.casefold() in self.selected: self.selected[item_code.casefold()]["threshold"] = value
+
+    def save(self) -> None:
+        save_wekeep_report_config(list(self.selected.values()), self.schedule_time.time().toString("HH:mm")); QMessageBox.information(self, "재고 보고 저장", f"선택 품목 {len(self.selected):,}개와 자동 실행 시간을 이 PC에 저장했습니다.")
+
+    def open_login(self) -> None:
+        self.save(); subprocess.Popen([sys.executable, "--wekeep-login"]); QMessageBox.information(self, "위킵 로그인", "열린 Chrome 창에서 위킵에 로그인한 뒤 창을 닫으세요.")
+
+    def enable_schedule(self) -> None:
+        self.save()
+        if not self.selected: QMessageBox.warning(self, "선택 품목 없음", "먼저 보고할 품목을 선택하세요."); return
+        time_text = self.schedule_time.time().toString("HH:mm")
+        try: register_daily_task(time_text); QMessageBox.information(self, "자동 실행 등록", f"'{TASK_NAME}'을 매일 {time_text}으로 등록했습니다.")
+        except Exception as exc: QMessageBox.critical(self, "자동 실행 등록 실패", str(exc))
+
+    def disable_schedule(self) -> None:
+        try: remove_daily_task(); QMessageBox.information(self, "자동 실행 해제", "재고 보고 자동 실행을 해제했습니다.")
+        except Exception as exc: QMessageBox.critical(self, "자동 실행 해제 실패", str(exc))
+
+
 class MainWindow(QMainWindow):
     inventoryUpdated = Signal(object, str, str)
 
@@ -2422,6 +2521,10 @@ class MainWindow(QMainWindow):
         self.dashboard_db_button.setFixedSize(92, 38)
         self.dashboard_db_button.setEnabled(False)
         self.dashboard_db_button.clicked.connect(self.open_db_manager)
+        self.dashboard_wekeep_report_button = QPushButton("재고 보고")
+        self.dashboard_wekeep_report_button.setObjectName("adminButton")
+        self.dashboard_wekeep_report_button.setFixedSize(92, 38)
+        self.dashboard_wekeep_report_button.clicked.connect(self.open_wekeep_report)
         self.dashboard_update_button = QPushButton("업데이트")
         self.dashboard_update_button.setObjectName("adminButton")
         self.dashboard_update_button.setFixedSize(92, 38)
@@ -2437,6 +2540,7 @@ class MainWindow(QMainWindow):
         self.dashboard_version.setObjectName("versionLabel")
         header.addWidget(self.dashboard_widget_button, 0, Qt.AlignmentFlag.AlignTop)
         header.addWidget(self.dashboard_db_button, 0, Qt.AlignmentFlag.AlignTop)
+        header.addWidget(self.dashboard_wekeep_report_button, 0, Qt.AlignmentFlag.AlignTop)
         header.addWidget(self.dashboard_update_button, 0, Qt.AlignmentFlag.AlignTop)
         header.addWidget(self.dashboard_version, 0, Qt.AlignmentFlag.AlignTop)
         layout.addLayout(header)
@@ -3369,8 +3473,6 @@ class MainWindow(QMainWindow):
             "    Add-Content -LiteralPath $log -Value 'Update failed: target remained locked.' -Encoding UTF8\n"
             "    exit 1\n"
             "}\n"
-            + update_shortcuts_powershell()
-            +
             "$env:PYINSTALLER_RESET_ENVIRONMENT = '1'\n"
             "Get-ChildItem Env: | Where-Object { $_.Name -like '_PYI_*' } | ForEach-Object { Remove-Item ('Env:' + $_.Name) -ErrorAction SilentlyContinue }\n"
             "Start-Sleep -Seconds 2\n"
@@ -3403,6 +3505,13 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "권한 없음", "관리자에게 DB 수정 권한을 요청하세요.")
             return
         ItemManagerDialog(self.supabase_client, self.catalog["items"], self.catalog["barcodes"], self).exec()
+
+    def open_wekeep_report(self) -> None:
+        items = self.catalog.get("items", []) if self.catalog else []
+        if not items:
+            QMessageBox.warning(self, "재고 보고", "먼저 로그인하여 품목 DB를 불러오세요.")
+            return
+        WeKeepReportDialog(items, self).exec()
         self.reload_catalog_after_db_change()
 
     def reload_catalog_after_db_change(self) -> None:
@@ -3841,14 +3950,23 @@ class MainWindow(QMainWindow):
             )
 
 if __name__ == "__main__":
+    if "--wekeep-report" in sys.argv:
+        try:
+            run_report()
+        except Exception as exc:
+            error_path = Path(os.getenv("LOCALAPPDATA", str(Path.home()))) / "REQM" / "reports" / "wekeep_report_error.txt"
+            error_path.parent.mkdir(parents=True, exist_ok=True)
+            error_path.write_text(str(exc), encoding="utf-8")
+        raise SystemExit(0)
+    if "--wekeep-login" in sys.argv:
+        open_login_window()
+        raise SystemExit(0)
     remove_legacy_transfer_credentials()
     register_windows_app_id()
     app = QApplication(sys.argv)
     app.setApplicationName("REQM")
     app.setOrganizationName("REQM")
     app.setWindowIcon(create_app_icon())
-    if not TEST_MODE:
-        repair_shortcuts_on_startup()
     window = MainWindow()
     if not window.require_startup_login():
         window.close()
