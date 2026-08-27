@@ -99,7 +99,7 @@ DEFAULT_CONFIG = {
     },
 }
 ADMIN_USER_ID = "c7937d51-1a14-47aa-987e-6254c6c79014"
-APP_VERSION = "1.0.80"
+APP_VERSION = "1.0.81"
 TEST_MODE = os.getenv("REQM_TEST_MODE", "").strip().casefold() in {"1", "true", "yes"}
 UPDATE_BASE_URL = "https://jcslohuraqclhryeqxoc.supabase.co/storage/v1/object/public/reqm-updates"
 UPDATE_MANIFEST_URL = f"{UPDATE_BASE_URL}/manifest.json"
@@ -3957,6 +3957,8 @@ if __name__ == "__main__":
             error_path = Path(os.getenv("LOCALAPPDATA", str(Path.home()))) / "REQM" / "reports" / "wekeep_report_error.txt"
             error_path.parent.mkdir(parents=True, exist_ok=True)
             error_path.write_text(str(exc), encoding="utf-8")
+            subprocess.Popen(["notepad.exe", str(error_path)])
+            raise SystemExit(1)
         raise SystemExit(0)
     if "--wekeep-login" in sys.argv:
         open_login_window()

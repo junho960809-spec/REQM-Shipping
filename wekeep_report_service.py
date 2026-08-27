@@ -71,6 +71,23 @@ def open_login_window() -> None:
         except Exception: pass
         context.close()
 
+def collect_inventory_rows(playwright, *, headless: bool) -> list[dict]:
+    """Read WeKeep inventory using the dedicated saved login profile."""
+    context = playwright.chromium.launch_persistent_context(
+        str(PROFILE_PATH), channel="chrome", headless=headless,
+        args=["--disable-gpu"],
+    )
+    try:
+        page = context.pages[0] if context.pages else context.new_page()
+        page.goto(INVENTORY_URL, wait_until="domcontentloaded", timeout=60_000)
+        page.wait_for_timeout(1_500)
+        if "/inventory/" not in page.url:
+            raise RuntimeError("위킵 로그인 상태가 만료되었습니다. 프로그램에서 '위킵 로그인'을 다시 진행하세요.")
+        return page.evaluate("""() => { const c=v=>String(v||'').replace(/\\s+/g,' ').trim(); const t=[...document.querySelectorAll('table')].find(t=>{const h=[...t.querySelectorAll('th')].map(x=>c(x.textContent));return h.includes('상품관리코드')&&h.includes('가용재고')}); if(!t)throw Error('재고 목록을 찾지 못했습니다.'); const h=[...t.querySelectorAll('th')].map(x=>c(x.textContent)),ci=h.indexOf('상품관리코드'),si=h.indexOf('가용재고'),ni=h.findIndex(x=>x.startsWith('상품명')); return [...t.querySelectorAll('tbody tr')].map(tr=>{const x=[...tr.querySelectorAll('td')].map(td=>c(td.textContent));return {code:x[ci],name:x[ni],stock:Number((x[si]||'').replace(/,/g,''))}}) }""")
+    finally:
+        context.close()
+
+
 def run_report() -> dict:
     from playwright.sync_api import sync_playwright
     selected = {str(row["wekeep_code"]).casefold(): row for row in load_config().get("selected_items", []) if row.get("wekeep_code")}
@@ -78,14 +95,16 @@ def run_report() -> dict:
         raise RuntimeError("재고 보고에 선택된 품목이 없습니다. 출고 프로그램에서 품목을 선택하세요.")
     PROFILE_PATH.mkdir(parents=True, exist_ok=True)
     with sync_playwright() as playwright:
-        context = playwright.chromium.launch_persistent_context(str(PROFILE_PATH), channel="chrome", headless=True)
-        page = context.pages[0] if context.pages else context.new_page()
-        page.goto(INVENTORY_URL, wait_until="domcontentloaded", timeout=60_000)
-        page.wait_for_timeout(1500)
-        if "/inventory/" not in page.url:
-            raise RuntimeError("위킵 로그인 상태가 만료되었습니다. 프로그램에서 '위킵 로그인'을 다시 진행하세요.")
-        rows = page.evaluate("""() => { const c=v=>String(v||'').replace(/\\s+/g,' ').trim(); const t=[...document.querySelectorAll('table')].find(t=>{const h=[...t.querySelectorAll('th')].map(x=>c(x.textContent));return h.includes('상품관리코드')&&h.includes('가용재고')}); if(!t)throw Error('재고 목록을 찾지 못했습니다.'); const h=[...t.querySelectorAll('th')].map(x=>c(x.textContent)),ci=h.indexOf('상품관리코드'),si=h.indexOf('가용재고'),ni=h.findIndex(x=>x.startsWith('상품명')); return [...t.querySelectorAll('tbody tr')].map(tr=>{const x=[...tr.querySelectorAll('td')].map(td=>c(td.textContent));return {code:x[ci],name:x[ni],stock:Number((x[si]||'').replace(/,/g,''))}}) }""")
-        context.close()
+        try:
+            rows = collect_inventory_rows(playwright, headless=True)
+        except Exception as background_error:
+            try:
+                rows = collect_inventory_rows(playwright, headless=False)
+            except Exception as visible_error:
+                raise RuntimeError(
+                    "위킵 재고 조회에 실패했습니다. "
+                    f"숨김 실행: {background_error} / 화면 실행: {visible_error}"
+                ) from visible_error
     matched = [{**selected[row["code"].casefold()], "available_stock": row["stock"]} for row in rows if row.get("code", "").casefold() in selected and isinstance(row.get("stock"), (int, float))]
     low = [row for row in matched if row["available_stock"] <= row["threshold"]]
     REPORT_DIR.mkdir(parents=True, exist_ok=True)
