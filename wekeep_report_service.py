@@ -60,11 +60,27 @@ def remove_daily_task() -> None:
     if result.returncode and "cannot find" not in (result.stderr + result.stdout).casefold():
         raise RuntimeError(result.stderr.strip() or result.stdout.strip() or "작업 스케줄러 해제에 실패했습니다.")
 
+
+def launch_wekeep_context(playwright, *, headless: bool):
+    """Prefer Chrome and transparently fall back to Edge when Chrome is unavailable."""
+    for channel in ("chrome", "msedge"):
+        try:
+            return playwright.chromium.launch_persistent_context(
+                str(PROFILE_PATH), channel=channel, headless=headless,
+                args=["--disable-gpu"],
+            )
+        except Exception as exc:
+            continue
+    raise RuntimeError(
+        "Google Chrome 또는 Microsoft Edge를 찾지 못했습니다. "
+        "두 브라우저 중 하나를 설치한 뒤 다시 실행하세요."
+    )
+
 def open_login_window() -> None:
     from playwright.sync_api import sync_playwright
     PROFILE_PATH.mkdir(parents=True, exist_ok=True)
     with sync_playwright() as playwright:
-        context = playwright.chromium.launch_persistent_context(str(PROFILE_PATH), channel="chrome", headless=False)
+        context = launch_wekeep_context(playwright, headless=False)
         page = context.pages[0] if context.pages else context.new_page()
         page.goto(INVENTORY_URL, wait_until="domcontentloaded", timeout=60_000)
         try: page.wait_for_event("close", timeout=1_800_000)
@@ -73,10 +89,7 @@ def open_login_window() -> None:
 
 def collect_inventory_rows(playwright, codes: list[str], *, headless: bool) -> list[dict]:
     """Read each selected WeKeep code so pagination cannot omit a product."""
-    context = playwright.chromium.launch_persistent_context(
-        str(PROFILE_PATH), channel="chrome", headless=headless,
-        args=["--disable-gpu"],
-    )
+    context = launch_wekeep_context(playwright, headless=headless)
     try:
         page = context.pages[0] if context.pages else context.new_page()
         page.goto(INVENTORY_URL, wait_until="domcontentloaded", timeout=60_000)

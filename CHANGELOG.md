@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 1.0.84
+
+- 위킵 로그인 및 재고 알림 실행 시 Google Chrome을 우선 사용하고, Chrome이 없는 PC에서는 Microsoft Edge로 자동 전환하도록 개선
+
 ## 1.0.83
 
 - 메뉴와 설정 창의 재고 보고 명칭을 재고 알림으로 변경
