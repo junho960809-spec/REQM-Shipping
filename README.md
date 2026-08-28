@@ -4,7 +4,7 @@
 
 ## 기준 버전
 
-- 애플리케이션: `1.0.90`
+- 애플리케이션: `1.0.91`
 - 원본 저장소 기준 브랜치: `main`
 - 이카운트 회사코드: `304293`
 - 이카운트 ZONE: `AB`
@@ -58,6 +58,9 @@ python tools/publish_update.py C:\release\reqm-shipping-update-1.0.71
 최초 사용 전에 Supabase SQL Editor에서
 `supabase/migrations/20260828_ecount_sales_rawdata.sql`을 실행해야 합니다.
 
-- `기존 RAWDATA·단가 최초 이관`: 기존 주간재고 Excel의 `RAWDATA_이카운트` 전체 이력을 Supabase에 업로드합니다.
 - `판매자료 자동 동기화`: 지난주 금요일부터 이번주 목요일까지 이카운트 판매현황을 조회하고 해당 기간을 교체합니다.
 - `주간재고조사 Excel 생성`: Supabase 누적 자료를 `RAWDATA_이카운트` 시트에 기록합니다.
+
+주간재고 평가 단가는 Supabase의 `weekly_inventory_item_settings`에서 관리합니다.
+관리자는 메인 화면의 `DB 관리 → 주간재고 단가 관리`에서 VAT 별도 단가와 사용 여부를 수정할 수 있으며,
+VAT 포함 단가는 10%를 자동 계산합니다. 판매전표 단가와는 별도 데이터입니다.

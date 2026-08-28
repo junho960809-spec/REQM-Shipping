@@ -44,6 +44,7 @@ from PySide6.QtWidgets import (
     QStackedWidget,
     QSpinBox,
     QSystemTrayIcon,
+    QTabWidget,
     QTableWidget,
     QTableWidgetItem,
     QTimeEdit,
@@ -79,6 +80,7 @@ from inventory_display_filter import filter_inventory_display_rows
 from inventory_safety_store import load_safety_stocks, save_safety_stock
 from as_daily_dialog import AsDailyDialog
 from inventory_module import InventoryDialog
+from weekly_inventory_prices import fetch_price_settings, save_price_setting
 from print_order_window import PrintOrderWindow, PrintOrderStatusWorker
 from print_order_board_client import BOARD_SOURCES, status_counts
 from integration_account_dialog import IntegrationAccountDialog
@@ -104,7 +106,7 @@ DEFAULT_CONFIG = {
     },
 }
 ADMIN_USER_ID = "c7937d51-1a14-47aa-987e-6254c6c79014"
-APP_VERSION = "1.0.90"
+APP_VERSION = "1.0.91"
 TEST_MODE = os.getenv("REQM_TEST_MODE", "").strip().casefold() in {"1", "true", "yes"}
 UPDATE_BASE_URL = "https://jcslohuraqclhryeqxoc.supabase.co/storage/v1/object/public/reqm-updates"
 UPDATE_MANIFEST_URL = f"{UPDATE_BASE_URL}/manifest.json"
@@ -404,11 +406,18 @@ class UpdateDownloadWorker(QThread):
 
 class ItemManagerDialog(QDialog):
     """관리자 전용 표준 품목 관리 화면."""
-    def __init__(self, client: Client, items: list[dict], barcodes: list[dict], parent=None):
+    def __init__(self, client: Client, items: list[dict], barcodes: list[dict], parent=None, user_id: str = ""):
         super().__init__(parent)
         self.client, self.items, self.barcodes = client, items, barcodes
+        self.user_id = user_id
         self.setWindowTitle("DB 품목 관리 · 관리자")
-        self.resize(900, 560)
+        self.resize(1040, 640)
+        try:
+            self.price_settings = fetch_price_settings(client)
+            self.price_table_available = True
+        except Exception:
+            self.price_settings = []
+            self.price_table_available = False
         self.search = QLineEdit()
         self.search.setPlaceholderText("품목코드 또는 품목명 검색")
         self.grid = QTableWidget(0, 6)
@@ -422,14 +431,98 @@ class ItemManagerDialog(QDialog):
         delete_btn = QPushButton("삭제")
         buttons = QHBoxLayout()
         for button in (import_btn, add_btn, edit_btn, active_btn, delete_btn): buttons.addWidget(button)
+        item_tab = QWidget()
+        item_layout = QVBoxLayout(item_tab)
+        item_layout.addWidget(QLabel("표준 품목(items) 관리 — 변경 내용은 Supabase에 즉시 저장됩니다."))
+        item_layout.addWidget(self.search); item_layout.addWidget(self.grid); item_layout.addLayout(buttons)
+        self.tabs = QTabWidget()
+        self.tabs.addTab(item_tab, "표준 품목 관리")
+        self.tabs.addTab(self.build_price_tab(), "주간재고 단가 관리")
         layout = QVBoxLayout(self)
-        layout.addWidget(QLabel("표준 품목(items) 관리 — 변경 내용은 Supabase에 즉시 저장됩니다."))
-        layout.addWidget(self.search); layout.addWidget(self.grid); layout.addLayout(buttons)
+        layout.addWidget(self.tabs)
         self.search.textChanged.connect(self.refresh)
         import_btn.clicked.connect(self.import_catalog)
         add_btn.clicked.connect(self.add_item); edit_btn.clicked.connect(self.edit_item); active_btn.clicked.connect(self.toggle_active)
         delete_btn.clicked.connect(self.delete_items)
         self.refresh()
+
+    def build_price_tab(self) -> QWidget:
+        tab = QWidget(); layout = QVBoxLayout(tab)
+        guide = QLabel("주간재고 평가용 단가입니다. VAT 별도 단가를 저장하고 VAT 포함 단가는 10%를 자동 계산합니다. 판매전표 단가에는 영향을 주지 않습니다.")
+        guide.setWordWrap(True)
+        self.price_search = QLineEdit(); self.price_search.setPlaceholderText("품목코드 또는 품목명 검색")
+        self.price_grid = QTableWidget(0, 6)
+        self.price_grid.setHorizontalHeaderLabels(["품목코드", "품목명", "VAT 별도 단가", "VAT 포함 단가", "주간재고", "최종 수정"])
+        self.price_grid.horizontalHeader().setStretchLastSection(True)
+        self.price_grid.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.price_grid.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        add_btn, edit_btn, active_btn = QPushButton("단가 등록"), QPushButton("선택 단가 수정"), QPushButton("사용/중지 전환")
+        edit_btn.setObjectName("primaryButton")
+        buttons = QHBoxLayout()
+        for button in (add_btn, edit_btn, active_btn): buttons.addWidget(button)
+        buttons.addStretch(1)
+        if not self.price_table_available:
+            warning = QLabel("단가 DB 준비가 필요합니다. Supabase 마이그레이션 적용 상태를 확인하세요.")
+            warning.setStyleSheet("color:#b42318;font-weight:700"); layout.addWidget(warning)
+            for button in (add_btn, edit_btn, active_btn): button.setEnabled(False)
+        layout.addWidget(guide); layout.addWidget(self.price_search); layout.addWidget(self.price_grid, 1); layout.addLayout(buttons)
+        self.price_search.textChanged.connect(self.refresh_prices)
+        self.price_grid.cellDoubleClicked.connect(lambda *_: self.edit_price())
+        add_btn.clicked.connect(self.add_price); edit_btn.clicked.connect(self.edit_price); active_btn.clicked.connect(self.toggle_price_active)
+        self.refresh_prices()
+        return tab
+
+    def refresh_prices(self) -> None:
+        word = self.price_search.text().strip().casefold()
+        self.price_rows = [row for row in self.price_settings if word in f"{row.get('item_code', '')} {row.get('item_name', '')}".casefold()]
+        self.price_grid.setRowCount(len(self.price_rows))
+        for i, row in enumerate(self.price_rows):
+            base = float(row.get("base_unit_cost", 0) or 0)
+            values = [row.get("item_code", ""), row.get("item_name", ""), f"{base:,.6f}", f"{base * 1.1:,.0f}", "사용" if row.get("is_active", True) else "중지", str(row.get("updated_at", "") or "").replace("T", " ")[:19]]
+            for j, value in enumerate(values):
+                item = QTableWidgetItem(str(value))
+                if j in (2, 3): item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+                self.price_grid.setItem(i, j, item)
+
+    def selected_price(self) -> dict | None:
+        row = self.price_grid.currentRow()
+        return self.price_rows[row] if 0 <= row < len(self.price_rows) else None
+
+    def add_price(self) -> None:
+        configured = {str(row.get("item_code", "")).casefold() for row in self.price_settings}
+        available = [row for row in self.items if str(row.get("item_code", "")).casefold() not in configured]
+        labels = [f"{row.get('item_code', '')} | {row.get('standard_name', '')}" for row in available]
+        if not labels:
+            QMessageBox.information(self, "단가 등록", "단가를 등록할 수 있는 표준 품목이 없습니다."); return
+        selected, ok = QInputDialog.getItem(self, "주간재고 단가 등록", "표준 품목", labels, 0, False)
+        if not ok: return
+        code = selected.split(" | ", 1)[0].strip()
+        source = next((row for row in available if str(row.get("item_code", "")) == code), None)
+        if source is None: return
+        value, ok = QInputDialog.getDouble(self, "주간재고 단가 등록", "VAT 별도 단가", 0, 0, 999999999999, 6)
+        if ok: self.save_price_row({"item_code": code, "item_name": source.get("standard_name", ""), "base_unit_cost": value, "is_active": True})
+
+    def edit_price(self) -> None:
+        row = self.selected_price()
+        if not row:
+            QMessageBox.information(self, "선택", "수정할 단가 품목을 선택하세요."); return
+        value, ok = QInputDialog.getDouble(self, "주간재고 단가 수정", f"{row.get('item_code', '')}\nVAT 별도 단가", float(row.get("base_unit_cost", 0) or 0), 0, 999999999999, 6)
+        if ok: self.save_price_row({**row, "base_unit_cost": value})
+
+    def toggle_price_active(self) -> None:
+        row = self.selected_price()
+        if row: self.save_price_row({**row, "is_active": not row.get("is_active", True)})
+
+    def save_price_row(self, row: dict) -> None:
+        try:
+            saved = save_price_setting(self.client, row, self.user_id)
+            existing = next((item for item in self.price_settings if str(item.get("item_code", "")).casefold() == str(saved.get("item_code", "")).casefold()), None)
+            if existing: existing.update(saved)
+            else: self.price_settings.append(saved)
+            self.price_settings.sort(key=lambda item: (int(item.get("display_order", 999999) or 999999), str(item.get("item_code", "")).casefold()))
+            self.refresh_prices()
+        except Exception as exc:
+            QMessageBox.critical(self, "단가 저장 실패", str(exc))
 
     def import_catalog(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
@@ -3597,7 +3690,10 @@ class MainWindow(QMainWindow):
         if not self.is_admin:
             QMessageBox.warning(self, "권한 없음", "관리자에게 DB 수정 권한을 요청하세요.")
             return
-        ItemManagerDialog(self.supabase_client, self.catalog["items"], self.catalog["barcodes"], self).exec()
+        ItemManagerDialog(
+            self.supabase_client, self.catalog["items"], self.catalog["barcodes"], self,
+            user_id=str(self.catalog.get("auth_user_id", "")),
+        ).exec()
 
     def open_wekeep_report(self) -> None:
         items = self.catalog.get("items", []) if self.catalog else []

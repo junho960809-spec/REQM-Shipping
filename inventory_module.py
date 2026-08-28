@@ -28,6 +28,7 @@ from weekly_inventory_supabase import (
     row_count as supabase_sales_row_count,
     upload_rows as upload_supabase_sales_rows,
 )
+from weekly_inventory_prices import active_items, fetch_price_settings, price_map
 from PySide6.QtCore import QThread, QTimer, Signal, Qt
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
@@ -88,22 +89,6 @@ class WeeklyInventoryWorker(QThread):
     def run(self) -> None:
         try:
             self.succeeded.emit(EcountClient(**self.credentials).get_inventory_by_location())
-        except Exception as exc:
-            self.failed.emit(str(exc))
-
-
-class WeeklyReferenceImportWorker(QThread):
-    succeeded = Signal(object)
-    failed = Signal(str)
-
-    def __init__(self, path: str, supabase_client=None):
-        super().__init__()
-        self.path = path
-        self.supabase_client = supabase_client
-
-    def run(self) -> None:
-        try:
-            self.succeeded.emit(import_reference_workbook(self.path, supabase_client=self.supabase_client))
         except Exception as exc:
             self.failed.emit(str(exc))
 
@@ -407,6 +392,7 @@ def export_inventory_workbook(
         price_row = index + 3
         price_sheet.cell(price_row, 1).value = item.item_code
         price_sheet.cell(price_row, 2).value = item.item_name
+        price_sheet.cell(price_row, 3).value = item.unit_price / 1.1 if item.unit_price else 0
         price_sheet.cell(price_row, 4).value = item.unit_price
 
     if raw_ecount.max_row > 2:
@@ -430,12 +416,12 @@ class InventoryDialog(QDialog):
         super().__init__(parent)
         self.main_window = parent
         self.ecount_worker: WeeklyInventoryWorker | None = None
-        self.reference_worker: WeeklyReferenceImportWorker | None = None
         self.sales_sync_worker: WeeklySalesSyncWorker | None = None
         self.ecount_credentials_override: dict | None = None
         self.setWindowTitle("REQM 주간 재고조사")
         self.resize(1480, 900)
-        self.rows = self._initial_rows(catalog_items or [])
+        self.price_settings = self._load_price_settings()
+        self.rows = self._initial_rows(catalog_items or [], self.price_settings)
         self.sales_months = recent_months()
         self._load_sales_and_prices()
         self.filtered_indices: list[int] = []
@@ -444,11 +430,23 @@ class InventoryDialog(QDialog):
         self.refresh_all()
 
     @staticmethod
-    def _initial_rows(catalog_items: list[dict]) -> list[InventoryRow]:
-        return [InventoryRow(item_code=code, item_name=name) for code, name in WEEKLY_INVENTORY_ITEMS]
+    def _initial_rows(catalog_items: list[dict], settings: list[dict] | None = None) -> list[InventoryRow]:
+        configured = active_items(settings or [])
+        source = configured or WEEKLY_INVENTORY_ITEMS
+        return [InventoryRow(item_code=code, item_name=name) for code, name in source]
+
+    def _load_price_settings(self) -> list[dict]:
+        client = self._supabase_client()
+        if client is None:
+            return []
+        try:
+            return fetch_price_settings(client)
+        except Exception:
+            return []
 
     def _load_sales_and_prices(self) -> None:
-        prices = load_item_prices()
+        self.price_settings = self._load_price_settings()
+        prices = price_map(self.price_settings) if self.price_settings else load_item_prices()
         client = self._supabase_client()
         try:
             sales = fetch_supabase_monthly_sales(client, self.sales_months) if client else monthly_sales(self.sales_months)
@@ -613,12 +611,10 @@ class InventoryDialog(QDialog):
             "판매자료 자동 동기화",
             self.sync_sales_rawdata,
         )
-        reference = self._card("기존 RAWDATA·단가 최초 이관", "기준 Excel의 누적 RAWDATA를 Supabase로 이관하고 품목 단가를 갱신합니다.", "기준 Excel 이관", self.load_reference)
         layout.addWidget(settings)
         layout.addWidget(ecount)
         layout.addWidget(wekeep)
         layout.addWidget(sales_sync)
-        layout.addWidget(reference)
         return widget
 
     def _review_tab(self) -> QWidget:
@@ -709,7 +705,7 @@ class InventoryDialog(QDialog):
         self.dashboard_status.setText(
             f"현재 품목 {len(self.rows):,}개 · 차이 품목 {differences:,}개 · 검토 완료 {reviewed:,}개\n"
             f"판매 RAWDATA 누적 {self._sales_row_count():,}행 · 저장소 {getattr(self, 'sales_storage', '로컬')} · "
-            "단가는 기준 Excel의 단가 시트를 사용합니다."
+            f"단가 저장소 {'Supabase' if self.price_settings else '로컬(이전 데이터)'}."
         )
 
     def refresh_entry_table(self) -> None:
@@ -922,22 +918,6 @@ class InventoryDialog(QDialog):
         self.refresh_all()
         QMessageBox.information(self, "위킵 재고 반영", f"{len(imported):,}개 행을 읽고 현재 목록의 {matched:,}개 품목에 반영했습니다.")
 
-    def load_reference(self) -> None:
-        if self.reference_worker is not None and self.reference_worker.isRunning():
-            self.source_status.setText("판매 RAWDATA와 단가를 누적하는 중...")
-            return
-        path, _ = QFileDialog.getOpenFileName(
-            self, "주간재고 기준 Excel 선택", "", "Excel 파일 (*.xlsx *.xlsm)"
-        )
-        if not path:
-            return
-        self.source_status.setText("판매 RAWDATA와 단가를 누적하는 중...")
-        self.reference_worker = WeeklyReferenceImportWorker(path, self._supabase_client())
-        self.reference_worker.succeeded.connect(self.on_reference_loaded)
-        self.reference_worker.failed.connect(self.on_reference_failed)
-        self.reference_worker.finished.connect(self.release_reference_worker)
-        self.reference_worker.start()
-
     def sync_sales_rawdata(self) -> None:
         if self.sales_sync_worker is not None and self.sales_sync_worker.isRunning():
             self.source_status.setText("이카운트 판매자료를 동기화하는 중...")
@@ -984,31 +964,6 @@ class InventoryDialog(QDialog):
     def release_sales_sync_worker(self) -> None:
         worker = self.sales_sync_worker
         self.sales_sync_worker = None
-        if worker is not None:
-            worker.deleteLater()
-
-    def on_reference_loaded(self, result: dict[str, int]) -> None:
-        self._load_sales_and_prices()
-        self.source_status.setText(
-            f"누적 완료 · {result.get('storage', 'local')} · 처리 {result['inserted']:,}행 · "
-            f"중복 제외 {result['duplicates']:,}행 · 단가 {result['prices']:,}개"
-        )
-        self.refresh_all()
-        QMessageBox.information(
-            self,
-            "판매 RAWDATA·단가 반영",
-            f"판매자료 신규 {result['inserted']:,}행을 누적했습니다.\n"
-            f"이미 저장된 동일 자료 {result['duplicates']:,}행은 중복 합산하지 않았습니다.\n"
-            f"품목별 단가 {result['prices']:,}개를 갱신했습니다.",
-        )
-
-    def on_reference_failed(self, message: str) -> None:
-        self.source_status.setText("기준 Excel 누적 실패")
-        QMessageBox.critical(self, "기준 Excel 오류", message)
-
-    def release_reference_worker(self) -> None:
-        worker = self.reference_worker
-        self.reference_worker = None
         if worker is not None:
             worker.deleteLater()
 
