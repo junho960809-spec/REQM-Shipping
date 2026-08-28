@@ -12,6 +12,9 @@ from PySide6.QtWidgets import QApplication, QDialog, QFrame
 
 from main import (
     InventoryPreviewDialog,
+    InventoryMiniWidget,
+    PrintOrderMiniWidget,
+    CalendarMiniWidget,
     MainWindow,
     MiniWidgetDialog,
     StartupLoginDialog,
@@ -299,29 +302,43 @@ class DashboardNavigationTests(unittest.TestCase):
         self.assertEqual(self.window.current_orders[0]["phone"], "010-1234-5678")
         self.assertEqual(self.window.current_orders[0]["address"], "서울시 원본 주소 1")
 
-    def test_mini_widget_has_two_compact_function_buttons(self) -> None:
-        widget = MiniWidgetDialog(self.window)
-        self.assertEqual(
-            [button.property("widgetTarget") for button in widget.action_buttons],
-            ["shipping", "calendar"],
-        )
-        self.assertEqual((widget.width(), widget.height()), (498, 570))
-        self.assertEqual([button.text() for button in widget.action_buttons], ["📦  출고", "📅  일정"])
+    def test_inventory_mini_widget_is_an_independent_window(self) -> None:
+        widget = InventoryMiniWidget(self.window)
+        self.assertEqual(widget.windowTitle(), "재고 위젯")
+        self.assertEqual((widget.width(), widget.height()), (650, 500))
         self.assertEqual(
             widget.inventory_results.selectionMode(),
             widget.inventory_results.SelectionMode.NoSelection,
         )
-        self.assertEqual(widget.inventory_results.height(), 196)
-        self.assertIn("신규 접수", widget.print_status_label.text())
-        self.assertTrue(widget.event_summary.isHidden())
         widget.close()
+
+    def test_print_and_calendar_widgets_are_separate_windows(self) -> None:
+        print_widget = PrintOrderMiniWidget(self.window)
+        calendar_widget = CalendarMiniWidget(self.window)
+        self.assertEqual(print_widget.windowTitle(), "인쇄 발주 위젯")
+        self.assertEqual(calendar_widget.windowTitle(), "일정 위젯")
+        self.assertEqual(list(print_widget.status_labels), ["신규 접수", "인쇄 진행", "패킹 진행", "출고 대기"])
+        self.assertEqual(calendar_widget.today_events.count(), 1)
+        print_widget.close(); calendar_widget.close()
+
+    def test_dashboard_opens_all_three_independent_widgets(self) -> None:
+        with patch("main.save_widget_position"):
+            self.window.open_mini_widget()
+            self.assertEqual(set(self.window.mini_widgets), {"inventory", "print_order", "calendar"})
+            self.assertEqual(
+                {widget.windowTitle() for widget in self.window.mini_widgets.values()},
+                {"재고 위젯", "인쇄 발주 위젯", "일정 위젯"},
+            )
+            for widget in self.window.mini_widgets.values():
+                self.assertTrue(widget.windowFlags() & widget.windowFlags().WindowStaysOnTopHint)
+                widget.close()
 
     def test_mini_widget_supports_quick_inventory_search(self) -> None:
         self.window.inventory_rows.extend([
             {"code": "MINT-4", "name": "민트 관련 품목 4", "headquarters_stock": 1, "wekeep_stock": 2, "safety": 0},
             {"code": "MINT-5", "name": "민트 관련 품목 5", "headquarters_stock": 1, "wekeep_stock": 2, "safety": 0},
         ])
-        widget = MiniWidgetDialog(self.window)
+        widget = InventoryMiniWidget(self.window)
         widget.inventory_search_input.setText("민트")
         self.assertEqual(widget.inventory_results.count(), 5)
         self.assertIn("위킵 20", widget.inventory_results.item(0).text())
@@ -358,16 +375,12 @@ class DashboardNavigationTests(unittest.TestCase):
         self.assertEqual(self.window.catalog["items"][0]["safety_stock"], 42)
         self.assertEqual(self.window.inventory_rows[0]["safety"], 42)
 
-    def test_mini_widget_buttons_route_to_each_function(self) -> None:
-        widget = MiniWidgetDialog(self.window)
-        widget.close = Mock()
-        self.window.show_shipping_workspace = Mock()
+    def test_independent_widget_buttons_route_to_each_function(self) -> None:
+        widget = InventoryMiniWidget(self.window)
+        self.window.open_inventory_preview = Mock()
         self.window.show_dashboard = Mock()
-
-        widget.open_target("shipping")
-        self.window.show_shipping_workspace.assert_called_once_with()
-
-        widget.open_target("calendar")
+        widget.open_target("inventory")
+        self.window.open_inventory_preview.assert_called_once_with()
         self.assertEqual(self.window.show_dashboard.call_count, 1)
         widget.deleteLater()
 

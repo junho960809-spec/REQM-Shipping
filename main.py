@@ -104,7 +104,7 @@ DEFAULT_CONFIG = {
     },
 }
 ADMIN_USER_ID = "c7937d51-1a14-47aa-987e-6254c6c79014"
-APP_VERSION = "1.0.88"
+APP_VERSION = "1.0.89"
 TEST_MODE = os.getenv("REQM_TEST_MODE", "").strip().casefold() in {"1", "true", "yes"}
 UPDATE_BASE_URL = "https://jcslohuraqclhryeqxoc.supabase.co/storage/v1/object/public/reqm-updates"
 UPDATE_MANIFEST_URL = f"{UPDATE_BASE_URL}/manifest.json"
@@ -210,6 +210,31 @@ def save_widget_target(target: str) -> None:
     WIDGET_SETTINGS_PATH.write_text(
         json.dumps({"target": target}, ensure_ascii=False, indent=2), encoding="utf-8"
     )
+
+
+def load_widget_positions() -> dict[str, dict[str, int]]:
+    try:
+        data = json.loads(WIDGET_SETTINGS_PATH.read_text(encoding="utf-8"))
+        positions = data.get("positions", {})
+        return {
+            str(name): {"x": int(value["x"]), "y": int(value["y"])}
+            for name, value in positions.items()
+            if isinstance(value, dict) and "x" in value and "y" in value
+        }
+    except (OSError, ValueError, TypeError, KeyError):
+        return {}
+
+
+def save_widget_position(name: str, x: int, y: int) -> None:
+    try:
+        data = json.loads(WIDGET_SETTINGS_PATH.read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            data = {}
+    except (OSError, ValueError, TypeError):
+        data = {}
+    data.setdefault("positions", {})[name] = {"x": int(x), "y": int(y)}
+    WIDGET_SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    WIDGET_SETTINGS_PATH.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 def remove_legacy_transfer_credentials() -> None:
@@ -1905,127 +1930,62 @@ class CalendarEventDialog(QDialog):
         }
 
 
-class MiniWidgetDialog(QDialog):
-    def __init__(self, main_window):
+class BaseMiniWidget(QDialog):
+    widget_name = "base"
+
+    def __init__(self, main_window, title: str, size: tuple[int, int]):
         super().__init__(None)
         self.main_window = main_window
-        self.opening_main_window = False
         self.setStyleSheet(main_window.styleSheet())
         self.setObjectName("miniWidget")
-        self.setWindowTitle("REQM 미니 위젯")
+        self.setWindowTitle(title)
         self.setWindowFlags(
-            Qt.WindowType.Tool
-            | Qt.WindowType.WindowStaysOnTopHint
-            | Qt.WindowType.WindowTitleHint
-            | Qt.WindowType.WindowCloseButtonHint
+            Qt.WindowType.Tool | Qt.WindowType.WindowStaysOnTopHint
+            | Qt.WindowType.WindowTitleHint | Qt.WindowType.WindowCloseButtonHint
         )
-        self.setFixedSize(498, 570)
-        self.print_status_worker = None
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(14, 12, 14, 12)
-        layout.setSpacing(8)
+        self.setFixedSize(*size)
 
-        header = QHBoxLayout()
-        title = QLabel("REQM 미니 위젯")
-        title.setObjectName("widgetTitle")
-        self.today_label = QLabel(QDate.currentDate().toString("yyyy년 M월 d일"))
-        self.today_label.setObjectName("dashboardHint")
-        header.addWidget(title)
-        header.addStretch(1)
-        header.addWidget(self.today_label)
-        layout.addLayout(header)
+    def open_target(self, target: str) -> None:
+        self.main_window.showNormal()
+        self.main_window.show_dashboard()
+        if target == "inventory":
+            self.main_window.open_inventory_preview()
+        elif target == "print_order":
+            self.main_window.open_print_order()
+            self.main_window.print_order_window.menu.setCurrentRow(2)
+            self.main_window.print_order_window.refresh_status()
+        self.main_window.raise_()
+        self.main_window.activateWindow()
 
-        action_grid = QGridLayout()
-        action_grid.setHorizontalSpacing(8)
-        action_specs = [
-            ("📦  출고", "shipping"),
-            ("📅  일정", "calendar"),
-        ]
-        self.action_buttons = []
-        for index, (text, target) in enumerate(action_specs):
-            button = QPushButton(text)
-            button.setObjectName("widgetAction")
-            button.setProperty("widgetTarget", target)
-            button.setCursor(Qt.CursorShape.PointingHandCursor)
-            button.clicked.connect(
-                lambda checked=False, selected_target=target: self.open_target(selected_target)
-            )
-            action_grid.addWidget(button, 0, index)
-            self.action_buttons.append(button)
-        layout.addLayout(action_grid)
+    def moveEvent(self, event) -> None:
+        if self.isVisible():
+            save_widget_position(self.widget_name, self.x(), self.y())
+        super().moveEvent(event)
 
-        print_header = QHBoxLayout()
-        print_title = QLabel("인쇄 발주 현황"); print_title.setObjectName("widgetInventoryTitle")
-        print_open = QPushButton("진행 현황 열기"); print_open.setObjectName("widgetInventoryOpen")
-        print_open.clicked.connect(lambda: self.open_target("print_order"))
-        print_header.addWidget(print_title); print_header.addStretch(1); print_header.addWidget(print_open)
-        layout.addLayout(print_header)
-        self.print_status_label = QLabel("게시판 확인 중...")
-        self.print_status_label.setWordWrap(True)
-        self.print_status_label.setStyleSheet("background:#eef7f5;color:#17365d;border-radius:10px;padding:10px;font-weight:800")
-        layout.addWidget(self.print_status_label)
+    def closeEvent(self, event) -> None:
+        save_widget_position(self.widget_name, self.x(), self.y())
+        event.accept()
 
-        inventory_title = QLabel("빠른 재고 검색")
-        inventory_title.setObjectName("widgetInventoryTitle")
-        self.widget_refresh_button = QPushButton("↻")
-        self.widget_refresh_button.setObjectName("widgetInventoryOpen")
-        self.widget_refresh_button.setFixedWidth(34)
-        self.widget_refresh_button.setToolTip("이카운트 재고 수동 갱신")
+
+class InventoryMiniWidget(BaseMiniWidget):
+    widget_name = "inventory"
+
+    def __init__(self, main_window):
+        super().__init__(main_window, "재고 위젯", (650, 500))
+        layout = QVBoxLayout(self); layout.setContentsMargins(14, 14, 14, 14); layout.setSpacing(9)
+        header = QHBoxLayout(); title = QLabel("빠른 재고 검색"); title.setObjectName("widgetTitle")
+        self.widget_refresh_button = QPushButton("↻"); self.widget_refresh_button.setObjectName("widgetInventoryOpen"); self.widget_refresh_button.setFixedWidth(38)
         self.widget_refresh_button.clicked.connect(lambda: self.main_window.refresh_inventory(force=True))
-        open_inventory_button = QPushButton("전체 재고 열기")
-        open_inventory_button.setObjectName("widgetInventoryOpen")
-        open_inventory_button.clicked.connect(self.open_inventory)
-        inventory_header = QHBoxLayout()
-        inventory_header.addWidget(inventory_title)
-        inventory_header.addStretch(1)
-        inventory_header.addWidget(self.widget_refresh_button)
-        inventory_header.addWidget(open_inventory_button)
-        layout.addLayout(inventory_header)
-        self.inventory_search_input = QLineEdit()
-        self.inventory_search_input.setPlaceholderText("품목명·코드 일부 입력")
-        self.inventory_search_input.setObjectName("widgetInventorySearch")
-        self.inventory_search_input.textChanged.connect(self.refresh_inventory_results)
-        layout.addWidget(self.inventory_search_input)
-        self.inventory_results = QListWidget()
-        self.inventory_results.setObjectName("widgetInventoryResults")
-        self.inventory_results.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
-        self.inventory_results.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self.inventory_results.setFixedHeight(196)
-        layout.addWidget(self.inventory_results)
-        self.inventory_checked_label = QLabel("최근 확인  ·  연동 전 샘플")
-        self.inventory_checked_label.setObjectName("widgetHint")
-        layout.addWidget(self.inventory_checked_label)
-
-        self.event_summary = QLabel()
-        self.event_summary.setObjectName("widgetEventSummary")
-        self.event_summary.setWordWrap(True)
-        self.event_summary.hide()
-
-        self.attachment_button = QPushButton("일정 첨부 파일 다운로드")
-        self.attachment_button.setObjectName("widgetAttachment")
-        self.attachment_button.setEnabled(False)
-        self.attachment_button.clicked.connect(self.download_selected_attachments)
+        open_button = QPushButton("전체 재고 열기"); open_button.setObjectName("widgetInventoryOpen"); open_button.clicked.connect(lambda: self.open_target("inventory"))
+        header.addWidget(title); header.addStretch(1); header.addWidget(self.widget_refresh_button); header.addWidget(open_button); layout.addLayout(header)
+        self.inventory_search_input = QLineEdit(); self.inventory_search_input.setPlaceholderText("품목명·코드 일부 입력"); self.inventory_search_input.setObjectName("widgetInventorySearch")
+        self.inventory_search_input.textChanged.connect(self.refresh_inventory_results); layout.addWidget(self.inventory_search_input)
+        self.inventory_results = QListWidget(); self.inventory_results.setObjectName("widgetInventoryResults")
+        self.inventory_results.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection); self.inventory_results.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        layout.addWidget(self.inventory_results, 1)
+        self.inventory_checked_label = QLabel("최근 확인 · 연동 전 샘플"); self.inventory_checked_label.setObjectName("widgetHint"); layout.addWidget(self.inventory_checked_label)
         self.main_window.inventoryUpdated.connect(self.on_inventory_updated)
-        self.refresh_inventory_results()
-        self.main_window.refresh_inventory()
-        self.refresh_print_status()
-
-    def refresh_print_status(self) -> None:
-        if os.getenv("QT_QPA_PLATFORM", "").casefold() == "offscreen":
-            self.print_status_label.setText("신규 접수 -  |  인쇄 진행 -  |  패킹 진행 -  |  출고 대기 -")
-            return
-        credentials = print_board_credentials()
-        if not credentials.get("user_id") or not credentials.get("password"):
-            self.print_status_label.setText("연동 계정에서 인쇄 게시판 계정을 저장해 주세요.")
-            return
-        self.print_status_worker = PrintOrderStatusWorker(credentials)
-        self.print_status_worker.succeeded.connect(self.on_print_status_loaded)
-        self.print_status_worker.failed.connect(lambda message: self.print_status_label.setText("인쇄 게시판 확인 실패"))
-        self.print_status_worker.start()
-
-    def on_print_status_loaded(self, rows) -> None:
-        counts = status_counts(list(rows))
-        self.print_status_label.setText("  |  ".join(f"{status} {counts[status]}" for status, _ in BOARD_SOURCES))
+        self.refresh_inventory_results(); self.main_window.refresh_inventory()
 
     def refresh_inventory_results(self) -> None:
         query = self.inventory_search_input.text().strip()
@@ -2065,72 +2025,80 @@ class MiniWidgetDialog(QDialog):
             self.inventory_checked_label.setText("재고 불러오는 중")
         self.refresh_inventory_results()
 
-    def open_inventory(self) -> None:
-        self.opening_main_window = True
-        self.main_window.showNormal()
-        self.main_window.show_dashboard()
-        self.main_window.raise_()
-        self.main_window.activateWindow()
-        self.close()
-        self.main_window.open_inventory_preview()
+class PrintOrderMiniWidget(BaseMiniWidget):
+    widget_name = "print_order"
+
+    def __init__(self, main_window):
+        super().__init__(main_window, "인쇄 발주 위젯", (420, 500))
+        self.print_status_worker = None
+        layout = QVBoxLayout(self); layout.setContentsMargins(16, 16, 16, 16); layout.setSpacing(12)
+        header = QHBoxLayout(); title = QLabel("인쇄 발주 현황"); title.setObjectName("widgetTitle")
+        open_button = QPushButton("진행 현황 열기"); open_button.setObjectName("widgetInventoryOpen"); open_button.clicked.connect(lambda: self.open_target("print_order"))
+        header.addWidget(title); header.addStretch(1); header.addWidget(open_button); layout.addLayout(header)
+        self.status_labels = {}
+        for status, _ in BOARD_SOURCES:
+            card = QFrame(); card.setObjectName("widgetStatusCard"); row = QHBoxLayout(card); row.setContentsMargins(16, 12, 16, 12)
+            name = QLabel(status); name.setStyleSheet("font-size:15px;font-weight:800")
+            count = QLabel("-"); count.setStyleSheet("font-size:22px;font-weight:900;color:#17365d")
+            row.addWidget(name); row.addStretch(1); row.addWidget(count); layout.addWidget(card); self.status_labels[status] = count
+        self.status_hint = QLabel("게시판 확인 중..."); self.status_hint.setObjectName("widgetHint"); layout.addStretch(1); layout.addWidget(self.status_hint)
+        self.refresh_timer = QTimer(self); self.refresh_timer.setInterval(5 * 60 * 1000); self.refresh_timer.timeout.connect(self.refresh_print_status); self.refresh_timer.start()
+        self.refresh_print_status()
+
+    def refresh_print_status(self) -> None:
+        if self.print_status_worker is not None and self.print_status_worker.isRunning():
+            return
+        if os.getenv("QT_QPA_PLATFORM", "").casefold() == "offscreen":
+            self.status_hint.setText("게시판 자동 최신화")
+            return
+        credentials = print_board_credentials()
+        if not credentials.get("user_id") or not credentials.get("password"):
+            self.status_hint.setText("연동 계정에서 게시판 계정을 저장해 주세요.")
+            return
+        self.print_status_worker = PrintOrderStatusWorker(credentials)
+        self.print_status_worker.succeeded.connect(self.on_print_status_loaded)
+        self.print_status_worker.failed.connect(lambda message: self.status_hint.setText("인쇄 게시판 확인 실패"))
+        self.print_status_worker.start()
+
+    def on_print_status_loaded(self, rows) -> None:
+        counts = status_counts(list(rows))
+        for status, label in self.status_labels.items():
+            label.setText(str(counts[status]))
+        self.status_hint.setText("게시판 자동 최신화 완료")
+
+
+class CalendarMiniWidget(BaseMiniWidget):
+    widget_name = "calendar"
+
+    def __init__(self, main_window):
+        super().__init__(main_window, "일정 위젯", (420, 500))
+        layout = QVBoxLayout(self); layout.setContentsMargins(16, 16, 16, 16); layout.setSpacing(10)
+        date = QLabel(QDate.currentDate().toString("yyyy년 M월 d일")); date.setObjectName("widgetTitle"); layout.addWidget(date)
+        today_title = QLabel("오늘 일정"); today_title.setObjectName("widgetInventoryTitle"); layout.addWidget(today_title)
+        self.today_events = QListWidget(); self.today_events.setObjectName("widgetInventoryResults"); self.today_events.setFocusPolicy(Qt.FocusPolicy.NoFocus); layout.addWidget(self.today_events, 1)
+        upcoming_title = QLabel("다가오는 일정"); upcoming_title.setObjectName("widgetInventoryTitle"); layout.addWidget(upcoming_title)
+        self.upcoming_events = QListWidget(); self.upcoming_events.setObjectName("widgetInventoryResults"); self.upcoming_events.setFocusPolicy(Qt.FocusPolicy.NoFocus); layout.addWidget(self.upcoming_events, 1)
+        open_button = QPushButton("전체 일정 열기"); open_button.setObjectName("widgetAction"); open_button.clicked.connect(lambda: self.open_target("calendar")); layout.addWidget(open_button)
+        self.refresh_events()
 
     def refresh_events(self) -> None:
         today_text = QDate.currentDate().toString("yyyy-MM-dd")
+        today = sorted((row for row in self.main_window.calendar_events if str(row.get("date", "")) == today_text), key=lambda row: str(row.get("title", "")))
         upcoming = sorted(
-            (row for row in self.main_window.calendar_events if str(row.get("date", "")) >= today_text),
+            (row for row in self.main_window.calendar_events if str(row.get("date", "")) > today_text),
             key=lambda row: (str(row.get("date", "")), str(row.get("title", ""))),
-        )[:1]
-        if not upcoming:
-            self.upcoming_event = None
-            self.event_summary.setText("다음 일정  ·  가까운 일정이 없습니다.")
-            self.update_attachment_button()
-            return
-        self.upcoming_event = upcoming[0]
-        self.event_summary.setText(
-            f"다음 일정  ·  {self.upcoming_event.get('date', '')}  "
-            f"{self.upcoming_event.get('title', '')}"
-        )
-        self.update_attachment_button()
+        )[:4]
+        self.today_events.clear(); self.upcoming_events.clear()
+        for target, rows, empty in ((self.today_events, today, "오늘 일정이 없습니다."), (self.upcoming_events, upcoming, "다가오는 일정이 없습니다.")):
+            if not rows:
+                target.addItem(empty)
+            for row in rows:
+                prefix = "" if row in today else f"{row.get('date', '')}  "
+                target.addItem(f"{prefix}{row.get('title', '')}\n{row.get('info', '')}".strip())
 
-    def selected_event(self) -> dict | None:
-        return self.upcoming_event
 
-    def update_attachment_button(self, current=None, previous=None) -> None:
-        event_row = self.selected_event()
-        paths = (event_row or {}).get("file_paths") or [(event_row or {}).get("file_path", "")]
-        self.attachment_button.setEnabled(any(paths) or bool((event_row or {}).get("attachments")))
-
-    def download_selected_attachments(self) -> None:
-        event_row = self.selected_event()
-        if event_row:
-            self.main_window.download_event_attachments(event_row)
-
-    def open_target(self, target: str) -> None:
-        self.opening_main_window = True
-        self.main_window.showNormal()
-        if target == "shipping":
-            self.main_window.show_shipping_workspace()
-        elif target == "print_order":
-            self.main_window.show_dashboard()
-            self.main_window.open_print_order()
-            self.main_window.print_order_window.menu.setCurrentRow(2)
-            self.main_window.print_order_window.refresh_status()
-        else:
-            self.main_window.show_dashboard()
-        self.main_window.raise_()
-        self.main_window.activateWindow()
-        self.close()
-
-    def open_main_window(self) -> None:
-        self.open_target("calendar")
-
-    def closeEvent(self, event) -> None:
-        if not self.opening_main_window and self.main_window.isMinimized():
-            self.main_window.showNormal()
-            self.main_window.show_dashboard()
-            self.main_window.raise_()
-            self.main_window.activateWindow()
-        event.accept()
+# 이전 코드와 외부 테스트에서 사용하던 이름을 재고 위젯으로 호환한다.
+MiniWidgetDialog = InventoryMiniWidget
 
 class TypedOnlySpinBox(QSpinBox):
     """Accept typed quantities only; never step values with pointer controls."""
@@ -2236,6 +2204,7 @@ class MainWindow(QMainWindow):
         self.worker = None
         self.update_worker = None
         self.mini_widget = None
+        self.mini_widgets: dict[str, BaseMiniWidget] = {}
         self.print_order_window = None
         self.matcher = None
         self.supabase_client = None
@@ -2317,6 +2286,7 @@ class MainWindow(QMainWindow):
             QListWidget#widgetInventoryResults { background: #ffffff; border: 1px solid #dfdfda; border-radius: 12px; padding: 4px; }
             QListWidget#widgetInventoryResults::item { padding: 6px 8px; border-bottom: 1px solid #eeeeea; font-size: 11px; }
             QPushButton#widgetInventoryOpen { padding: 7px 11px; border-radius: 11px; font-size: 11px; }
+            QFrame#widgetStatusCard { background: #f2f9f8; border: 1px solid #d9e8e6; border-radius: 12px; }
             QPushButton#widgetAttachment { background: transparent; color: #5f6562; border: none; padding: 2px 4px; font-size: 11px; text-decoration: underline; }
             QListWidget#widgetEventList { background: #ffffff; border: 1px solid #dfdfda; border-radius: 16px; padding: 7px; }
             QListWidget#widgetEventList::item { padding: 11px 9px; border-bottom: 1px solid #eeeeea; font-size: 13px; }
@@ -2919,15 +2889,32 @@ class MainWindow(QMainWindow):
         self.open_ecount_transfer()
 
     def open_mini_widget(self) -> None:
-        if self.mini_widget is not None:
-            self.mini_widget.close()
-        self.mini_widget = MiniWidgetDialog(self)
+        widget_classes = {
+            "inventory": InventoryMiniWidget,
+            "print_order": PrintOrderMiniWidget,
+            "calendar": CalendarMiniWidget,
+        }
         screen = QApplication.primaryScreen().availableGeometry()
-        self.mini_widget.move(
-            screen.right() - self.mini_widget.width() - 22,
-            screen.bottom() - self.mini_widget.height() - 22,
-        )
-        self.mini_widget.show()
+        positions = load_widget_positions()
+        default_x = max(screen.left() + 12, screen.right() - 650 - 420 - 420 - 54)
+        for index, (name, widget_class) in enumerate(widget_classes.items()):
+            widget = self.mini_widgets.get(name)
+            if widget is None:
+                widget = widget_class(self)
+                self.mini_widgets[name] = widget
+            saved = positions.get(name)
+            if saved:
+                x = min(max(saved["x"], screen.left()), screen.right() - widget.width())
+                y = min(max(saved["y"], screen.top()), screen.bottom() - widget.height())
+                widget.move(x, y)
+            else:
+                x = default_x + (0 if index == 0 else 650 + 18 if index == 1 else 650 + 18 + 420 + 18)
+                x = min(x, screen.right() - widget.width())
+                widget.move(x, max(screen.top() + 20, screen.bottom() - widget.height() - 22))
+            if isinstance(widget, CalendarMiniWidget):
+                widget.refresh_events()
+            widget.show(); widget.raise_()
+        self.mini_widget = self.mini_widgets["inventory"]
         self.showMinimized()
 
     def open_inventory_check(self) -> None:
