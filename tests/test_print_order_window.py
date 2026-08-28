@@ -16,12 +16,12 @@ class PrintOrderWindowTests(unittest.TestCase):
     def setUpClass(cls):
         cls.app = QApplication.instance() or QApplication([])
 
-    def test_has_only_entry_and_preview_pages(self):
+    def test_has_entry_preview_and_active_status_pages(self):
         window = PrintOrderWindow()
         try:
-            self.assertEqual(window.menu.count(), 2)
-            self.assertEqual(window.stack.count(), 2)
-            self.assertEqual([window.menu.item(i).text() for i in range(window.menu.count())], ["새 발주 등록", "등록 미리보기"])
+            self.assertEqual(window.menu.count(), 3)
+            self.assertEqual(window.stack.count(), 3)
+            self.assertEqual([window.menu.item(i).text() for i in range(window.menu.count())], ["새 발주 등록", "등록 미리보기", "발주 진행 현황"])
             window.open_preview()
             self.assertEqual(window.menu.currentRow(), 1)
         finally:

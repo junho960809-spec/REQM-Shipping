@@ -1,5 +1,7 @@
+import json
 import unittest
-from unittest.mock import patch
+import urllib.error
+from unittest.mock import MagicMock, patch
 
 from ecount_client import (
     EcountClient, EcountError, build_location_transfer_payload, collect_transfer_items,
@@ -128,6 +130,22 @@ class EcountTransferTests(unittest.TestCase):
         self.assertEqual(rows, [])
         self.assertIn("SESSION_ID=session%2Bvalue%2F%3D", post.call_args.args[0])
         self.assertEqual(post.call_args.args[1]["BASE_DATE"], "20260814")
+        self.assertEqual(post.call_args.kwargs["precondition_retries"], 5)
+
+    def test_inventory_read_retries_transient_http_412(self):
+        error = urllib.error.HTTPError("https://example.test", 412, "Precondition", {}, None)
+        error.read = lambda: b"temporary precondition failure"
+        response = MagicMock()
+        response.__enter__.return_value = response
+        response.read.return_value = json.dumps({"Status": "200", "Data": {"Result": []}}).encode()
+        with patch("ecount_client.urllib.request.urlopen", side_effect=[error, response]) as opened:
+            with patch("ecount_client.time.sleep") as delayed:
+                result = EcountClient._post_json(
+                    "https://example.test", {}, precondition_retries=2
+                )
+        self.assertEqual(result["Status"], "200")
+        self.assertEqual(opened.call_count, 2)
+        delayed.assert_called_once()
 
     def test_uses_sboapi_for_test_key(self):
         client = EcountClient("304293", "JUNHO191", "test-secret", "AB", test_mode=True)

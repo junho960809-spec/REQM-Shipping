@@ -4,6 +4,7 @@ import os
 import re
 import urllib.error
 import urllib.request
+import time
 from collections import defaultdict
 from datetime import date
 from decimal import Decimal, InvalidOperation
@@ -202,25 +203,38 @@ class EcountClient:
         return "sboapi" if self.test_mode else "oapi"
 
     @staticmethod
-    def _post_json(url: str, payload: dict[str, Any]) -> dict[str, Any]:
-        request = urllib.request.Request(
-            url,
-            data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
-            headers={
-                "Accept": "application/json",
-                "Content-Type": "application/json",
-                "User-Agent": "REQM-ECOUNT/1.0",
-            },
-            method="POST",
-        )
-        try:
-            with urllib.request.urlopen(request, timeout=30) as response:
-                return json.loads(response.read().decode("utf-8"))
-        except urllib.error.HTTPError as exc:
-            body = exc.read().decode("utf-8", errors="replace")
-            raise EcountError(f"이카운트 HTTP 오류 {exc.code}: {body[:500]}") from exc
-        except (urllib.error.URLError, TimeoutError) as exc:
-            raise EcountError(f"이카운트 서버 연결 실패: {exc}") from exc
+    def _post_json(
+        url: str, payload: dict[str, Any], *, precondition_retries: int = 0
+    ) -> dict[str, Any]:
+        for attempt in range(precondition_retries + 1):
+            request = urllib.request.Request(
+                url,
+                data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+                headers={
+                    "Accept": "application/json",
+                    "Content-Type": "application/json",
+                    "User-Agent": "REQM-ECOUNT/1.0",
+                    "Connection": "close",
+                },
+                method="POST",
+            )
+            try:
+                with urllib.request.urlopen(request, timeout=30) as response:
+                    return json.loads(response.read().decode("utf-8"))
+            except urllib.error.HTTPError as exc:
+                body = exc.read().decode("utf-8", errors="replace")
+                if exc.code == 412 and attempt < precondition_retries:
+                    time.sleep(0.35 * (attempt + 1))
+                    continue
+                if exc.code == 412:
+                    raise EcountError(
+                        "이카운트 재고 조회 서버가 요청을 일시적으로 거부했습니다. "
+                        "잠시 후 다시 시도하세요. (HTTP 412)"
+                    ) from exc
+                raise EcountError(f"이카운트 HTTP 오류 {exc.code}: {body[:500]}") from exc
+            except (urllib.error.URLError, TimeoutError) as exc:
+                raise EcountError(f"이카운트 서버 연결 실패: {exc}") from exc
+        raise EcountError("이카운트 요청을 완료하지 못했습니다.")
 
     def resolve_zone(self) -> str:
         if self.zone:
@@ -288,5 +302,5 @@ class EcountClient:
             "ZONE": self.zone,
             "API_CERT_KEY": self.api_key,
             "LAN_TYPE": "ko-KR",
-        })
+        }, precondition_retries=5)
         return parse_inventory_rows(response)

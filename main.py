@@ -79,9 +79,10 @@ from inventory_display_filter import filter_inventory_display_rows
 from inventory_safety_store import load_safety_stocks, save_safety_stock
 from as_daily_dialog import AsDailyDialog
 from inventory_module import InventoryDialog
-from print_order_window import PrintOrderWindow
+from print_order_window import PrintOrderWindow, PrintOrderStatusWorker
+from print_order_board_client import BOARD_SOURCES, status_counts
 from integration_account_dialog import IntegrationAccountDialog
-from integration_credential_store import load_integration_credentials
+from integration_credential_store import load_integration_credentials, print_board_credentials
 from wekeep_report_service import load_config as load_wekeep_report_config, save_config as save_wekeep_report_config, register_daily_task, remove_daily_task, open_login_window, run_report, TASK_NAME
 
 
@@ -103,7 +104,7 @@ DEFAULT_CONFIG = {
     },
 }
 ADMIN_USER_ID = "c7937d51-1a14-47aa-987e-6254c6c79014"
-APP_VERSION = "1.0.87"
+APP_VERSION = "1.0.88"
 TEST_MODE = os.getenv("REQM_TEST_MODE", "").strip().casefold() in {"1", "true", "yes"}
 UPDATE_BASE_URL = "https://jcslohuraqclhryeqxoc.supabase.co/storage/v1/object/public/reqm-updates"
 UPDATE_MANIFEST_URL = f"{UPDATE_BASE_URL}/manifest.json"
@@ -1918,7 +1919,8 @@ class MiniWidgetDialog(QDialog):
             | Qt.WindowType.WindowTitleHint
             | Qt.WindowType.WindowCloseButtonHint
         )
-        self.setFixedSize(498, 500)
+        self.setFixedSize(498, 570)
+        self.print_status_worker = None
         layout = QVBoxLayout(self)
         layout.setContentsMargins(14, 12, 14, 12)
         layout.setSpacing(8)
@@ -1952,6 +1954,17 @@ class MiniWidgetDialog(QDialog):
             self.action_buttons.append(button)
         layout.addLayout(action_grid)
 
+        print_header = QHBoxLayout()
+        print_title = QLabel("인쇄 발주 현황"); print_title.setObjectName("widgetInventoryTitle")
+        print_open = QPushButton("진행 현황 열기"); print_open.setObjectName("widgetInventoryOpen")
+        print_open.clicked.connect(lambda: self.open_target("print_order"))
+        print_header.addWidget(print_title); print_header.addStretch(1); print_header.addWidget(print_open)
+        layout.addLayout(print_header)
+        self.print_status_label = QLabel("게시판 확인 중...")
+        self.print_status_label.setWordWrap(True)
+        self.print_status_label.setStyleSheet("background:#eef7f5;color:#17365d;border-radius:10px;padding:10px;font-weight:800")
+        layout.addWidget(self.print_status_label)
+
         inventory_title = QLabel("빠른 재고 검색")
         inventory_title.setObjectName("widgetInventoryTitle")
         self.widget_refresh_button = QPushButton("↻")
@@ -1977,7 +1990,7 @@ class MiniWidgetDialog(QDialog):
         self.inventory_results.setObjectName("widgetInventoryResults")
         self.inventory_results.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
         self.inventory_results.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self.inventory_results.setFixedHeight(226)
+        self.inventory_results.setFixedHeight(196)
         layout.addWidget(self.inventory_results)
         self.inventory_checked_label = QLabel("최근 확인  ·  연동 전 샘플")
         self.inventory_checked_label.setObjectName("widgetHint")
@@ -1995,6 +2008,24 @@ class MiniWidgetDialog(QDialog):
         self.main_window.inventoryUpdated.connect(self.on_inventory_updated)
         self.refresh_inventory_results()
         self.main_window.refresh_inventory()
+        self.refresh_print_status()
+
+    def refresh_print_status(self) -> None:
+        if os.getenv("QT_QPA_PLATFORM", "").casefold() == "offscreen":
+            self.print_status_label.setText("신규 접수 -  |  인쇄 진행 -  |  패킹 진행 -  |  출고 대기 -")
+            return
+        credentials = print_board_credentials()
+        if not credentials.get("user_id") or not credentials.get("password"):
+            self.print_status_label.setText("연동 계정에서 인쇄 게시판 계정을 저장해 주세요.")
+            return
+        self.print_status_worker = PrintOrderStatusWorker(credentials)
+        self.print_status_worker.succeeded.connect(self.on_print_status_loaded)
+        self.print_status_worker.failed.connect(lambda message: self.print_status_label.setText("인쇄 게시판 확인 실패"))
+        self.print_status_worker.start()
+
+    def on_print_status_loaded(self, rows) -> None:
+        counts = status_counts(list(rows))
+        self.print_status_label.setText("  |  ".join(f"{status} {counts[status]}" for status, _ in BOARD_SOURCES))
 
     def refresh_inventory_results(self) -> None:
         query = self.inventory_search_input.text().strip()
@@ -2079,6 +2110,11 @@ class MiniWidgetDialog(QDialog):
         self.main_window.showNormal()
         if target == "shipping":
             self.main_window.show_shipping_workspace()
+        elif target == "print_order":
+            self.main_window.show_dashboard()
+            self.main_window.open_print_order()
+            self.main_window.print_order_window.menu.setCurrentRow(2)
+            self.main_window.print_order_window.refresh_status()
         else:
             self.main_window.show_dashboard()
         self.main_window.raise_()
@@ -2632,10 +2668,10 @@ class MainWindow(QMainWindow):
         card_alignment = Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop
         cards.addWidget(shipment, 0, 0, card_alignment)
         cards.addWidget(inventory, 0, 1, card_alignment)
-        cards.addWidget(as_daily, 1, 0, card_alignment)
-        cards.addWidget(weekly_inventory, 1, 1, card_alignment)
-        cards.addWidget(print_order, 2, 0, card_alignment)
-        cards.setColumnStretch(2, 1)
+        cards.addWidget(as_daily, 0, 2, card_alignment)
+        cards.addWidget(weekly_inventory, 0, 3, card_alignment)
+        cards.addWidget(print_order, 0, 4, card_alignment)
+        cards.setColumnStretch(5, 1)
         self.dashboard_cards = [shipment, inventory, as_daily, weekly_inventory, print_order]
         layout.addLayout(cards)
 

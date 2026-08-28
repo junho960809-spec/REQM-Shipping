@@ -305,13 +305,14 @@ class DashboardNavigationTests(unittest.TestCase):
             [button.property("widgetTarget") for button in widget.action_buttons],
             ["shipping", "calendar"],
         )
-        self.assertEqual((widget.width(), widget.height()), (498, 500))
+        self.assertEqual((widget.width(), widget.height()), (498, 570))
         self.assertEqual([button.text() for button in widget.action_buttons], ["📦  출고", "📅  일정"])
         self.assertEqual(
             widget.inventory_results.selectionMode(),
             widget.inventory_results.SelectionMode.NoSelection,
         )
-        self.assertEqual(widget.inventory_results.height(), 226)
+        self.assertEqual(widget.inventory_results.height(), 196)
+        self.assertIn("신규 접수", widget.print_status_label.text())
         self.assertTrue(widget.event_summary.isHidden())
         widget.close()
 

@@ -12,12 +12,13 @@ from PySide6.QtGui import QDesktopServices, QKeySequence
 from PySide6.QtWidgets import (
     QApplication, QComboBox, QDateEdit, QFileDialog, QFormLayout,
     QFrame, QHBoxLayout, QLabel, QLineEdit, QListWidget, QMainWindow,
-    QMessageBox, QPushButton, QStackedWidget,
-    QTextEdit, QVBoxLayout, QWidget,
+    QMessageBox, QPushButton, QStackedWidget, QTableWidget, QTableWidgetItem,
+    QHeaderView, QAbstractItemView, QTextEdit, QVBoxLayout, QWidget,
 )
 from playwright.sync_api import sync_playwright
 from print_order_analyzer import AnalysisResult, analyze_order_document
 from integration_credential_store import print_board_credentials
+from print_order_board_client import BOARD_SOURCES, fetch_active_orders, status_counts
 
 
 ORDER_BOARD_URL = "http://orora.ipdisk.co.kr:8000/apache/gnuboard5/bbs/board.php?bo_table=Order"
@@ -90,6 +91,21 @@ class PrintOrderAnalysisWorker(QThread):
     def run(self):
         try:
             self.succeeded.emit(analyze_order_document(self.path))
+        except Exception as exc:
+            self.failed.emit(str(exc))
+
+
+class PrintOrderStatusWorker(QThread):
+    succeeded = Signal(object)
+    failed = Signal(str)
+
+    def __init__(self, credentials: dict[str, str]):
+        super().__init__()
+        self.credentials = credentials
+
+    def run(self):
+        try:
+            self.succeeded.emit(fetch_active_orders(self.credentials))
         except Exception as exc:
             self.failed.emit(str(exc))
 
@@ -186,6 +202,8 @@ class PrintOrderWindow(QMainWindow):
         self.catalog_items = [item for item in (catalog_items or []) if item.get("is_active", True)]
         self.web_worker = None
         self.analysis_worker = None
+        self.status_worker = None
+        self.status_rows = []
         self.last_analysis = None
         self.setWindowTitle("REQM · 인쇄 발주 관리")
         self.resize(1500, 900)
@@ -223,7 +241,7 @@ class PrintOrderWindow(QMainWindow):
             "padding:22px 16px;border:0"
         )
         self.menu = QListWidget()
-        self.menu.addItems(["새 발주 등록", "등록 미리보기"])
+        self.menu.addItems(["새 발주 등록", "등록 미리보기", "발주 진행 현황"])
         self.menu.setCurrentRow(0)
         side.addWidget(brand)
         side.addWidget(self.menu, 1)
@@ -234,8 +252,111 @@ class PrintOrderWindow(QMainWindow):
         self.stack = QStackedWidget()
         self.stack.addWidget(self.build_entry_page())
         self.stack.addWidget(self.build_preview_page())
-        self.menu.currentRowChanged.connect(self.stack.setCurrentIndex)
+        self.stack.addWidget(self.build_status_page())
+        self.menu.currentRowChanged.connect(self.on_menu_changed)
         shell.addWidget(self.stack, 1)
+
+    def on_menu_changed(self, index: int):
+        self.stack.setCurrentIndex(index)
+        if index == 2 and not self.status_rows:
+            self.refresh_status()
+
+    def build_status_page(self):
+        page = QWidget(); layout = QVBoxLayout(page); layout.setContentsMargins(28,22,28,22); layout.setSpacing(14)
+        header = QHBoxLayout()
+        title_box = QVBoxLayout()
+        title = QLabel("발주 진행 현황"); title.setObjectName("pageTitle")
+        hint = QLabel("출고 완료를 제외한 인쇄 게시판의 4개 진행 단계만 표시합니다."); hint.setObjectName("muted")
+        title_box.addWidget(title); title_box.addWidget(hint)
+        self.status_refresh = QPushButton("게시판 최신화"); self.status_refresh.setObjectName("primary")
+        self.status_refresh.clicked.connect(self.refresh_status)
+        header.addLayout(title_box); header.addStretch(1); header.addWidget(self.status_refresh)
+        layout.addLayout(header)
+
+        counts_layout = QHBoxLayout(); self.status_count_labels = {}
+        for status, _ in BOARD_SOURCES:
+            card = QFrame(); card.setObjectName("card"); box = QVBoxLayout(card)
+            label = QLabel(status); label.setObjectName("muted")
+            count = QLabel("-"); count.setStyleSheet("font-size:25px;font-weight:900;color:#087f78")
+            box.addWidget(label); box.addWidget(count)
+            counts_layout.addWidget(card, 1); self.status_count_labels[status] = count
+        layout.addLayout(counts_layout)
+
+        filters = QHBoxLayout()
+        self.status_filter = QComboBox(); self.status_filter.addItem("전체 상태")
+        self.status_filter.addItems([status for status, _ in BOARD_SOURCES])
+        self.status_filter.currentTextChanged.connect(self.render_status_rows)
+        self.status_search = QLineEdit(); self.status_search.setPlaceholderText("발주처·품명 검색")
+        self.status_search.textChanged.connect(self.render_status_rows)
+        self.status_message = QLabel("게시판 최신화를 눌러 진행 현황을 불러오세요."); self.status_message.setObjectName("muted")
+        filters.addWidget(self.status_filter); filters.addWidget(self.status_search, 1); filters.addWidget(self.status_message)
+        layout.addLayout(filters)
+
+        self.status_table = QTableWidget(0, 7)
+        self.status_table.setHorizontalHeaderLabels(["상태", "발주처", "품명", "수량", "출고요청일", "인쇄·포장", "등록일"])
+        self.status_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.status_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.status_table.setAlternatingRowColors(True)
+        self.status_table.doubleClicked.connect(self.open_selected_status)
+        table_header = self.status_table.horizontalHeader()
+        table_header.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        table_header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        layout.addWidget(self.status_table, 1)
+        open_button = QPushButton("선택 항목 게시판에서 열기"); open_button.clicked.connect(self.open_selected_status)
+        layout.addWidget(open_button, 0, Qt.AlignmentFlag.AlignRight)
+        return page
+
+    def refresh_status(self):
+        if self.status_worker is not None and self.status_worker.isRunning():
+            return
+        credentials = print_board_credentials()
+        if not credentials.get("user_id") or not credentials.get("password"):
+            QMessageBox.information(self, "연동 계정 필요", "메인 화면의 연동 계정에서 인쇄 게시판 계정을 저장하세요.")
+            return
+        self.status_refresh.setEnabled(False); self.status_message.setText("인쇄 게시판을 불러오는 중...")
+        self.status_worker = PrintOrderStatusWorker(credentials)
+        self.status_worker.succeeded.connect(self.on_status_loaded)
+        self.status_worker.failed.connect(self.on_status_failed)
+        self.status_worker.finished.connect(lambda: self.status_refresh.setEnabled(True))
+        self.status_worker.start()
+
+    def on_status_loaded(self, rows):
+        self.status_rows = list(rows)
+        counts = status_counts(self.status_rows)
+        for status, label in self.status_count_labels.items():
+            label.setText(str(counts[status]))
+        self.status_message.setText(f"총 {len(self.status_rows)}건 · 출고완료 제외")
+        self.render_status_rows()
+
+    def on_status_failed(self, message: str):
+        self.status_message.setText("게시판 최신화 실패")
+        QMessageBox.warning(self, "인쇄 게시판 오류", message)
+
+    def render_status_rows(self, *_):
+        if not hasattr(self, "status_table"):
+            return
+        selected_status = self.status_filter.currentText()
+        query = self.status_search.text().strip().casefold()
+        rows = [row for row in self.status_rows if (selected_status == "전체 상태" or row["status"] == selected_status)]
+        if query:
+            rows = [row for row in rows if query in f'{row["customer"]} {row["product"]}'.casefold()]
+        self.status_table.setRowCount(len(rows))
+        keys = ("status", "customer", "product", "quantity", "request_date", "print_pack", "registered_at")
+        for row_index, row in enumerate(rows):
+            for column, key in enumerate(keys):
+                item = QTableWidgetItem(row.get(key, ""))
+                if column == 0:
+                    item.setData(Qt.ItemDataRole.UserRole, row.get("url", ""))
+                self.status_table.setItem(row_index, column, item)
+
+    def open_selected_status(self, *_):
+        row = self.status_table.currentRow()
+        if row < 0:
+            return
+        item = self.status_table.item(row, 0)
+        url = item.data(Qt.ItemDataRole.UserRole) if item else ""
+        if url:
+            QDesktopServices.openUrl(QUrl(url))
 
     def page_header(self, title: str, guide: str, parent_layout: QVBoxLayout):
         label = QLabel(title)
