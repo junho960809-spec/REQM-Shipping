@@ -85,6 +85,7 @@ from print_order_window import PrintOrderWindow, PrintOrderStatusWorker
 from print_order_board_client import BOARD_SOURCES, status_counts
 from integration_account_dialog import IntegrationAccountDialog
 from integration_credential_store import load_integration_credentials, print_board_credentials
+from program_login_store import delete_program_login, load_program_login, save_program_login
 from wekeep_report_service import load_config as load_wekeep_report_config, save_config as save_wekeep_report_config, register_daily_task, remove_daily_task, open_login_window, run_report, TASK_NAME
 
 
@@ -106,7 +107,7 @@ DEFAULT_CONFIG = {
     },
 }
 ADMIN_USER_ID = "c7937d51-1a14-47aa-987e-6254c6c79014"
-APP_VERSION = "1.0.93"
+APP_VERSION = "1.0.94"
 TEST_MODE = os.getenv("REQM_TEST_MODE", "").strip().casefold() in {"1", "true", "yes"}
 UPDATE_BASE_URL = "https://jcslohuraqclhryeqxoc.supabase.co/storage/v1/object/public/reqm-updates"
 UPDATE_MANIFEST_URL = f"{UPDATE_BASE_URL}/manifest.json"
@@ -1442,6 +1443,11 @@ class StartupLoginDialog(QDialog):
         self.password.setPlaceholderText("비밀번호")
         self.password.setEchoMode(QLineEdit.EchoMode.Password)
         self.password.setFixedHeight(43)
+        saved_email, saved_password = load_program_login()
+        self.email.setText(saved_email)
+        self.password.setText(saved_password)
+        self.remember_login = QCheckBox("로그인 정보 저장")
+        self.remember_login.setChecked(bool(saved_email and saved_password))
         self.message = QLabel("로그인 후 물류 대시보드를 사용할 수 있습니다.")
         self.message.setObjectName("loginMessage")
         self.message.setWordWrap(True)
@@ -1459,6 +1465,7 @@ class StartupLoginDialog(QDialog):
         form_layout.addWidget(subtitle)
         form_layout.addWidget(self.email)
         form_layout.addWidget(self.password)
+        form_layout.addWidget(self.remember_login)
         form_layout.addWidget(self.message)
         buttons = QHBoxLayout()
         buttons.setSpacing(10)
@@ -1485,6 +1492,13 @@ class StartupLoginDialog(QDialog):
         self.worker.start()
 
     def login_succeeded(self, count: int, catalog: dict) -> None:
+        try:
+            if self.remember_login.isChecked():
+                save_program_login(self.email.text().strip(), self.password.text())
+            else:
+                delete_program_login()
+        except Exception as exc:
+            self.message.setText(f"로그인은 성공했지만 계정 정보를 저장하지 못했습니다.\n{exc}")
         self.item_count = count
         self.catalog = catalog
         self.accept()

@@ -47,11 +47,15 @@ class DashboardNavigationTests(unittest.TestCase):
         )
 
     def test_startup_login_uses_restored_card_design(self) -> None:
-        dialog = StartupLoginDialog()
+        with patch("main.load_program_login", return_value=("saved@example.com", "saved-secret")):
+            dialog = StartupLoginDialog()
         self.assertEqual(dialog.size().width(), 520)
         self.assertIsNotNone(dialog.findChild(QFrame, "loginBrandCard"))
         self.assertIsNotNone(dialog.findChild(QFrame, "loginFormCard"))
         self.assertEqual(dialog.email.placeholderText(), "프로그램 계정 이메일")
+        self.assertEqual(dialog.email.text(), "saved@example.com")
+        self.assertEqual(dialog.password.text(), "saved-secret")
+        self.assertTrue(dialog.remember_login.isChecked())
         dialog.close()
 
     def test_dashboard_cards_fit_their_title_in_compact_buttons(self) -> None:
