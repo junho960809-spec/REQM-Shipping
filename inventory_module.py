@@ -417,6 +417,7 @@ class InventoryDialog(QDialog):
         self.main_window = parent
         self.ecount_worker: WeeklyInventoryWorker | None = None
         self.sales_sync_worker: WeeklySalesSyncWorker | None = None
+        self.combined_sync_active = False
         self.ecount_credentials_override: dict | None = None
         self.setWindowTitle("REQM 주간 재고조사")
         self.resize(1480, 900)
@@ -516,10 +517,9 @@ class InventoryDialog(QDialog):
         guide.setObjectName("guide")
         root.addWidget(guide)
         self.tabs = QTabWidget()
-        self.tabs.addTab(self._dashboard_tab(), "1  조사 준비")
+        self.tabs.addTab(self._preparation_tab(), "1  자료 준비")
         self.tabs.addTab(self._entry_tab(), "2  실재고 입력")
-        self.tabs.addTab(self._import_tab(), "3  자료 최신화")
-        self.tabs.addTab(self._review_tab(), "4  결과 검토")
+        self.tabs.addTab(self._review_tab(), "3  결과 검토 · Excel")
         self.tabs.currentChanged.connect(self.on_tab_changed)
         root.addWidget(self.tabs, 1)
 
@@ -542,19 +542,47 @@ class InventoryDialog(QDialog):
         layout.addWidget(button)
         return card
 
-    def _dashboard_tab(self) -> QWidget:
+    def _preparation_tab(self) -> QWidget:
         widget = QWidget()
         layout = QVBoxLayout(widget)
         cards = QHBoxLayout()
-        cards.addWidget(self._card("1. 이카운트 최신화", "저장된 인증정보로 본사·위킵 창고의 전산재고를 가져옵니다.", "이카운트 최신화", self.refresh_ecount))
-        cards.addWidget(self._card("2. 위킵 Excel 불러오기", "상품관리코드와 시점재고를 자동으로 반영합니다.", "Excel 파일 선택", self.load_wekeep))
-        cards.addWidget(self._card("3. 본사 실재고 입력", "입력하는 즉시 본사·전체 차이를 다시 계산합니다.", "실재고 입력", lambda: self.tabs.setCurrentIndex(1)))
-        cards.addWidget(self._card("4. 결과 Excel 생성", "검토 결과를 주간재고조사 파일로 저장합니다.", "결과 Excel 생성", self.export_result))
+        start_date, end_date = previous_inventory_week()
+        cards.addWidget(self._card(
+            "이카운트 자료 최신화",
+            f"본사·위킵 전산재고와 {start_date:%Y-%m-%d}~{end_date:%Y-%m-%d} 판매 RAWDATA를 순서대로 갱신합니다.",
+            "전산재고 · RAWDATA 한 번에 최신화",
+            self.sync_all_ecount_data,
+        ), 2)
+        cards.addWidget(self._card(
+            "위킵 재고 불러오기",
+            "상품관리코드와 시점재고가 포함된 위킵 Excel을 선택합니다.",
+            "위킵 Excel 선택",
+            self.load_wekeep,
+        ), 1)
         layout.addLayout(cards)
+        status_card = QFrame(); status_card.setObjectName("card")
+        status_layout = QVBoxLayout(status_card)
+        status_title = QLabel("자료 준비 상태"); status_title.setStyleSheet("font-size:16px;font-weight:800;color:#17365d")
+        status_layout.addWidget(status_title)
+        status_row = QHBoxLayout()
+        self.inventory_prep_status = QLabel("○ 전산재고 최신화 대기")
+        self.sales_prep_status = QLabel("○ 판매 RAWDATA 최신화 대기")
+        self.wekeep_prep_status = QLabel("○ 위킵 Excel 대기")
+        for label in (self.inventory_prep_status, self.sales_prep_status, self.wekeep_prep_status):
+            label.setObjectName("guide"); status_row.addWidget(label, 1)
+        status_layout.addLayout(status_row)
+        layout.addWidget(status_card)
         self.dashboard_status = QLabel()
         self.dashboard_status.setObjectName("guide")
         self.dashboard_status.setStyleSheet("background:white;border:1px solid #dce4ed;border-radius:10px;padding:18px")
         layout.addWidget(self.dashboard_status)
+        footer = QHBoxLayout()
+        account_guide = QLabel("연동 계정은 메인 화면의 '연동 계정'에서 관리합니다.")
+        account_guide.setObjectName("guide")
+        next_button = QPushButton("실재고 입력으로 이동 →")
+        next_button.clicked.connect(lambda: self.tabs.setCurrentIndex(1))
+        footer.addWidget(account_guide); footer.addStretch(1); footer.addWidget(next_button)
+        layout.addLayout(footer)
         layout.addStretch(1)
         return widget
 
@@ -596,25 +624,6 @@ class InventoryDialog(QDialog):
         self.sort_filter.currentIndexChanged.connect(self.refresh_entry_table)
         self.entry_table.cellClicked.connect(self.open_entry_editor)
         self.entry_table.cellChanged.connect(self.on_entry_changed)
-        return widget
-
-    def _import_tab(self) -> QWidget:
-        widget = QWidget()
-        layout = QHBoxLayout(widget)
-        settings = self._card("이카운트 API 정보", "주간 재고조사 안에서 사용자 ID·담당자코드·API 인증키를 등록합니다.", "API 정보 입력/변경", self.open_ecount_settings)
-        ecount = self._card("이카운트 API", "저장된 사용자와 API 키로 창고코드 100(본사)·300(위킵)의 최신 재고를 불러옵니다.", "이카운트 최신화", self.refresh_ecount)
-        wekeep = self._card("위킵 Excel", "지원 열: 상품관리코드 / 상품명 / 시점재고\n현재 테스트 단계에서는 Excel 파일을 직접 불러옵니다.", "위킵 Excel 선택", self.load_wekeep)
-        start_date, end_date = previous_inventory_week()
-        sales_sync = self._card(
-            "이카운트 판매 RAWDATA",
-            f"판매현황을 {start_date:%Y-%m-%d}~{end_date:%Y-%m-%d} 기간으로 자동 조회하고 Supabase의 해당 기간을 갱신합니다.",
-            "판매자료 자동 동기화",
-            self.sync_sales_rawdata,
-        )
-        layout.addWidget(settings)
-        layout.addWidget(ecount)
-        layout.addWidget(wekeep)
-        layout.addWidget(sales_sync)
         return widget
 
     def _review_tab(self) -> QWidget:
@@ -785,8 +794,26 @@ class InventoryDialog(QDialog):
         self.update_dashboard_status()
 
     def on_tab_changed(self, index: int) -> None:
-        if index == 3:
+        if index == 2:
             self.refresh_review_table()
+
+    def sync_all_ecount_data(self) -> None:
+        if (self.ecount_worker is not None and self.ecount_worker.isRunning()) or (
+            self.sales_sync_worker is not None and self.sales_sync_worker.isRunning()
+        ):
+            self.source_status.setText("이카운트 자료를 최신화하는 중입니다...")
+            return
+        integrated = load_integration_credentials()
+        if not all(integrated.get(key) for key in ("ecount_user_id", "ecount_password", "ecount_api_key")):
+            QMessageBox.warning(
+                self, "연동 계정 확인",
+                "메인 화면의 연동 계정에서 이카운트 아이디·비밀번호·API 인증키를 모두 저장하세요.",
+            )
+            return
+        self.combined_sync_active = True
+        self.inventory_prep_status.setText("… 전산재고 최신화 중")
+        self.sales_prep_status.setText("○ 판매 RAWDATA 대기")
+        self.refresh_ecount()
 
     def refresh_ecount(self) -> None:
         if self.ecount_worker is not None and self.ecount_worker.isRunning():
@@ -845,9 +872,15 @@ class InventoryDialog(QDialog):
     def on_ecount_loaded(self, source_rows: list[dict]) -> None:
         matched = self.apply_ecount_rows(source_rows)
         self.source_status.setText(f"이카운트 최신화 완료 · {datetime.now():%Y-%m-%d %H:%M:%S} · {matched:,}개 품목")
+        self.inventory_prep_status.setText(f"✓ 전산재고 최신화 완료 · {matched:,}개 품목")
         self.refresh_all()
+        if self.combined_sync_active:
+            self.sales_prep_status.setText("… 판매 RAWDATA 최신화 중")
+            self.sync_sales_rawdata()
 
     def on_ecount_failed(self, message: str) -> None:
+        self.combined_sync_active = False
+        self.inventory_prep_status.setText("× 전산재고 최신화 실패")
         self.source_status.setText("이카운트 최신화 실패")
         QMessageBox.critical(self, "이카운트 최신화 실패", message)
 
@@ -915,6 +948,7 @@ class InventoryDialog(QDialog):
                     row.item_name = name
                 matched += 1
         self.source_status.setText(f"위킵 반영 완료 · {Path(path).name} · {matched:,}개 품목")
+        self.wekeep_prep_status.setText(f"✓ 위킵 Excel 완료 · {matched:,}개 품목")
         self.refresh_all()
         QMessageBox.information(self, "위킵 재고 반영", f"{len(imported):,}개 행을 읽고 현재 목록의 {matched:,}개 품목에 반영했습니다.")
 
@@ -951,13 +985,21 @@ class InventoryDialog(QDialog):
             f"판매자료 동기화 완료 · {result['start_date']:%Y-%m-%d}~{result['end_date']:%Y-%m-%d} · "
             f"{int(result.get('row_count', 0)):,}행"
         )
+        self.sales_prep_status.setText(
+            f"✓ 판매 RAWDATA 완료 · {result['start_date']:%m-%d}~{result['end_date']:%m-%d}"
+        )
+        combined = self.combined_sync_active
+        self.combined_sync_active = False
         QMessageBox.information(
-            self, "판매자료 동기화 완료",
-            f"Supabase에 {int(result.get('row_count', 0)):,}행을 저장했습니다.\n"
+            self, "이카운트 자료 최신화 완료" if combined else "판매자료 동기화 완료",
+            ("전산재고와 판매 RAWDATA 최신화를 모두 완료했습니다.\n\n" if combined else "")
+            + f"Supabase에 {int(result.get('row_count', 0)):,}행을 저장했습니다.\n"
             f"수량 {float(result.get('quantity_total', 0)):,.0f} · 공급가액 {int(result.get('supply_total', 0)):,}원",
         )
 
     def on_sales_sync_failed(self, message: str) -> None:
+        self.combined_sync_active = False
+        self.sales_prep_status.setText("× 판매 RAWDATA 최신화 실패")
         self.source_status.setText("이카운트 판매자료 동기화 실패")
         QMessageBox.critical(self, "판매자료 동기화 실패", message)
 

@@ -7,7 +7,7 @@ from unittest.mock import patch
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from openpyxl import Workbook, load_workbook
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QPushButton
 
 from inventory_module import (
     InventoryDialog,
@@ -39,6 +39,33 @@ class InventoryModuleTests(unittest.TestCase):
             self.assertEqual(dialog.sort_filter.currentText(), "엑셀 원본 순서")
             self.assertEqual(dialog.entry_table.item(0, 0).text(), "QWC-Q1500GR")
             self.assertEqual(dialog.entry_table.item(dialog.entry_table.rowCount() - 1, 0).text(), "QMA-Bubblepad-Cr")
+        finally:
+            dialog.close()
+
+    def test_weekly_inventory_uses_simplified_three_step_workflow(self):
+        dialog = InventoryDialog([])
+        try:
+            self.assertEqual(dialog.tabs.count(), 3)
+            self.assertEqual(
+                [dialog.tabs.tabText(index) for index in range(dialog.tabs.count())],
+                ["1  자료 준비", "2  실재고 입력", "3  결과 검토 · Excel"],
+            )
+            buttons = {button.text() for button in dialog.findChildren(QPushButton)}
+            self.assertIn("전산재고 · RAWDATA 한 번에 최신화", buttons)
+            self.assertNotIn("실재고 입력", buttons)
+            self.assertNotIn("API 정보 입력/변경", buttons)
+        finally:
+            dialog.close()
+
+    def test_combined_refresh_starts_rawdata_after_inventory_succeeds(self):
+        dialog = InventoryDialog([])
+        try:
+            dialog.combined_sync_active = True
+            with patch.object(dialog, "sync_sales_rawdata") as sync_sales:
+                dialog.on_ecount_loaded([])
+            sync_sales.assert_called_once_with()
+            self.assertIn("전산재고 최신화 완료", dialog.inventory_prep_status.text())
+            self.assertIn("판매 RAWDATA 최신화 중", dialog.sales_prep_status.text())
         finally:
             dialog.close()
 
