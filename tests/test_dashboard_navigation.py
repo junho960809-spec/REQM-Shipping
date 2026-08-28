@@ -306,11 +306,21 @@ class DashboardNavigationTests(unittest.TestCase):
         widget = InventoryMiniWidget(self.window)
         self.assertEqual(widget.windowTitle(), "재고 위젯")
         self.assertEqual((widget.width(), widget.height()), (650, 500))
+        widget.resize(760, 610)
+        self.assertEqual((widget.width(), widget.height()), (760, 610))
         self.assertEqual(
             widget.inventory_results.selectionMode(),
             widget.inventory_results.SelectionMode.NoSelection,
         )
         widget.close()
+
+    def test_mini_widget_saves_user_selected_size(self) -> None:
+        with patch("main.save_widget_position") as save_geometry:
+            widget = CalendarMiniWidget(self.window)
+            widget.show(); self.app.processEvents()
+            widget.resize(540, 640); self.app.processEvents()
+            widget.close()
+        save_geometry.assert_called_with("calendar", widget.x(), widget.y(), 540, 640)
 
     def test_print_and_calendar_widgets_are_separate_windows(self) -> None:
         print_widget = PrintOrderMiniWidget(self.window)

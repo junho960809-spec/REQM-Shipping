@@ -106,7 +106,7 @@ DEFAULT_CONFIG = {
     },
 }
 ADMIN_USER_ID = "c7937d51-1a14-47aa-987e-6254c6c79014"
-APP_VERSION = "1.0.91"
+APP_VERSION = "1.0.92"
 TEST_MODE = os.getenv("REQM_TEST_MODE", "").strip().casefold() in {"1", "true", "yes"}
 UPDATE_BASE_URL = "https://jcslohuraqclhryeqxoc.supabase.co/storage/v1/object/public/reqm-updates"
 UPDATE_MANIFEST_URL = f"{UPDATE_BASE_URL}/manifest.json"
@@ -208,9 +208,16 @@ def load_widget_target() -> str:
 
 
 def save_widget_target(target: str) -> None:
+    try:
+        data = json.loads(WIDGET_SETTINGS_PATH.read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            data = {}
+    except (OSError, ValueError, TypeError):
+        data = {}
+    data["target"] = target
     WIDGET_SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
     WIDGET_SETTINGS_PATH.write_text(
-        json.dumps({"target": target}, ensure_ascii=False, indent=2), encoding="utf-8"
+        json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
     )
 
 
@@ -218,23 +225,30 @@ def load_widget_positions() -> dict[str, dict[str, int]]:
     try:
         data = json.loads(WIDGET_SETTINGS_PATH.read_text(encoding="utf-8"))
         positions = data.get("positions", {})
-        return {
-            str(name): {"x": int(value["x"]), "y": int(value["y"])}
-            for name, value in positions.items()
-            if isinstance(value, dict) and "x" in value and "y" in value
-        }
+        result = {}
+        for name, value in positions.items():
+            if not isinstance(value, dict) or "x" not in value or "y" not in value:
+                continue
+            geometry = {"x": int(value["x"]), "y": int(value["y"])}
+            if "width" in value and "height" in value:
+                geometry.update(width=int(value["width"]), height=int(value["height"]))
+            result[str(name)] = geometry
+        return result
     except (OSError, ValueError, TypeError, KeyError):
         return {}
 
 
-def save_widget_position(name: str, x: int, y: int) -> None:
+def save_widget_position(name: str, x: int, y: int, width: int | None = None, height: int | None = None) -> None:
     try:
         data = json.loads(WIDGET_SETTINGS_PATH.read_text(encoding="utf-8"))
         if not isinstance(data, dict):
             data = {}
     except (OSError, ValueError, TypeError):
         data = {}
-    data.setdefault("positions", {})[name] = {"x": int(x), "y": int(y)}
+    geometry = {"x": int(x), "y": int(y)}
+    if width is not None and height is not None:
+        geometry.update(width=int(width), height=int(height))
+    data.setdefault("positions", {})[name] = geometry
     WIDGET_SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
     WIDGET_SETTINGS_PATH.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
@@ -2035,8 +2049,20 @@ class BaseMiniWidget(QDialog):
         self.setWindowFlags(
             Qt.WindowType.Tool | Qt.WindowType.WindowStaysOnTopHint
             | Qt.WindowType.WindowTitleHint | Qt.WindowType.WindowCloseButtonHint
+            | Qt.WindowType.WindowMaximizeButtonHint
         )
-        self.setFixedSize(*size)
+        self.setMinimumSize(320, 280)
+        self.resize(*size)
+        self._geometry_save_timer = QTimer(self)
+        self._geometry_save_timer.setSingleShot(True)
+        self._geometry_save_timer.setInterval(250)
+        self._geometry_save_timer.timeout.connect(self.save_geometry_setting)
+
+    def save_geometry_setting(self) -> None:
+        if self.isVisible():
+            save_widget_position(
+                self.widget_name, self.x(), self.y(), self.width(), self.height()
+            )
 
     def open_target(self, target: str) -> None:
         self.main_window.showNormal()
@@ -2052,11 +2078,19 @@ class BaseMiniWidget(QDialog):
 
     def moveEvent(self, event) -> None:
         if self.isVisible():
-            save_widget_position(self.widget_name, self.x(), self.y())
+            self._geometry_save_timer.start()
         super().moveEvent(event)
 
+    def resizeEvent(self, event) -> None:
+        if self.isVisible():
+            self._geometry_save_timer.start()
+        super().resizeEvent(event)
+
     def closeEvent(self, event) -> None:
-        save_widget_position(self.widget_name, self.x(), self.y())
+        self._geometry_save_timer.stop()
+        save_widget_position(
+            self.widget_name, self.x(), self.y(), self.width(), self.height()
+        )
         event.accept()
 
 
@@ -2997,6 +3031,10 @@ class MainWindow(QMainWindow):
                 self.mini_widgets[name] = widget
             saved = positions.get(name)
             if saved:
+                if saved.get("width", 0) >= widget.minimumWidth() and saved.get("height", 0) >= widget.minimumHeight():
+                    width = min(saved["width"], screen.width())
+                    height = min(saved["height"], screen.height())
+                    widget.resize(width, height)
                 x = min(max(saved["x"], screen.left()), screen.right() - widget.width())
                 y = min(max(saved["y"], screen.top()), screen.bottom() - widget.height())
                 widget.move(x, y)
