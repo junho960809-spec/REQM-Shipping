@@ -10,6 +10,8 @@ from weekly_inventory_catalog import WEEKLY_INVENTORY_ITEMS
 from ecount_client import EcountClient
 from ecount_credential_store import load_api_key, save_api_key
 from ecount_user_store import load_ecount_users, upsert_ecount_user
+from integration_credential_store import load_integration_credentials
+from ecount_sales_sync import previous_inventory_week, sync_ecount_sales
 from weekly_inventory_store import (
     RAW_HEADERS,
     add_sales_rows,
@@ -19,6 +21,12 @@ from weekly_inventory_store import (
     recent_months,
     sales_row_count,
     save_item_prices,
+)
+from weekly_inventory_supabase import (
+    fetch_monthly_sales as fetch_supabase_monthly_sales,
+    fetch_rows as fetch_supabase_sales_rows,
+    row_count as supabase_sales_row_count,
+    upload_rows as upload_supabase_sales_rows,
 )
 from PySide6.QtCore import QThread, QTimer, Signal, Qt
 from PySide6.QtGui import QColor
@@ -88,13 +96,30 @@ class WeeklyReferenceImportWorker(QThread):
     succeeded = Signal(object)
     failed = Signal(str)
 
-    def __init__(self, path: str):
+    def __init__(self, path: str, supabase_client=None):
         super().__init__()
         self.path = path
+        self.supabase_client = supabase_client
 
     def run(self) -> None:
         try:
-            self.succeeded.emit(import_reference_workbook(self.path))
+            self.succeeded.emit(import_reference_workbook(self.path, supabase_client=self.supabase_client))
+        except Exception as exc:
+            self.failed.emit(str(exc))
+
+
+class WeeklySalesSyncWorker(QThread):
+    succeeded = Signal(object)
+    failed = Signal(str)
+
+    def __init__(self, client, credentials: dict):
+        super().__init__()
+        self.client = client
+        self.credentials = credentials
+
+    def run(self) -> None:
+        try:
+            self.succeeded.emit(sync_ecount_sales(self.client, self.credentials))
         except Exception as exc:
             self.failed.emit(str(exc))
 
@@ -243,7 +268,11 @@ def import_wekeep_rows(path: str | Path) -> dict[str, tuple[str, int]]:
         workbook.close()
 
 
-def import_reference_workbook(path: str | Path, store_path: str | Path | None = None) -> dict[str, int]:
+def import_reference_workbook(
+    path: str | Path,
+    store_path: str | Path | None = None,
+    supabase_client=None,
+) -> dict[str, int]:
     workbook = load_workbook(path, read_only=True, data_only=True)
     try:
         raw_name = next((name for name in workbook.sheetnames if name.strip() == "RAWDATA_이카운트"), None)
@@ -251,9 +280,12 @@ def import_reference_workbook(path: str | Path, store_path: str | Path | None = 
         if raw_name is None or price_name is None:
             raise ValueError("RAWDATA_이카운트와 단가 시트를 모두 포함한 Excel을 선택하세요.")
         raw_sheet = workbook[raw_name]
-        inserted, duplicates = add_sales_rows(
-            raw_sheet.iter_rows(min_row=3, max_col=16, values_only=True), store_path
-        )
+        raw_rows = raw_sheet.iter_rows(min_row=3, max_col=16, values_only=True)
+        if supabase_client is not None:
+            sales_result = upload_supabase_sales_rows(supabase_client, raw_rows)
+            inserted, duplicates = sales_result["inserted"], sales_result["duplicates"]
+        else:
+            inserted, duplicates = add_sales_rows(raw_rows, store_path)
         price_sheet = workbook[price_name]
         prices = []
         for values in price_sheet.iter_rows(min_row=3, max_col=4, values_only=True):
@@ -268,7 +300,12 @@ def import_reference_workbook(path: str | Path, store_path: str | Path | None = 
                     price = 0
             prices.append((str(code).strip(), str(name or "").strip(), float(price or 0)))
         price_count = save_item_prices(prices, store_path)
-        return {"inserted": inserted, "duplicates": duplicates, "prices": price_count}
+        return {
+            "inserted": inserted,
+            "duplicates": duplicates,
+            "prices": price_count,
+            "storage": "supabase" if supabase_client is not None else "local",
+        }
     finally:
         workbook.close()
 
@@ -394,6 +431,7 @@ class InventoryDialog(QDialog):
         self.main_window = parent
         self.ecount_worker: WeeklyInventoryWorker | None = None
         self.reference_worker: WeeklyReferenceImportWorker | None = None
+        self.sales_sync_worker: WeeklySalesSyncWorker | None = None
         self.ecount_credentials_override: dict | None = None
         self.setWindowTitle("REQM 주간 재고조사")
         self.resize(1480, 900)
@@ -411,11 +449,41 @@ class InventoryDialog(QDialog):
 
     def _load_sales_and_prices(self) -> None:
         prices = load_item_prices()
-        sales = monthly_sales(self.sales_months)
+        client = self._supabase_client()
+        try:
+            sales = fetch_supabase_monthly_sales(client, self.sales_months) if client else monthly_sales(self.sales_months)
+            self.sales_storage = "Supabase" if client else "로컬"
+        except Exception:
+            sales = monthly_sales(self.sales_months)
+            self.sales_storage = "로컬(오프라인)"
         for row in self.rows:
             key = row.item_code.casefold()
             row.unit_price = prices.get(key, 0)
             row.sales_by_month = sales.get(key, {})
+
+    def _supabase_client(self):
+        return getattr(self.main_window, "supabase_client", None) if self.main_window is not None else None
+
+    def _sales_row_count(self) -> int:
+        client = self._supabase_client()
+        if client is not None:
+            try:
+                return supabase_sales_row_count(client)
+            except Exception:
+                pass
+        return sales_row_count()
+
+    def _sales_rows_for_export(self) -> list[list]:
+        client = self._supabase_client()
+        if client is not None:
+            try:
+                return fetch_supabase_sales_rows(client)
+            except Exception as exc:
+                raise RuntimeError(
+                    "Supabase RAWDATA를 읽지 못했습니다. "
+                    "20260828_ecount_sales_rawdata.sql 마이그레이션 적용 여부를 확인하세요."
+                ) from exc
+        return load_sales_rows()
 
     def _build_ui(self) -> None:
         self.setStyleSheet("""
@@ -538,10 +606,18 @@ class InventoryDialog(QDialog):
         settings = self._card("이카운트 API 정보", "주간 재고조사 안에서 사용자 ID·담당자코드·API 인증키를 등록합니다.", "API 정보 입력/변경", self.open_ecount_settings)
         ecount = self._card("이카운트 API", "저장된 사용자와 API 키로 창고코드 100(본사)·300(위킵)의 최신 재고를 불러옵니다.", "이카운트 최신화", self.refresh_ecount)
         wekeep = self._card("위킵 Excel", "지원 열: 상품관리코드 / 상품명 / 시점재고\n현재 테스트 단계에서는 Excel 파일을 직접 불러옵니다.", "위킵 Excel 선택", self.load_wekeep)
-        reference = self._card("판매 RAWDATA·단가", "기준 Excel의 RAWDATA는 삭제하지 않고 누적하며, 일자의 연도·월로 최근 5개월 판매수량을 계산합니다.", "기준 Excel 누적", self.load_reference)
+        start_date, end_date = previous_inventory_week()
+        sales_sync = self._card(
+            "이카운트 판매 RAWDATA",
+            f"판매현황을 {start_date:%Y-%m-%d}~{end_date:%Y-%m-%d} 기간으로 자동 조회하고 Supabase의 해당 기간을 갱신합니다.",
+            "판매자료 자동 동기화",
+            self.sync_sales_rawdata,
+        )
+        reference = self._card("기존 RAWDATA·단가 최초 이관", "기준 Excel의 누적 RAWDATA를 Supabase로 이관하고 품목 단가를 갱신합니다.", "기준 Excel 이관", self.load_reference)
         layout.addWidget(settings)
         layout.addWidget(ecount)
         layout.addWidget(wekeep)
+        layout.addWidget(sales_sync)
         layout.addWidget(reference)
         return widget
 
@@ -632,7 +708,8 @@ class InventoryDialog(QDialog):
         reviewed = sum(row.reviewed for row in self.rows if row.total_difference != 0)
         self.dashboard_status.setText(
             f"현재 품목 {len(self.rows):,}개 · 차이 품목 {differences:,}개 · 검토 완료 {reviewed:,}개\n"
-            f"판매 RAWDATA 누적 {sales_row_count():,}행 · 단가는 기준 Excel의 단가 시트를 사용합니다."
+            f"판매 RAWDATA 누적 {self._sales_row_count():,}행 · 저장소 {getattr(self, 'sales_storage', '로컬')} · "
+            "단가는 기준 Excel의 단가 시트를 사용합니다."
         )
 
     def refresh_entry_table(self) -> None:
@@ -855,16 +932,66 @@ class InventoryDialog(QDialog):
         if not path:
             return
         self.source_status.setText("판매 RAWDATA와 단가를 누적하는 중...")
-        self.reference_worker = WeeklyReferenceImportWorker(path)
+        self.reference_worker = WeeklyReferenceImportWorker(path, self._supabase_client())
         self.reference_worker.succeeded.connect(self.on_reference_loaded)
         self.reference_worker.failed.connect(self.on_reference_failed)
         self.reference_worker.finished.connect(self.release_reference_worker)
         self.reference_worker.start()
 
+    def sync_sales_rawdata(self) -> None:
+        if self.sales_sync_worker is not None and self.sales_sync_worker.isRunning():
+            self.source_status.setText("이카운트 판매자료를 동기화하는 중...")
+            return
+        client = self._supabase_client()
+        if client is None:
+            QMessageBox.warning(self, "판매자료 동기화", "Supabase에 로그인한 뒤 다시 실행하세요.")
+            return
+        credentials = load_integration_credentials()
+        if not credentials.get("ecount_user_id") or not credentials.get("ecount_password"):
+            QMessageBox.warning(self, "판매자료 동기화", "메인 화면의 연동 계정에서 이카운트 아이디와 비밀번호를 저장하세요.")
+            return
+        config = getattr(self.main_window, "inventory_credentials", lambda: {})()
+        sync_credentials = {
+            "company_code": config.get("company_code", "304293"),
+            "user_id": credentials["ecount_user_id"],
+            "password": credentials["ecount_password"],
+        }
+        start_date, end_date = previous_inventory_week()
+        self.source_status.setText(f"이카운트 판매현황 조회 중 · {start_date:%Y-%m-%d}~{end_date:%Y-%m-%d}")
+        self.sales_sync_worker = WeeklySalesSyncWorker(client, sync_credentials)
+        self.sales_sync_worker.succeeded.connect(self.on_sales_sync_loaded)
+        self.sales_sync_worker.failed.connect(self.on_sales_sync_failed)
+        self.sales_sync_worker.finished.connect(self.release_sales_sync_worker)
+        self.sales_sync_worker.start()
+
+    def on_sales_sync_loaded(self, result: dict) -> None:
+        self._load_sales_and_prices()
+        self.refresh_all()
+        self.source_status.setText(
+            f"판매자료 동기화 완료 · {result['start_date']:%Y-%m-%d}~{result['end_date']:%Y-%m-%d} · "
+            f"{int(result.get('row_count', 0)):,}행"
+        )
+        QMessageBox.information(
+            self, "판매자료 동기화 완료",
+            f"Supabase에 {int(result.get('row_count', 0)):,}행을 저장했습니다.\n"
+            f"수량 {float(result.get('quantity_total', 0)):,.0f} · 공급가액 {int(result.get('supply_total', 0)):,}원",
+        )
+
+    def on_sales_sync_failed(self, message: str) -> None:
+        self.source_status.setText("이카운트 판매자료 동기화 실패")
+        QMessageBox.critical(self, "판매자료 동기화 실패", message)
+
+    def release_sales_sync_worker(self) -> None:
+        worker = self.sales_sync_worker
+        self.sales_sync_worker = None
+        if worker is not None:
+            worker.deleteLater()
+
     def on_reference_loaded(self, result: dict[str, int]) -> None:
         self._load_sales_and_prices()
         self.source_status.setText(
-            f"누적 완료 · 신규 {result['inserted']:,}행 · 중복 제외 {result['duplicates']:,}행 · 단가 {result['prices']:,}개"
+            f"누적 완료 · {result.get('storage', 'local')} · 처리 {result['inserted']:,}행 · "
+            f"중복 제외 {result['duplicates']:,}행 · 단가 {result['prices']:,}개"
         )
         self.refresh_all()
         QMessageBox.information(
@@ -893,7 +1020,7 @@ class InventoryDialog(QDialog):
         if not path.lower().endswith(".xlsx"):
             path += ".xlsx"
         try:
-            export_inventory_workbook(path, self.rows, raw_sales_rows=load_sales_rows())
+            export_inventory_workbook(path, self.rows, raw_sales_rows=self._sales_rows_for_export())
         except Exception as exc:
             QMessageBox.critical(self, "Excel 생성 실패", str(exc))
             return
