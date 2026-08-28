@@ -80,6 +80,8 @@ from inventory_safety_store import load_safety_stocks, save_safety_stock
 from as_daily_dialog import AsDailyDialog
 from inventory_module import InventoryDialog
 from print_order_window import PrintOrderWindow
+from integration_account_dialog import IntegrationAccountDialog
+from integration_credential_store import load_integration_credentials
 from wekeep_report_service import load_config as load_wekeep_report_config, save_config as save_wekeep_report_config, register_daily_task, remove_daily_task, open_login_window, run_report, TASK_NAME
 
 
@@ -101,7 +103,7 @@ DEFAULT_CONFIG = {
     },
 }
 ADMIN_USER_ID = "c7937d51-1a14-47aa-987e-6254c6c79014"
-APP_VERSION = "1.0.86"
+APP_VERSION = "1.0.87"
 TEST_MODE = os.getenv("REQM_TEST_MODE", "").strip().casefold() in {"1", "true", "yes"}
 UPDATE_BASE_URL = "https://jcslohuraqclhryeqxoc.supabase.co/storage/v1/object/public/reqm-updates"
 UPDATE_MANIFEST_URL = f"{UPDATE_BASE_URL}/manifest.json"
@@ -2575,6 +2577,10 @@ class MainWindow(QMainWindow):
         self.dashboard_wekeep_report_button.setObjectName("adminButton")
         self.dashboard_wekeep_report_button.setFixedSize(92, 38)
         self.dashboard_wekeep_report_button.clicked.connect(self.open_wekeep_report)
+        self.dashboard_accounts_button = QPushButton("연동 계정")
+        self.dashboard_accounts_button.setObjectName("adminButton")
+        self.dashboard_accounts_button.setFixedSize(100, 38)
+        self.dashboard_accounts_button.clicked.connect(self.open_integration_accounts)
         self.dashboard_update_button = QPushButton("업데이트")
         self.dashboard_update_button.setObjectName("adminButton")
         self.dashboard_update_button.setFixedSize(92, 38)
@@ -2589,6 +2595,7 @@ class MainWindow(QMainWindow):
         self.dashboard_version = QLabel(f"v{APP_VERSION}")
         self.dashboard_version.setObjectName("versionLabel")
         header.addWidget(self.dashboard_widget_button, 0, Qt.AlignmentFlag.AlignTop)
+        header.addWidget(self.dashboard_accounts_button, 0, Qt.AlignmentFlag.AlignTop)
         header.addWidget(self.dashboard_db_button, 0, Qt.AlignmentFlag.AlignTop)
         header.addWidget(self.dashboard_wekeep_report_button, 0, Qt.AlignmentFlag.AlignTop)
         header.addWidget(self.dashboard_update_button, 0, Qt.AlignmentFlag.AlignTop)
@@ -2619,7 +2626,7 @@ class MainWindow(QMainWindow):
         weekly_inventory.clicked.connect(self.open_weekly_inventory)
         print_order = self.dashboard_card(
             "▣  인쇄 발주 관리",
-            "발주 정보 입력 · AI/시안 연결 · 등록 미리보기 및 진행 현황",
+            "발주 정보 입력 · AI/시안 연결 · 등록 미리보기 및 웹 등록",
         )
         print_order.clicked.connect(self.open_print_order)
         card_alignment = Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop
@@ -2732,8 +2739,20 @@ class MainWindow(QMainWindow):
         self.print_order_window.raise_()
         self.print_order_window.activateWindow()
 
+    def open_integration_accounts(self) -> None:
+        IntegrationAccountDialog(self).exec()
+
     def inventory_credentials(self) -> dict:
         config = load_config().get("ecount", {})
+        integrated = load_integration_credentials()
+        if integrated["ecount_user_id"] and integrated["ecount_api_key"]:
+            return {
+                "company_code": str(config.get("company_code") or "304293"),
+                "user_id": integrated["ecount_user_id"],
+                "api_key": integrated["ecount_api_key"],
+                "zone": str(config.get("zone") or "AB"),
+                "test_mode": bool(config.get("test_mode", False)),
+            }
         configured_user = str(config.get("user_id", "")).strip()
         profiles = load_ecount_users()
         candidates = sorted(

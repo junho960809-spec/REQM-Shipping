@@ -13,6 +13,7 @@ from ecount_client import (
 )
 from ecount_user_store import delete_ecount_user, load_ecount_users, upsert_ecount_user
 from ecount_credential_store import delete_api_key, load_api_key, save_api_key
+from integration_credential_store import load_integration_credentials
 
 
 class EcountUserManagerDialog(QDialog):
@@ -156,6 +157,7 @@ class EcountTransferDialog(QDialog):
         self.orders = orders
         self.catalog_items = catalog_items
         self.config = config or {}
+        self.integration_credentials = load_integration_credentials()
         self.completed_requests = completed_requests if completed_requests is not None else set()
         self.worker = None
         self.payload = None
@@ -171,7 +173,10 @@ class EcountTransferDialog(QDialog):
         self.company_code = QLineEdit(str(self.config.get("company_code", "")))
         self.company_code.setText("304293")
         self.company_code.setReadOnly(True)
-        self.user_id = QLineEdit(str(self.config.get("user_id", "")))
+        self.user_id = QLineEdit(
+            self.integration_credentials.get("ecount_user_id")
+            or str(self.config.get("user_id", ""))
+        )
         self.user_id.hide()
         self.employee = QLineEdit(str(self.config.get("employee_code", "")))
         self.employee.hide()

@@ -6,7 +6,7 @@ from unittest.mock import patch
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtGui import QImage, QColor
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QComboBox, QLineEdit
 from print_order_window import PrintOrderWindow
 from print_order_analyzer import AnalysisResult
 
@@ -16,14 +16,26 @@ class PrintOrderWindowTests(unittest.TestCase):
     def setUpClass(cls):
         cls.app = QApplication.instance() or QApplication([])
 
-    def test_has_four_workflow_pages_and_web_submit_is_disabled(self):
+    def test_has_only_entry_and_preview_pages(self):
         window = PrintOrderWindow()
         try:
-            self.assertEqual(window.menu.count(), 4)
-            self.assertEqual(window.stack.count(), 4)
+            self.assertEqual(window.menu.count(), 2)
+            self.assertEqual(window.stack.count(), 2)
+            self.assertEqual([window.menu.item(i).text() for i in range(window.menu.count())], ["새 발주 등록", "등록 미리보기"])
             window.open_preview()
             self.assertEqual(window.menu.currentRow(), 1)
-            self.assertIn("고려기프트", window.preview_title.text())
+        finally:
+            window.close()
+
+    def test_customer_and_product_are_manual_text_fields(self):
+        window = PrintOrderWindow()
+        try:
+            self.assertIsInstance(window.customer, QLineEdit)
+            self.assertIsInstance(window.product, QLineEdit)
+            self.assertNotIsInstance(window.customer, QComboBox)
+            self.assertNotIsInstance(window.product, QComboBox)
+            self.assertEqual(window.customer.text(), "")
+            self.assertEqual(window.product.text(), "")
         finally:
             window.close()
 
@@ -40,17 +52,19 @@ class PrintOrderWindowTests(unittest.TestCase):
         finally:
             window.close()
 
-    def test_web_registration_is_enabled_but_requires_runtime_credentials(self):
+    def test_web_registration_requires_saved_integration_credentials(self):
         window = PrintOrderWindow()
         try:
             window.ai_file.set_file(__file__)
             window.preview_file.set_file(__file__)
             self.assertTrue(window.web_submit_button.isEnabled())
-            with patch("print_order_window.QMessageBox.information") as notice:
-                window.submit_to_web()
+            with patch("print_order_window.print_board_credentials", return_value={"user_id": "", "password": ""}):
+                with patch("print_order_window.QMessageBox.information") as notice:
+                    window.submit_to_web()
             notice.assert_called_once()
-            self.assertEqual(window.menu.currentRow(), 3)
+            self.assertEqual(window.menu.currentRow(), 0)
             self.assertIsNone(window.web_worker)
+            self.assertFalse(hasattr(window, "web_id"))
             self.assertEqual(window.order_payload()["packaging"], "선물포장")
         finally:
             window.close()
@@ -65,7 +79,7 @@ class PrintOrderWindowTests(unittest.TestCase):
                 "원문",
             )
             window.apply_analysis(result)
-            self.assertEqual(window.customer.currentText(), "고려기프트")
+            self.assertEqual(window.customer.text(), "고려기프트")
             self.assertEqual(window.quantity.text(), "300")
             self.assertEqual(window.request_date.date().toString("yyyy-MM-dd"), "2026-09-01")
             self.assertIn("홍길동", window.contact.text())
@@ -98,6 +112,36 @@ class PrintOrderWindowTests(unittest.TestCase):
             open_url.assert_called_once()
             self.assertTrue(open_url.call_args.args[0].isLocalFile())
             self.assertEqual(Path(open_url.call_args.args[0].toLocalFile()).resolve(), Path(__file__).resolve())
+        finally:
+            window.close()
+
+    def test_successful_registration_clears_order_fields_and_attachments(self):
+        window = PrintOrderWindow()
+        try:
+            window.customer.setText("고려기프트")
+            window.product.setText("Q1500")
+            window.quantity.setText("300")
+            window.printing.setText("전면 인쇄")
+            window.device.setText("Q1500")
+            window.address.setText("서울")
+            window.contact.setText("홍길동")
+            window.order_source.set_file(__file__)
+            window.ai_file.set_file(__file__)
+            window.preview_file.set_file(__file__)
+            window.menu.setCurrentRow(1)
+
+            with patch("print_order_window.QMessageBox.information"):
+                window.on_web_succeeded("http://example.test/order/1")
+
+            for widget in (window.customer, window.product, window.quantity, window.printing, window.device, window.address, window.contact):
+                self.assertEqual(widget.text(), "")
+            self.assertEqual(window.order_source.path, "")
+            self.assertEqual(window.ai_file.path, "")
+            self.assertEqual(window.preview_file.path, "")
+            self.assertEqual(window.menu.currentRow(), 0)
+            self.assertEqual(window.packaging.currentText(), "선물포장")
+            self.assertEqual(window.delivery.currentText(), "택배")
+            self.assertEqual(window.note.toPlainText(), "인쇄 X  포장 O")
         finally:
             window.close()
 

@@ -188,6 +188,12 @@ class DashboardNavigationTests(unittest.TestCase):
         print_window.raise_.assert_called_once()
         print_window.activateWindow.assert_called_once()
 
+    def test_dashboard_integration_account_button_opens_dialog(self) -> None:
+        with patch("main.IntegrationAccountDialog") as dialog_class:
+            self.window.dashboard_accounts_button.click()
+        dialog_class.assert_called_once_with(self.window)
+        dialog_class.return_value.exec.assert_called_once()
+
     def test_inventory_preview_uses_shared_live_inventory_rows(self) -> None:
         dialog = InventoryPreviewDialog(self.window)
         self.assertEqual(dialog.table.rowCount(), 4)

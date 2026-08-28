@@ -8,21 +8,17 @@ from datetime import datetime
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QDate, QTimer, QThread, Signal, QUrl
-from PySide6.QtGui import QColor, QDesktopServices, QFont, QKeySequence
+from PySide6.QtGui import QDesktopServices, QKeySequence
 from PySide6.QtWidgets import (
     QApplication, QComboBox, QDateEdit, QFileDialog, QFormLayout,
     QFrame, QHBoxLayout, QLabel, QLineEdit, QListWidget, QMainWindow,
-    QMessageBox, QPushButton, QStackedWidget, QTableWidget, QTableWidgetItem,
+    QMessageBox, QPushButton, QStackedWidget,
     QTextEdit, QVBoxLayout, QWidget,
 )
 from playwright.sync_api import sync_playwright
 from print_order_analyzer import AnalysisResult, analyze_order_document
+from integration_credential_store import print_board_credentials
 
-
-SAMPLE_ORDERS = [
-    ["고려기프트", "일체형 듀얼", "300", "2026-08-26", "검토 전"],
-    ["한양대학교", "Q1500 그레이", "300", "2026-09-01", "등록 완료"],
-]
 
 ORDER_BOARD_URL = "http://orora.ipdisk.co.kr:8000/apache/gnuboard5/bbs/board.php?bo_table=Order"
 ORDER_WRITE_URL = "http://orora.ipdisk.co.kr:8000/apache/gnuboard5/bbs/write.php?bo_table=Order"
@@ -108,13 +104,14 @@ class FileDropBox(QFrame):
         self.path = ""
         self.accept_clipboard_image = accept_clipboard_image
         self.file_prefix = file_prefix
+        self.empty_status = f"{extensions}\n파일을 끌어놓거나 선택하세요"
         self.setObjectName("dropBox")
         layout = QVBoxLayout(self)
         layout.setContentsMargins(10, 8, 10, 8)
         layout.setSpacing(5)
         self.title = QLabel(title)
         self.title.setStyleSheet("font-size:15px;font-weight:800;color:#17365d")
-        self.status = QLabel(f"{extensions}\n파일을 끌어놓거나 선택하세요")
+        self.status = QLabel(self.empty_status)
         self.status.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.status.setObjectName("muted")
         button = QPushButton("파일 선택")
@@ -140,6 +137,14 @@ class FileDropBox(QFrame):
         self.style().unpolish(self)
         self.style().polish(self)
         self.fileChanged.emit(path)
+
+    def clear_file(self):
+        self.path = ""
+        self.status.setText(self.empty_status)
+        self.setProperty("ready", False)
+        self.style().unpolish(self)
+        self.style().polish(self)
+        self.fileChanged.emit("")
 
     def dragEnterEvent(self, event):
         if event.mimeData().hasUrls():
@@ -182,7 +187,7 @@ class PrintOrderWindow(QMainWindow):
         self.web_worker = None
         self.analysis_worker = None
         self.last_analysis = None
-        self.setWindowTitle("REQM · 인쇄 발주 자동화 테스트")
+        self.setWindowTitle("REQM · 인쇄 발주 관리")
         self.resize(1500, 900)
         self.setStyleSheet("""
             QMainWindow,QWidget { background:#f4f7fb;color:#172f52;font-family:'맑은 고딕';font-size:12px; }
@@ -213,21 +218,22 @@ class PrintOrderWindow(QMainWindow):
         sidebar.setFixedWidth(235)
         side = QVBoxLayout(sidebar)
         brand = QLabel("REQM\nPRINT ORDER")
-        brand.setStyleSheet("color:white;font-size:22px;font-weight:900;padding:22px 16px")
+        brand.setStyleSheet(
+            "background:#102d52;color:white;font-size:22px;font-weight:900;"
+            "padding:22px 16px;border:0"
+        )
         self.menu = QListWidget()
-        self.menu.addItems(["새 발주 등록", "등록 미리보기", "진행 현황", "거래처·품목 설정"])
+        self.menu.addItems(["새 발주 등록", "등록 미리보기"])
         self.menu.setCurrentRow(0)
         side.addWidget(brand)
         side.addWidget(self.menu, 1)
-        version = QLabel("웹 등록 테스트 활성화")
+        version = QLabel("인쇄 발주 웹 등록")
         version.setStyleSheet("color:#9db2ca;padding:20px")
         side.addWidget(version)
         shell.addWidget(sidebar)
         self.stack = QStackedWidget()
         self.stack.addWidget(self.build_entry_page())
         self.stack.addWidget(self.build_preview_page())
-        self.stack.addWidget(self.build_status_page())
-        self.stack.addWidget(self.build_settings_page())
         self.menu.currentRowChanged.connect(self.stack.setCurrentIndex)
         shell.addWidget(self.stack, 1)
 
@@ -248,18 +254,13 @@ class PrintOrderWindow(QMainWindow):
         steps.addStretch(1); layout.addLayout(steps)
         body = QHBoxLayout(); form_card = QFrame(); form_card.setObjectName("card")
         form_box = QVBoxLayout(form_card); form = QFormLayout(); form.setSpacing(12)
-        self.customer = QComboBox(); self.customer.setEditable(True); self.customer.addItems(["고려기프트", "한양대학교", "신규 거래처 입력"])
-        self.product = QComboBox(); self.product.setEditable(True)
-        db_names = list(dict.fromkeys(
-            str(item.get("standard_name", "")).strip() for item in self.catalog_items
-            if str(item.get("standard_name", "")).strip()
-        ))
-        self.product.addItems(db_names or ["Q1500 그레이", "Q1500 화이트", "일체형 듀얼"])
-        self.quantity = QLineEdit("300"); self.printing = QLineEdit("전면 / 로고 1도 인쇄")
-        self.device = QLineEdit("Q1500"); self.packaging = QComboBox(); self.packaging.addItems(["선물포장","기본패키지","벌크","OEM포장"])
-        self.address = QLineEdit("서울 영등포구 양산로 43")
+        self.customer = QLineEdit(); self.customer.setPlaceholderText("발주처를 직접 입력하세요")
+        self.product = QLineEdit(); self.product.setPlaceholderText("품명을 직접 입력하세요")
+        self.quantity = QLineEdit(); self.printing = QLineEdit()
+        self.device = QLineEdit(); self.packaging = QComboBox(); self.packaging.addItems(["선물포장","기본패키지","벌크","OEM포장"])
+        self.address = QLineEdit()
         self.delivery = QComboBox(); self.delivery.addItems(["택배","퀵 선불","퀵 착불","기타"])
-        self.contact = QLineEdit("홍길동 / 010-0000-0000")
+        self.contact = QLineEdit()
         self.request_date = QDateEdit(QDate.currentDate().addDays(7)); self.request_date.setCalendarPopup(True); self.request_date.setDisplayFormat("yyyy-MM-dd")
         self.note = QTextEdit(); self.note.setMaximumHeight(72)
         for label, widget in [("발주처",self.customer),("품명",self.product),("총수량",self.quantity),("인쇄내용",self.printing),("기기명",self.device),("포장",self.packaging),("주소",self.address),("배송",self.delivery),("담당자·연락처",self.contact),("출고요청일",self.request_date),("비고",self.note)]: form.addRow(label,widget)
@@ -324,36 +325,12 @@ class PrintOrderWindow(QMainWindow):
         box.addWidget(self.preview_title); box.addWidget(self.preview_text); box.addStretch(1)
         warning=QLabel("안전장치: 작성완료 버튼을 누르기 전 사용자 확인을 한 번 더 받습니다."); warning.setStyleSheet("background:#fff7ed;color:#9a3412;padding:13px;border-radius:8px")
         box.addWidget(warning)
+        account_hint=QLabel("연동 계정 관리에 저장된 인쇄 게시판 계정으로 등록합니다.")
+        account_hint.setStyleSheet("background:#eef7f5;color:#315d59;padding:11px;border-radius:8px")
+        box.addWidget(account_hint)
         self.web_submit_button=QPushButton("기존 게시판에 등록"); self.web_submit_button.setObjectName("primary")
         self.web_submit_button.clicked.connect(self.submit_to_web); box.addWidget(self.web_submit_button)
         layout.addWidget(card,1); self.update_preview(); return page
-
-    def build_status_page(self):
-        page=QWidget(); layout=QVBoxLayout(page); layout.setContentsMargins(28,22,28,22)
-        self.page_header("인쇄 발주 진행 현황", "등록된 발주와 출고요청일, 현재 처리상태를 한 화면에서 확인합니다.",layout)
-        table=QTableWidget(len(SAMPLE_ORDERS),5); table.setHorizontalHeaderLabels(["발주처","품명","수량","출고요청일","상태"])
-        table.horizontalHeader().setStretchLastSection(True)
-        for r,row in enumerate(SAMPLE_ORDERS):
-            for c,value in enumerate(row):
-                item=QTableWidgetItem(value)
-                if c==4: item.setForeground(QColor("#087f78" if value=="등록 완료" else "#c2410c")); item.setFont(QFont("맑은 고딕",10,QFont.Weight.Bold))
-                table.setItem(r,c,item)
-        layout.addWidget(table,1); return page
-
-    def build_settings_page(self):
-        page=QWidget(); layout=QVBoxLayout(page); layout.setContentsMargins(28,22,28,22)
-        self.page_header("거래처·품목 자동완성", "반복 발주 시 주소, 담당자, 포장, 배송 방식을 자동으로 채우는 기준정보입니다.",layout)
-        login_card=QFrame(); login_card.setObjectName("card"); login_form=QFormLayout(login_card)
-        self.web_id=QLineEdit(); self.web_id.setPlaceholderText("사내게시판 아이디")
-        self.web_password=QLineEdit(); self.web_password.setEchoMode(QLineEdit.EchoMode.Password); self.web_password.setPlaceholderText("실행 중에만 사용 · 저장하지 않음")
-        login_form.addRow("게시판 아이디",self.web_id); login_form.addRow("게시판 비밀번호",self.web_password)
-        security=QLabel("HTTP 사이트이므로 계정은 저장하지 않습니다. 프로그램을 다시 열면 재입력해야 합니다."); security.setStyleSheet("color:#c2410c;padding:8px")
-        login_form.addRow("",security); layout.addWidget(login_card)
-        table=QTableWidget(3,5); table.setHorizontalHeaderLabels(["거래처","기본 주소","담당자","기본 배송","최근 사용 품목"]); table.horizontalHeader().setStretchLastSection(True)
-        rows=[["고려기프트","서울 영등포구","김담당","택배","일체형 듀얼"],["한양대학교","서울 성동구","박담당","퀵 선불","Q1500 그레이"],["신규 거래처","미등록","미등록","택배","-"]]
-        for r,row in enumerate(rows):
-            for c,v in enumerate(row): table.setItem(r,c,QTableWidgetItem(v))
-        layout.addWidget(table,1); return page
 
     def analyze_source(self):
         if not self.order_source.path:
@@ -372,9 +349,9 @@ class PrintOrderWindow(QMainWindow):
         self.last_analysis = result
         fields = result.fields
         if result.vendor:
-            self.customer.setCurrentText(result.vendor)
+            self.customer.setText(result.vendor)
         if fields.get("product") or fields.get("item_code"):
-            self.product.setCurrentText(self.database_product_name(fields.get("product", ""), fields.get("item_code", "")))
+            self.product.setText(self.database_product_name(fields.get("product", ""), fields.get("item_code", "")))
         if fields.get("quantity"):
             numeric = re.sub(r"[^0-9]", "", fields["quantity"])
             if numeric:
@@ -453,7 +430,7 @@ class PrintOrderWindow(QMainWindow):
 
     def update_preview(self):
         if not hasattr(self,"preview_text"): return
-        self.preview_title.setText(f"{self.customer.currentText()} · {self.product.currentText()} · {self.quantity.text()}개")
+        self.preview_title.setText(f"{self.customer.text()} · {self.product.text()} · {self.quantity.text()}개")
         self.preview_text.setText(
             f"포장: {self.packaging.currentText()}\n\n"
             f"인쇄내용: {self.printing.text()}    |    기기명: {self.device.text()}\n\n"
@@ -467,8 +444,8 @@ class PrintOrderWindow(QMainWindow):
 
     def order_payload(self) -> dict[str, str]:
         return {
-            "customer": self.customer.currentText().strip(),
-            "product": self.product.currentText().strip(),
+            "customer": self.customer.text().strip(),
+            "product": self.product.text().strip(),
             "quantity": self.quantity.text().strip(),
             "packaging": self.packaging.currentText(),
             "printing": self.printing.text().strip(),
@@ -487,14 +464,14 @@ class PrintOrderWindow(QMainWindow):
         if not self.ai_file.path or not self.preview_file.path:
             QMessageBox.warning(self, "첨부 확인", "AI 파일과 시안 이미지를 모두 연결하세요.")
             return
-        if not self.web_id.text().strip() or not self.web_password.text():
-            QMessageBox.information(self, "로그인 정보", "거래처·품목 설정에서 게시판 아이디와 비밀번호를 입력하세요.")
-            self.menu.setCurrentRow(3)
+        credentials = print_board_credentials()
+        if not credentials["user_id"] or not credentials["password"]:
+            QMessageBox.information(self, "로그인 정보", "메인 대시보드의 연동 계정에서 인쇄 게시판 계정을 먼저 저장하세요.")
             return
         answer = QMessageBox.question(
             self,
             "웹 등록 최종 확인",
-            f"{self.customer.currentText()} / {self.product.currentText()} / {self.quantity.text()}개를\n"
+            f"{self.customer.text()} / {self.product.text()} / {self.quantity.text()}개를\n"
             "오로라모바일 인쇄 진행 리스트에 실제 등록합니다. 계속할까요?",
         )
         if answer != QMessageBox.StandardButton.Yes:
@@ -503,7 +480,6 @@ class PrintOrderWindow(QMainWindow):
             return
         self.web_submit_button.setEnabled(False)
         self.web_submit_button.setText("웹 등록 중...")
-        credentials = {"user_id": self.web_id.text().strip(), "password": self.web_password.text()}
         self.web_worker = PrintOrderWebWorker(credentials, self.order_payload())
         self.web_worker.succeeded.connect(self.on_web_succeeded)
         self.web_worker.failed.connect(self.on_web_failed)
@@ -512,6 +488,27 @@ class PrintOrderWindow(QMainWindow):
 
     def on_web_succeeded(self, url: str):
         QMessageBox.information(self, "웹 등록 완료", f"인쇄 발주가 등록되었습니다.\n{url}")
+        self.reset_order_form()
+
+    def reset_order_form(self):
+        for widget in (
+            self.customer, self.product, self.quantity, self.printing,
+            self.device, self.address, self.contact,
+        ):
+            widget.clear()
+        self.packaging.setCurrentIndex(0)
+        self.delivery.setCurrentIndex(0)
+        self.request_date.setDate(QDate.currentDate().addDays(7))
+        self.note.clear()
+        self.order_source.clear_file()
+        self.ai_file.clear_file()
+        self.preview_file.clear_file()
+        self.last_analysis = None
+        self.analysis_status.setText("발주서를 연결하면 자동 분석합니다.")
+        self.validation.setText("필수항목과 첨부파일을 확인하세요.")
+        self.update_auto_note()
+        self.update_preview()
+        self.menu.setCurrentRow(0)
 
     def on_web_failed(self, message: str):
         QMessageBox.critical(self, "웹 등록 실패", message)
