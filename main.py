@@ -107,7 +107,7 @@ DEFAULT_CONFIG = {
     },
 }
 ADMIN_USER_ID = "c7937d51-1a14-47aa-987e-6254c6c79014"
-APP_VERSION = "1.0.94"
+APP_VERSION = "1.0.95"
 TEST_MODE = os.getenv("REQM_TEST_MODE", "").strip().casefold() in {"1", "true", "yes"}
 UPDATE_BASE_URL = "https://jcslohuraqclhryeqxoc.supabase.co/storage/v1/object/public/reqm-updates"
 UPDATE_MANIFEST_URL = f"{UPDATE_BASE_URL}/manifest.json"
@@ -419,12 +419,30 @@ class UpdateDownloadWorker(QThread):
             self.failed.emit(str(exc))
 
 
+def write_work_audit(client: Client, user_id: str, user_email: str, event_type: str, entity_type: str, entity_key: str = "", details: dict | None = None) -> None:
+    """Best-effort audit logging. Business work must not fail solely because logging is unavailable."""
+    if not client or not user_id:
+        return
+    try:
+        client.table("app_work_audit").insert({
+            "user_id": user_id,
+            "user_email": user_email,
+            "event_type": event_type,
+            "entity_type": entity_type,
+            "entity_key": entity_key,
+            "details": details or {},
+        }).execute()
+    except Exception:
+        pass
+
+
 class ItemManagerDialog(QDialog):
     """관리자 전용 표준 품목 관리 화면."""
-    def __init__(self, client: Client, items: list[dict], barcodes: list[dict], parent=None, user_id: str = ""):
+    def __init__(self, client: Client, items: list[dict], barcodes: list[dict], parent=None, user_id: str = "", user_email: str = ""):
         super().__init__(parent)
         self.client, self.items, self.barcodes = client, items, barcodes
         self.user_id = user_id
+        self.user_email = user_email
         self.setWindowTitle("DB 품목 관리 · 관리자")
         self.resize(1040, 640)
         try:
@@ -460,6 +478,9 @@ class ItemManagerDialog(QDialog):
         add_btn.clicked.connect(self.add_item); edit_btn.clicked.connect(self.edit_item); active_btn.clicked.connect(self.toggle_active)
         delete_btn.clicked.connect(self.delete_items)
         self.refresh()
+
+    def audit(self, event_type: str, entity_key: str, details: dict | None = None) -> None:
+        write_work_audit(self.client, self.user_id, self.user_email, event_type, "item", entity_key, details)
 
     def build_price_tab(self) -> QWidget:
         tab = QWidget(); layout = QVBoxLayout(tab)
@@ -602,6 +623,7 @@ class ItemManagerDialog(QDialog):
             if item_payload:
                 response = self.client.table("items").insert(item_payload).execute()
                 self.items.extend(response.data or item_payload)
+                self.audit("items_imported", "excel", {"item_count": len(item_payload), "source_file": Path(path).name})
             if barcode_payload:
                 response = self.client.table("item_barcodes").insert(barcode_payload).execute()
                 self.barcodes.extend(response.data or barcode_payload)
@@ -647,7 +669,9 @@ class ItemManagerDialog(QDialog):
     def add_item(self) -> None:
         data = self.ask_fields()
         if data:
-            try: self.client.table("items").insert(data).execute(); self.items.append(data); self.refresh()
+            try:
+                self.client.table("items").insert(data).execute(); self.items.append(data); self.refresh()
+                self.audit("item_created", str(data.get("item_code", "")), {"after": data})
             except Exception as exc: QMessageBox.critical(self, "저장 실패", str(exc))
 
     def edit_item(self) -> None:
@@ -656,14 +680,18 @@ class ItemManagerDialog(QDialog):
         data = self.ask_fields(row)
         if data:
             try:
+                before = dict(row)
                 self.client.table("items").update(data).eq("item_code", row["item_code"]).execute(); row.update(data); self.refresh()
+                self.audit("item_updated", str(row.get("item_code", "")), {"before": before, "after": data})
             except Exception as exc: QMessageBox.critical(self, "수정 실패", str(exc))
 
     def toggle_active(self) -> None:
         row = self.selected()
         if not row: return
         value = not row.get("is_active", True)
-        try: self.client.table("items").update({"is_active": value}).eq("item_code", row["item_code"]).execute(); row["is_active"] = value; self.refresh()
+        try:
+            self.client.table("items").update({"is_active": value}).eq("item_code", row["item_code"]).execute(); row["is_active"] = value; self.refresh()
+            self.audit("item_active_changed", str(row.get("item_code", "")), {"is_active": value})
         except Exception as exc: QMessageBox.critical(self, "변경 실패", str(exc))
 
     def delete_items(self) -> None:
@@ -711,9 +739,109 @@ class ItemManagerDialog(QDialog):
             self.items[:] = [row for row in self.items if str(row.get("item_code", "")) not in codes]
             self.barcodes[:] = [row for row in self.barcodes if str(row.get("item_code", "")) not in codes]
             self.refresh()
+            self.audit("items_deleted", ",".join(codes), {"item_count": len(codes), "items": candidates})
             QMessageBox.information(self, "삭제 완료", f"선택한 DB 품목 {len(codes):,}개를 삭제했습니다.")
         except Exception as exc:
             QMessageBox.critical(self, "DB 삭제 실패", f"삭제 도중 오류가 발생했습니다. DB를 다시 불러와 확인하세요.\n\n{exc}")
+
+
+class UserAccessDialog(QDialog):
+    """Administrator-only management for application access and warehouse-transfer permission."""
+
+    def __init__(self, client: Client, parent=None, user_id: str = "", user_email: str = ""):
+        super().__init__(parent)
+        self.client = client
+        self.user_id = user_id
+        self.user_email = user_email
+        self.rows: list[dict] = []
+        self.setWindowTitle("사용자 관리 · 관리자")
+        self.resize(960, 620)
+        layout = QVBoxLayout(self)
+        guide = QLabel("Supabase Authentication에 생성된 이메일을 등록합니다. 창고이동은 역할과 별개로 허용한 계정만 사용할 수 있습니다.")
+        guide.setWordWrap(True)
+        layout.addWidget(guide)
+
+        form = QHBoxLayout()
+        self.email = QLineEdit(); self.email.setPlaceholderText("사용자 이메일")
+        self.role = QComboBox(); self.role.addItem("일반 사용자", "viewer"); self.role.addItem("관리자", "admin")
+        self.transfer = QCheckBox("창고이동 허용")
+        self.active = QCheckBox("사용")
+        self.active.setChecked(True)
+        save = QPushButton("이메일 등록 / 권한 저장"); save.setObjectName("primaryButton")
+        refresh = QPushButton("새로고침")
+        for widget in (self.email, self.role, self.transfer, self.active, save, refresh): form.addWidget(widget)
+        layout.addLayout(form)
+
+        self.table = QTableWidget(0, 5)
+        self.table.setHorizontalHeaderLabels(["이메일", "역할", "창고이동", "사용", "최종 변경"])
+        self.table.horizontalHeader().setStretchLastSection(True)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        layout.addWidget(self.table, 1)
+
+        audit_title = QLabel("최근 출고·품목 작업 이력")
+        audit_title.setStyleSheet("font-weight:800")
+        layout.addWidget(audit_title)
+        self.audit_table = QTableWidget(0, 5)
+        self.audit_table.setHorizontalHeaderLabels(["시각", "사용자", "작업", "대상", "내용"])
+        self.audit_table.horizontalHeader().setStretchLastSection(True)
+        self.audit_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        layout.addWidget(self.audit_table, 1)
+
+        save.clicked.connect(self.save_user)
+        refresh.clicked.connect(self.refresh)
+        self.table.cellClicked.connect(self.select_user)
+        self.refresh()
+
+    def refresh(self) -> None:
+        try:
+            self.rows = self.client.rpc("admin_list_reqm_user_access").execute().data or []
+            self.table.setRowCount(len(self.rows))
+            for index, row in enumerate(self.rows):
+                values = [
+                    row.get("email", ""), "관리자" if row.get("role") == "admin" else "일반 사용자",
+                    "허용" if row.get("can_ecount_transfer") else "미허용",
+                    "사용" if row.get("is_active", True) else "중지",
+                    str(row.get("updated_at", "")).replace("T", " ")[:19],
+                ]
+                for column, value in enumerate(values): self.table.setItem(index, column, QTableWidgetItem(str(value)))
+            audit_rows = self.client.rpc("admin_list_reqm_work_audit", {"p_limit": 100}).execute().data or []
+            self.audit_table.setRowCount(len(audit_rows))
+            for index, row in enumerate(audit_rows):
+                details = row.get("details") or {}
+                values = [str(row.get("created_at", "")).replace("T", " ")[:19], row.get("user_email", ""), row.get("event_type", ""), f"{row.get('entity_type', '')}: {row.get('entity_key', '')}", json.dumps(details, ensure_ascii=False)[:180]]
+                for column, value in enumerate(values): self.audit_table.setItem(index, column, QTableWidgetItem(str(value)))
+        except Exception as exc:
+            QMessageBox.warning(self, "사용자 관리 DB 준비 필요", "사용자 권한 SQL을 먼저 적용하세요.\n\n" + str(exc))
+
+    def select_user(self, row_index: int, _column: int) -> None:
+        if not 0 <= row_index < len(self.rows): return
+        row = self.rows[row_index]
+        self.email.setText(str(row.get("email", "")))
+        self.role.setCurrentIndex(0 if row.get("role") != "admin" else 1)
+        self.transfer.setChecked(bool(row.get("can_ecount_transfer")))
+        self.active.setChecked(bool(row.get("is_active", True)))
+
+    def save_user(self) -> None:
+        email = self.email.text().strip()
+        if "@" not in email:
+            QMessageBox.warning(self, "이메일 확인", "등록할 사용자의 이메일을 입력하세요.")
+            return
+        try:
+            self.client.rpc("admin_set_reqm_user_access", {
+                "p_email": email,
+                "p_role": self.role.currentData(),
+                "p_can_ecount_transfer": self.transfer.isChecked(),
+                "p_is_active": self.active.isChecked(),
+            }).execute()
+            write_work_audit(
+                self.client, self.user_id, self.user_email, "user_access_changed", "user_access", email,
+                {"role": self.role.currentData(), "can_ecount_transfer": self.transfer.isChecked(), "is_active": self.active.isChecked()},
+            )
+            self.refresh()
+            QMessageBox.information(self, "사용자 권한 저장", f"{email} 계정의 권한을 저장했습니다.")
+        except Exception as exc:
+            QMessageBox.critical(self, "사용자 권한 저장 실패", str(exc))
 
 
 class DutyLocationDialog(QDialog):
@@ -1344,6 +1472,26 @@ class LoginWorker(QThread):
             auth_result = client.auth.sign_in_with_password(
                 {"email": self.email, "password": self.password}
             )
+            auth_user_id = str(auth_result.user.id)
+            auth_email = str(auth_result.user.email or self.email).strip()
+            try:
+                client.rpc("ensure_current_reqm_profile").execute()
+                role_response = client.table("app_user_roles").select(
+                    "role,can_ecount_transfer,is_active"
+                ).eq("user_id", auth_user_id).execute()
+                role_row = next(iter(role_response.data or []), None)
+                if auth_user_id == ADMIN_USER_ID:
+                    role_row = role_row or {"role": "admin", "can_ecount_transfer": True, "is_active": True}
+                if not role_row or not bool(role_row.get("is_active", True)):
+                    raise PermissionError("등록되었거나 활성화된 사용자 계정이 아닙니다. 관리자에게 사용자 권한을 요청하세요.")
+                app_role = str(role_row.get("role") or "viewer")
+                can_ecount_transfer = bool(role_row.get("can_ecount_transfer", False))
+            except PermissionError:
+                raise
+            except Exception:
+                # 권한 마이그레이션 적용 전 기존 관리자 로그인만 끊기지 않도록 하는 호환 경로입니다.
+                app_role = "admin" if auth_user_id == ADMIN_USER_ID else "viewer"
+                can_ecount_transfer = app_role == "admin"
             items = fetch_all_rows(client, "items")
             products = fetch_all_rows(client, "registered_products")
             components = fetch_all_rows(client, "product_components")
@@ -1359,16 +1507,12 @@ class LoginWorker(QThread):
             except Exception:
                 calendar_events = []
                 calendar_shared_available = False
-            try:
-                role_rows = fetch_all_rows(client, "app_user_roles")
-                app_role = next((r.get("role") for r in role_rows if str(r.get("user_id")) == str(auth_result.user.id)), "viewer")
-            except Exception:
-                app_role = "admin" if str(auth_result.user.id) == ADMIN_USER_ID else "viewer"
             self.succeeded.emit(
                 len(items),
                 {"items": items, "products": products, "components": components, "barcodes": barcodes,
                  "duty_locations": duty_locations, "aliases": aliases, "client": client,
-                 "auth_user_id": str(auth_result.user.id), "app_role": app_role,
+                 "auth_user_id": auth_user_id, "auth_email": auth_email, "app_role": app_role,
+                 "can_ecount_transfer": can_ecount_transfer,
                  "calendar_events": calendar_events,
                  "calendar_shared_available": calendar_shared_available},
             )
@@ -2356,6 +2500,7 @@ class MainWindow(QMainWindow):
         self.duty_locations = load_locations()
         self.selected_location_name = ""
         self.is_admin = False
+        self.can_ecount_transfer = False
         self.inventory_rows: list[dict] = []
         self.inventory_last_checked = ""
         self.inventory_error = ""
@@ -2720,6 +2865,11 @@ class MainWindow(QMainWindow):
         self.dashboard_db_button.setFixedSize(92, 38)
         self.dashboard_db_button.setEnabled(False)
         self.dashboard_db_button.clicked.connect(self.open_db_manager)
+        self.dashboard_users_button = QPushButton("사용자 관리")
+        self.dashboard_users_button.setObjectName("adminButton")
+        self.dashboard_users_button.setFixedSize(100, 38)
+        self.dashboard_users_button.setEnabled(False)
+        self.dashboard_users_button.clicked.connect(self.open_user_management)
         self.dashboard_wekeep_report_button = QPushButton("재고 알림")
         self.dashboard_wekeep_report_button.setObjectName("adminButton")
         self.dashboard_wekeep_report_button.setFixedSize(92, 38)
@@ -2744,6 +2894,7 @@ class MainWindow(QMainWindow):
         header.addWidget(self.dashboard_widget_button, 0, Qt.AlignmentFlag.AlignTop)
         header.addWidget(self.dashboard_accounts_button, 0, Qt.AlignmentFlag.AlignTop)
         header.addWidget(self.dashboard_db_button, 0, Qt.AlignmentFlag.AlignTop)
+        header.addWidget(self.dashboard_users_button, 0, Qt.AlignmentFlag.AlignTop)
         header.addWidget(self.dashboard_wekeep_report_button, 0, Qt.AlignmentFlag.AlignTop)
         header.addWidget(self.dashboard_update_button, 0, Qt.AlignmentFlag.AlignTop)
         header.addWidget(self.dashboard_version, 0, Qt.AlignmentFlag.AlignTop)
@@ -3419,11 +3570,13 @@ class MainWindow(QMainWindow):
         self.duty_locations, restored_count = sync_remote_locations(catalog.get("duty_locations", []))
         self.refresh_location_combo()
         self.is_admin = catalog.get("app_role") == "admin"
+        self.can_ecount_transfer = bool(catalog.get("can_ecount_transfer", False))
         migrated_safety_count = self.migrate_local_safety_stocks()
         migrated_calendar_count = self.initialize_shared_calendar_events()
         self.db_button.setEnabled(self.is_admin)
         self.dashboard_db_button.setEnabled(self.is_admin)
-        self.ecount_button.setEnabled(self.is_admin and bool(self.current_orders))
+        self.dashboard_users_button.setEnabled(self.is_admin)
+        self.ecount_button.setEnabled(self.can_ecount_transfer and bool(self.current_orders))
         self.matcher = ProductMatcher(
             catalog["items"], catalog["products"], catalog["components"],
             catalog["aliases"], catalog["barcodes"],
@@ -3440,7 +3593,7 @@ class MainWindow(QMainWindow):
         self.status.setText(
             f"DB 준비 완료: 품목 {count:,}개 · 등록상품 {len(catalog['products']):,}개 · "
             f"구성품 {len(catalog['components']):,}개 · 주소 복구 {restored_count:,}건 · "
-            f"권한: {'관리자' if self.is_admin else '일반 사용자(조회 전용)'}"
+            f"권한: {'관리자' if self.is_admin else '일반 사용자'} · 창고이동: {'허용' if self.can_ecount_transfer else '미허용'}"
             f"{' · 안전재고 공용 이전 ' + str(migrated_safety_count) + '건' if migrated_safety_count else ''}"
             f"{' · 일정 공용 이전 ' + str(migrated_calendar_count) + '건' if migrated_calendar_count else ''}"
         )
@@ -3604,10 +3757,12 @@ class MainWindow(QMainWindow):
         self.matcher = None
         self.catalog = {}
         self.is_admin = False
+        self.can_ecount_transfer = False
         self.current_orders = []
         self.table.setRowCount(0)
         self.db_button.setEnabled(False)
         self.dashboard_db_button.setEnabled(False)
+        self.dashboard_users_button.setEnabled(False)
         self.auto_button.setEnabled(False)
         self.b2c_button.setEnabled(False)
         self.b2b_button.setEnabled(False)
@@ -3744,7 +3899,16 @@ class MainWindow(QMainWindow):
             return
         ItemManagerDialog(
             self.supabase_client, self.catalog["items"], self.catalog["barcodes"], self,
-            user_id=str(self.catalog.get("auth_user_id", "")),
+            user_id=str(self.catalog.get("auth_user_id", "")), user_email=str(self.catalog.get("auth_email", "")),
+        ).exec()
+
+    def open_user_management(self) -> None:
+        if not self.is_admin:
+            QMessageBox.warning(self, "권한 없음", "사용자 관리는 관리자만 사용할 수 있습니다.")
+            return
+        UserAccessDialog(
+            self.supabase_client, self,
+            user_id=str(self.catalog.get("auth_user_id", "")), user_email=str(self.catalog.get("auth_email", "")),
         ).exec()
 
     def open_wekeep_report(self) -> None:
@@ -3960,7 +4124,7 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "파일 분석 실패", str(exc))
             return
         self.current_orders = orders
-        self.ecount_button.setEnabled(self.is_admin and bool(self.current_orders))
+        self.ecount_button.setEnabled(self.can_ecount_transfer and bool(self.current_orders))
         self.populate_table(self.current_orders)
         counts = {key: sum(1 for row in orders if row.get("status") == key) for key in ("exact", "similar", "ambiguous", "missing", "barcode_error")}
         self.status.setText(
@@ -4168,12 +4332,21 @@ class MainWindow(QMainWindow):
                 self.supabase_client.table("shipment_history").upsert(history, on_conflict="duplicate_key").execute()
         except Exception as exc:
             QMessageBox.warning(self, "이력 저장 안내", f"Excel은 저장됐지만 중복 방지 이력을 Supabase에 기록하지 못했습니다.\n관리자용 SQL 적용 여부를 확인하세요.\n{exc}")
+        write_work_audit(
+            self.supabase_client,
+            str(self.catalog.get("auth_user_id", "")),
+            str(self.catalog.get("auth_email", "")),
+            "shipping_excel_exported",
+            "shipment",
+            Path(file_path).name,
+            {"source_type": "duty_free" if self.current_mode == "duty_free" else "b2c", "order_count": len(self.current_orders), "format_name": str(profile.get("name", ""))},
+        )
         self.record_recent_work(file_path, str(profile.get("name", "출고 양식")))
         QMessageBox.information(self, "저장 완료", f"위킵 출고 파일을 저장했습니다.\n{file_path}")
 
     def open_ecount_transfer(self) -> None:
-        if not self.is_admin:
-            QMessageBox.warning(self, "권한 없음", "이카운트 창고이동은 관리자만 실행할 수 있습니다.")
+        if not self.can_ecount_transfer:
+            QMessageBox.warning(self, "권한 없음", "이카운트 창고이동은 사용자 관리에서 허용된 계정만 실행할 수 있습니다.")
             return
         if not self.current_orders:
             QMessageBox.warning(self, "주문 없음", "먼저 출고 주문 파일을 분석하세요.")
