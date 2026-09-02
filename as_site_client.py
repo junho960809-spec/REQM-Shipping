@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import json
 import os
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from html.parser import HTMLParser
 from http.cookiejar import CookieJar
 from pathlib import Path
-from urllib.parse import urlencode, urljoin
+from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
 from urllib.request import HTTPCookieProcessor, Request, build_opener
 
 from ecount_credential_store import protect_secret, unprotect_secret
@@ -17,6 +18,14 @@ BASE_URL = "https://reqm.co.kr"
 LOGIN_URL = f"{BASE_URL}/admin/index.php"
 LIST_URL = f"{BASE_URL}/admin/content/passivedata1.list.php"
 CREDENTIAL_PATH = Path(os.getenv("LOCALAPPDATA", str(Path.home()))) / "REQM" / "as_site_credentials.json"
+
+
+def cache_bust_url(url: str) -> str:
+    """Return a URL that intermediaries cannot reuse for a previous AS response."""
+    parts = urlsplit(url)
+    query = dict(parse_qsl(parts.query, keep_blank_values=True))
+    query["_reqm_ts"] = uuid.uuid4().hex
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), parts.fragment))
 
 
 @dataclass
@@ -102,7 +111,12 @@ class AsSiteClient:
 
     def _open(self, url: str, data: dict | None = None) -> str:
         payload = urlencode(data).encode("utf-8") if data is not None else None
-        request = Request(url, data=payload, headers={"User-Agent": "REQM-AS-Daily/1.0"})
+        target = url if data is not None else cache_bust_url(url)
+        request = Request(target, data=payload, headers={
+            "User-Agent": "REQM-AS-Daily/1.0",
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            "Pragma": "no-cache",
+        })
         with self.opener.open(request, timeout=25) as response:
             raw = response.read()
             charset = response.headers.get_content_charset() or "utf-8"

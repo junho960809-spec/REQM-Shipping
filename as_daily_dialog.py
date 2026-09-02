@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from datetime import date
 from pathlib import Path
 
-from PySide6.QtCore import QDate, QThread, Signal
+from PySide6.QtCore import QDate, QEvent, QThread, QTimer, Signal
 from PySide6.QtWidgets import (QComboBox, QDateEdit, QDialog, QFileDialog, QFormLayout, QHBoxLayout, QHeaderView,
                                QLabel, QLineEdit, QMessageBox, QPushButton, QTableWidget, QTableWidgetItem, QVBoxLayout)
 
@@ -79,6 +80,9 @@ class AsDailyDialog(QDialog):
         self.resize(1180, 720)
         self.records: list[dict] = []
         self.worker = None
+        self.last_fetch_at = 0.0
+        self.fetch_started_at = 0.0
+        self.auto_refresh_pending = False
         self.settings = load_settings()
         if not self.settings.get("template_path"):
             candidates = [
@@ -152,14 +156,19 @@ class AsDailyDialog(QDialog):
             save_settings(self.settings)
             self.summary.setText(f"엑셀 양식 · {Path(path).name}")
 
-    def fetch(self) -> None:
+    def fetch(self, automatic: bool = False) -> None:
+        if self.worker is not None and self.worker.isRunning():
+            return
         user_id, password = load_as_credentials()
         if not user_id or not password:
+            if automatic:
+                return
             if AsCredentialDialog(self).exec() != QDialog.DialogCode.Accepted:
                 return
             user_id, password = load_as_credentials()
         self.fetch_button.setEnabled(False)
-        self.summary.setText("AS 사이트 조회 중…")
+        self.summary.setText("AS 사이트 자동 최신화 중…" if automatic else "AS 사이트 조회 중…")
+        self.fetch_started_at = time.monotonic()
         self.worker = FetchWorker(user_id, password, self.start_date.date().toString("yyyy-MM-dd"), self.end_date.date().toString("yyyy-MM-dd"), str(self.receipt_type.currentData()), str(self.status.currentData()))
         self.worker.loaded.connect(self.show_records)
         self.worker.failed.connect(self.show_error)
@@ -167,6 +176,8 @@ class AsDailyDialog(QDialog):
 
     def show_records(self, records: list) -> None:
         self.records = records
+        self.last_fetch_at = time.monotonic()
+        self.auto_refresh_pending = False
         self.table.setUpdatesEnabled(False)
         self.table.setRowCount(len(records))
         try:
@@ -179,14 +190,28 @@ class AsDailyDialog(QDialog):
                     self.table.setItem(row, column, QTableWidgetItem(str(value)))
         finally:
             self.table.setUpdatesEnabled(True)
-        self.summary.setText(f"조회 {len(records):,}건 · 교환 {sum(r.get('type') == '교환' for r in records):,}건 · 반품 {sum(r.get('type') == '반품' for r in records):,}건")
+        self.summary.setText(f"최신 조회 {len(records):,}건 · 교환 {sum(r.get('type') == '교환' for r in records):,}건 · 반품 {sum(r.get('type') == '반품' for r in records):,}건 · 프로그램 복귀 시 자동 갱신")
         self.fetch_button.setEnabled(True)
         self.excel_button.setEnabled(bool(records))
 
     def show_error(self, message: str) -> None:
+        self.auto_refresh_pending = False
         self.fetch_button.setEnabled(True)
         self.summary.setText("조회 실패")
         QMessageBox.critical(self, "AS 사이트 조회 실패", message)
+
+    def changeEvent(self, event) -> None:
+        super().changeEvent(event)
+        if event.type() != QEvent.Type.ActivationChange or not self.isActiveWindow() or not self.records:
+            return
+        # Excel·브라우저 작업 후 프로그램으로 돌아왔을 때만 한 번 갱신한다.
+        # 조회 직후 발생하는 포커스 이벤트와 연속 활성화 이벤트는 무시한다.
+        if time.monotonic() - max(self.last_fetch_at, self.fetch_started_at) < 5:
+            return
+        if self.auto_refresh_pending or (self.worker is not None and self.worker.isRunning()):
+            return
+        self.auto_refresh_pending = True
+        QTimer.singleShot(250, lambda: self.fetch(automatic=True))
 
     def open_excel(self) -> None:
         default_name = f"일일 처리 현황_{self.start_date.date().toString('yyyyMMdd')}.xlsx"

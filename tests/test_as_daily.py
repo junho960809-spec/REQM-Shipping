@@ -7,10 +7,19 @@ import unittest
 from openpyxl import Workbook, load_workbook
 
 from as_daily_export import clean_memo, export_as_daily
-from as_site_client import parse_html
+from as_site_client import cache_bust_url, parse_html
 
 
 class AsDailyTests(unittest.TestCase):
+    def test_cache_bust_url_preserves_filters_and_changes_request(self) -> None:
+        source = "https://reqm.co.kr/list.php?start_date=2026-09-01&status_no=5"
+        first = cache_bust_url(source)
+        second = cache_bust_url(source)
+        self.assertIn("start_date=2026-09-01", first)
+        self.assertIn("status_no=5", first)
+        self.assertIn("_reqm_ts=", first)
+        self.assertNotEqual(first, second)
+
     def test_memo_removes_duplicate_reason_and_slashes(self) -> None:
         self.assertEqual(clean_memo("반응 없음", "반응없음 / 본사 출고 /"), "본사 출고")
         self.assertEqual(
