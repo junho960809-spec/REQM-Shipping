@@ -12,6 +12,7 @@ a = Analysis(
         ("assets/direct_conversion_reference.xlsx", "assets"),
         ("assets/weekly_inventory_template.xlsx", "assets"),
         ("assets/windows_ocr.ps1", "assets"),
+        ("assets/wekeep_sku_mappings.json", "assets"),
     ],
     hiddenimports=pdf_hidden + miner_hidden + playwright_hidden, hookspath=[], hooksconfig={}, runtime_hooks=["tools/pyside6_runtime.py"],
     excludes=[], noarchive=False, optimize=1,

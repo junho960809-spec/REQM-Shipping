@@ -1,0 +1,1390 @@
+{
+  "version": 1,
+  "source": "WeKeep ProductList 2026-09-07",
+  "mappings": [
+    {
+      "item_code": "QA-Luggagescale_WH",
+      "wekeep_manage_code": "QA-Luggagescale_WH",
+      "product_name": "리큐엠 액세서리-캐리어저울_화이트",
+      "sku_no": "87446347716348",
+      "customer_barcode": "8809477248722",
+      "is_active": true
+    },
+    {
+      "item_code": "CASE-QP2000-Hand-GlO",
+      "wekeep_manage_code": "CASE-QP2000-Hand-GlO",
+      "product_name": "QP2000 실리콘 케이스_핸디형_글로우 오렌지",
+      "sku_no": "76462320816391",
+      "customer_barcode": "8809477249439",
+      "is_active": true
+    },
+    {
+      "item_code": "CASE-QP1000A-Lavende",
+      "wekeep_manage_code": "CASE-QP1000A-Lavende",
+      "product_name": "QP1000 실리콘 케이스_라벤더",
+      "sku_no": "35198738736361",
+      "customer_barcode": "8809477248050",
+      "is_active": true
+    },
+    {
+      "item_code": "QPD-330_PK",
+      "wekeep_manage_code": "QPD-330_PK",
+      "product_name": "리큐엠 가정용 충전기-QPD-330_핑크",
+      "sku_no": "88306942476340",
+      "customer_barcode": "8809477249002",
+      "is_active": true
+    },
+    {
+      "item_code": "QCB-CC60S_NeonGreen",
+      "wekeep_manage_code": "QCB-CC60S_NeonGreen",
+      "product_name": "리큐엠 케이블-CC60S_네온그린",
+      "sku_no": "47827425706363",
+      "customer_barcode": "8809477248920",
+      "is_active": true
+    },
+    {
+      "item_code": "QP1000C1-NeonGreen",
+      "wekeep_manage_code": "QP1000C1-NeonGreen",
+      "product_name": "[리큐엠] 보조배터리 QP1000C1 네온그린",
+      "sku_no": "22506123726380",
+      "customer_barcode": "8809477248821",
+      "is_active": true
+    },
+    {
+      "item_code": "QTC-45W_WH",
+      "wekeep_manage_code": "QTC-45W_WH",
+      "product_name": "리큐엠 45W 여행용 충전기_화이트",
+      "sku_no": "46047082276362",
+      "customer_barcode": "8809477249552",
+      "is_active": true
+    },
+    {
+      "item_code": "QMA-Bubblepad_Or",
+      "wekeep_manage_code": "QMA-Bubblepad_Or",
+      "product_name": "리큐엠 맥세이프 액세서리-버블패드_소프트 오렌지",
+      "sku_no": "71813748116391",
+      "customer_barcode": "8809477249750",
+      "is_active": true
+    },
+    {
+      "item_code": "QA-Minihardpouch_GR",
+      "wekeep_manage_code": "QA-Minihardpouch_GR",
+      "product_name": "리큐엠 액세서리-미니하드파우치_그린",
+      "sku_no": "41820474666345",
+      "customer_barcode": "8809477249484",
+      "is_active": true
+    },
+    {
+      "item_code": "CASE-QP1000C-Hand-Re",
+      "wekeep_manage_code": "CASE-QP1000C-Hand-Re",
+      "product_name": "QP1000 실리콘 케이스_핸디형_레드",
+      "sku_no": "54476196066367",
+      "customer_barcode": "8809477248425",
+      "is_active": true
+    },
+    {
+      "item_code": "QCB-CC30S_CobaltBlue",
+      "wekeep_manage_code": "QCB-CC30S_CobaltBlue",
+      "product_name": "리큐엠 케이블-CC30S_코발트블루",
+      "sku_no": "05427283286361",
+      "customer_barcode": "8809477248869",
+      "is_active": true
+    },
+    {
+      "item_code": "QA-KeyRing_M",
+      "wekeep_manage_code": "QA-KeyRing_M",
+      "product_name": "리큐엠 액세서리-키링_M",
+      "sku_no": "12482715426316",
+      "customer_barcode": "8809477249361",
+      "is_active": true
+    },
+    {
+      "item_code": "QWC-QS1500-BL",
+      "wekeep_manage_code": "QWC-QS1500-BL",
+      "product_name": "[리큐엠] 무선충전기 QWC-QS1500 블루",
+      "sku_no": "73943175746328",
+      "customer_barcode": "8809477247985",
+      "is_active": true
+    },
+    {
+      "item_code": "CASE-QP2000-Cl-kyobo",
+      "wekeep_manage_code": "CASE-QP2000-Cl-kyobo",
+      "product_name": "QP2000 실리콘 케이스_투명_교보용",
+      "sku_no": "01227621876377",
+      "customer_barcode": "8809477249538",
+      "is_active": true
+    },
+    {
+      "item_code": "CASE-QP2000-Hand-GlY",
+      "wekeep_manage_code": "CASE-QP2000-Hand-GlY",
+      "product_name": "QP2000 실리콘 케이스_핸디형_글로우 옐로우",
+      "sku_no": "07197487156396",
+      "customer_barcode": "8809477249446",
+      "is_active": true
+    },
+    {
+      "item_code": "QMC-ACONE-MS",
+      "wekeep_manage_code": "QMC-ACONE-MS",
+      "product_name": "리큐엠 맥세이프 무선충전기-ACONE_미드나잇 섀도우",
+      "sku_no": "29837450691651",
+      "customer_barcode": "8809477249798",
+      "is_active": true
+    },
+    {
+      "item_code": "CASE-QP1000-Hand-GlG",
+      "wekeep_manage_code": "CASE-QP1000-Hand-GlG",
+      "product_name": "QP1000 실리콘 케이스_핸디형_글로우 그린",
+      "sku_no": "23704393536379",
+      "customer_barcode": "8809477249385",
+      "is_active": true
+    },
+    {
+      "item_code": "[RQM]-QMP5-WH",
+      "wekeep_manage_code": "[RQM]-QMP5-WH",
+      "product_name": "[리큐엠] 맥세이프 무선충전 보조배터리 QMP5 화이트",
+      "sku_no": "67659364416381",
+      "customer_barcode": "8809477248302",
+      "is_active": true
+    },
+    {
+      "item_code": "QS-QST01M_BK",
+      "wekeep_manage_code": "QS-QST01M_BK",
+      "product_name": "리큐엠 셀카봉-QST01M미니_블랙",
+      "sku_no": "42822032936342",
+      "customer_barcode": "8809477247206",
+      "is_active": true
+    },
+    {
+      "item_code": "QCB-CC60S_Butter",
+      "wekeep_manage_code": "QCB-CC60S_Butter",
+      "product_name": "리큐엠 케이블-CC60S_버터",
+      "sku_no": "82318377196360",
+      "customer_barcode": "8809477248890",
+      "is_active": true
+    },
+    {
+      "item_code": "Safetymanual",
+      "wekeep_manage_code": "Safetymanual",
+      "product_name": "안전백서매뉴얼",
+      "sku_no": "25698548946336",
+      "customer_barcode": "8809477249743",
+      "is_active": true
+    },
+    {
+      "item_code": "QA-Minihardpouch_BL",
+      "wekeep_manage_code": "QA-Minihardpouch_BL",
+      "product_name": "리큐엠 액세서리-미니하드파우치_블루",
+      "sku_no": "33417772896340",
+      "customer_barcode": "8809477249491",
+      "is_active": true
+    },
+    {
+      "item_code": "CASE-QP2000C-Yellow",
+      "wekeep_manage_code": "CASE-QP2000C-Yellow",
+      "product_name": "QP2000 실리콘 케이스_옐로우",
+      "sku_no": "10948227486370",
+      "customer_barcode": "8809477248531",
+      "is_active": true
+    },
+    {
+      "item_code": "CASE-QP2000C-PINK",
+      "wekeep_manage_code": "CASE-QP2000C-PINK",
+      "product_name": "QP2000 실리콘 케이스_핑크",
+      "sku_no": "68254772106371",
+      "customer_barcode": "8809477248661",
+      "is_active": true
+    },
+    {
+      "item_code": "SP-일체형8핀",
+      "wekeep_manage_code": "SP-일체형8핀",
+      "product_name": "[SOMOON]5,000mAh 일체형 보조배터리_A8",
+      "sku_no": "76694602706348",
+      "customer_barcode": "8809477247886",
+      "is_active": true
+    },
+    {
+      "item_code": "POUCH-Tarpaulin-BLUE",
+      "wekeep_manage_code": "POUCH-Tarpaulin-BLUE",
+      "product_name": "타포린 파우치_블루",
+      "sku_no": "13174060076313",
+      "customer_barcode": "8809477248111",
+      "is_active": true
+    },
+    {
+      "item_code": "QA-Rug_GOOUT_RD",
+      "wekeep_manage_code": "QA-Rug_GOOUT_RD",
+      "product_name": "리큐엠 액세서리-Rug_GOOUT_레드",
+      "sku_no": "15317216046311",
+      "customer_barcode": "8809477249187",
+      "is_active": true
+    },
+    {
+      "item_code": "QA-Jibbitz_GOOUT",
+      "wekeep_manage_code": "QA-Jibbitz_GOOUT",
+      "product_name": "리큐엠 액세서리-지비츠_GO OUT",
+      "sku_no": "32447637786314",
+      "customer_barcode": "8809477248968",
+      "is_active": true
+    },
+    {
+      "item_code": "QMA-Cardwallet_OR",
+      "wekeep_manage_code": "QMA-Cardwallet_OR",
+      "product_name": "리큐엠 맥세이프 액세서리-카드지갑_오렌지",
+      "sku_no": "36123769246396",
+      "customer_barcode": "8809477248760",
+      "is_active": true
+    },
+    {
+      "item_code": "[RQM]-QP1000C1-BL",
+      "wekeep_manage_code": "[RQM]-QP1000C1-BL",
+      "product_name": "[리큐엠] 보조배터리 QP1000C1 블루",
+      "sku_no": "74630918826380",
+      "customer_barcode": "8809477248197",
+      "is_active": true
+    },
+    {
+      "item_code": "VAUX-QCL100-레드",
+      "wekeep_manage_code": "VAUX-QCL100-레드",
+      "product_name": "VAUX_캠핑용 랜턴 QCL100_레드",
+      "sku_no": "74749238796342",
+      "customer_barcode": "8809477247435",
+      "is_active": true
+    },
+    {
+      "item_code": "POUCH-Tarpaulin-YL",
+      "wekeep_manage_code": "POUCH-Tarpaulin-YL",
+      "product_name": "타포린 파우치_옐로우",
+      "sku_no": "29308955786369",
+      "customer_barcode": "8809477248142",
+      "is_active": true
+    },
+    {
+      "item_code": "QPD-330_WH",
+      "wekeep_manage_code": "QPD-330_WH",
+      "product_name": "리큐엠 가정용 충전기-QPD-330_화이트",
+      "sku_no": "69679182596343",
+      "customer_barcode": "8809477248975",
+      "is_active": true
+    },
+    {
+      "item_code": "CASE-QP1000C-Hand-Sa",
+      "wekeep_manage_code": "CASE-QP1000C-Hand-Sa",
+      "product_name": "QP1000 실리콘 케이스_핸디형_샌드",
+      "sku_no": "98502779366363",
+      "customer_barcode": "8809477248432",
+      "is_active": true
+    },
+    {
+      "item_code": "[RQM]-QP2000C1-WH",
+      "wekeep_manage_code": "[RQM]-QP2000C1-WH",
+      "product_name": "[리큐엠] QP2000C 화이트",
+      "sku_no": "84384674946343",
+      "customer_barcode": "8809477248203",
+      "is_active": true
+    },
+    {
+      "item_code": "CASE-QP1000C-Hand-Bl",
+      "wekeep_manage_code": "CASE-QP1000C-Hand-Bl",
+      "product_name": "QP1000 실리콘 케이스_핸디형_블루",
+      "sku_no": "47683654146367",
+      "customer_barcode": "8809477248357",
+      "is_active": true
+    },
+    {
+      "item_code": "QMC-QM4100_GY",
+      "wekeep_manage_code": "QMC-QM4100_GY",
+      "product_name": "리큐엠 맥세이프 충전기-QM4100_그레이",
+      "sku_no": "93695837436323",
+      "customer_barcode": "8809477248333",
+      "is_active": true
+    },
+    {
+      "item_code": "CASE-QP2000C-Blue",
+      "wekeep_manage_code": "CASE-QP2000C-Blue",
+      "product_name": "QP2000 실리콘 케이스_블루",
+      "sku_no": "22742227606371",
+      "customer_barcode": "8809477248456",
+      "is_active": true
+    },
+    {
+      "item_code": "QWC-L5100-S",
+      "wekeep_manage_code": "QWC-L5100-S",
+      "product_name": "[리큐엠] 무선충전기 L5100 삼성(안드로이드)",
+      "sku_no": "89283564836384",
+      "customer_barcode": "8809477247749",
+      "is_active": true
+    },
+    {
+      "item_code": "GOOUTstciker_CAMPING",
+      "wekeep_manage_code": "GOOUTstciker_CAMPING",
+      "product_name": "GOOUT스티커_CAMPING",
+      "sku_no": "84768461736391",
+      "customer_barcode": "8809477249606",
+      "is_active": true
+    },
+    {
+      "item_code": "액세서리-아크릴 키링_장식볼-블루",
+      "wekeep_manage_code": "액세서리-아크릴 키링_장식볼-블루",
+      "product_name": "액세서리-아크릴 키링_장식볼-블루",
+      "sku_no": "63378943206332",
+      "customer_barcode": "8809477249682",
+      "is_active": true
+    },
+    {
+      "item_code": "CASE-QP2000C-Red",
+      "wekeep_manage_code": "CASE-QP2000C-Red",
+      "product_name": "QP2000 실리콘 케이스_레드",
+      "sku_no": "06808537396371",
+      "customer_barcode": "8809477248517",
+      "is_active": true
+    },
+    {
+      "item_code": "QP2000C_TomatoRed",
+      "wekeep_manage_code": "QP2000C_TomatoRed",
+      "product_name": "QP2000C_토마토레드",
+      "sku_no": "67449526476344",
+      "customer_barcode": "8809477249293",
+      "is_active": true
+    },
+    {
+      "item_code": "QWC-L5100-A",
+      "wekeep_manage_code": "QWC-L5100-A",
+      "product_name": "[리큐엠] 무선충전기 L5100 애플",
+      "sku_no": "48042733786386",
+      "customer_barcode": "8809477247732",
+      "is_active": true
+    },
+    {
+      "item_code": "QA-Custumpouch_BE",
+      "wekeep_manage_code": "QA-Custumpouch_BE",
+      "product_name": "리큐엠 액세서리-커스텀파우치_베이지",
+      "sku_no": "82439728316340",
+      "customer_barcode": "8809477248623",
+      "is_active": true
+    },
+    {
+      "item_code": "QMA-Bubblepad_La",
+      "wekeep_manage_code": "QMA-Bubblepad_La",
+      "product_name": "리큐엠 맥세이프 액세서리-버블패드_소프트 라벤더",
+      "sku_no": "76274481626396",
+      "customer_barcode": "8809477249231",
+      "is_active": true
+    },
+    {
+      "item_code": "CASE-QP2000-Hand-GlB",
+      "wekeep_manage_code": "CASE-QP2000-Hand-GlB",
+      "product_name": "QP2000 실리콘 케이스_핸디형_글로우 블루",
+      "sku_no": "73740242856393",
+      "customer_barcode": "8809477249415",
+      "is_active": true
+    },
+    {
+      "item_code": "CASE-QP1000A-Ebony",
+      "wekeep_manage_code": "CASE-QP1000A-Ebony",
+      "product_name": "QP1000 실리콘 케이스_에보니",
+      "sku_no": "75788232666362",
+      "customer_barcode": "8809477248043",
+      "is_active": true
+    },
+    {
+      "item_code": "QCB-CC60S_Lavender",
+      "wekeep_manage_code": "QCB-CC60S_Lavender",
+      "product_name": "리큐엠 케이블-CC60S_라벤더",
+      "sku_no": "16255843266360",
+      "customer_barcode": "8809477248937",
+      "is_active": true
+    },
+    {
+      "item_code": "QA-Luggagescale_BK",
+      "wekeep_manage_code": "QA-Luggagescale_BK",
+      "product_name": "리큐엠 액세서리-캐리어저울_블랙",
+      "sku_no": "35347977286347",
+      "customer_barcode": "8809477248739",
+      "is_active": true
+    },
+    {
+      "item_code": "CASE-QP2000C-Sand",
+      "wekeep_manage_code": "CASE-QP2000C-Sand",
+      "product_name": "QP2000 실리콘 케이스_샌드",
+      "sku_no": "36308651886372",
+      "customer_barcode": "8809477248524",
+      "is_active": true
+    },
+    {
+      "item_code": "VAUX-QCL100-샌드",
+      "wekeep_manage_code": "VAUX-QCL100-샌드",
+      "product_name": "VAUX_캠핑용 랜턴 QCL100_샌드",
+      "sku_no": "82896360746344",
+      "customer_barcode": "8809477247459",
+      "is_active": true
+    },
+    {
+      "item_code": "QA-Minihardpouch_YL",
+      "wekeep_manage_code": "QA-Minihardpouch_YL",
+      "product_name": "리큐엠 액세서리-미니하드파우치_옐로우",
+      "sku_no": "63866097476319",
+      "customer_barcode": "8809477249477",
+      "is_active": true
+    },
+    {
+      "item_code": "QP2000C_SageMint",
+      "wekeep_manage_code": "QP2000C_SageMint",
+      "product_name": "QP2000C_세이지민트",
+      "sku_no": "32582964206346",
+      "customer_barcode": "8809477249286",
+      "is_active": true
+    },
+    {
+      "item_code": "QPD-330_BL",
+      "wekeep_manage_code": "QPD-330_BL",
+      "product_name": "리큐엠 가정용 충전기-QPD-330_블루",
+      "sku_no": "37416311646343",
+      "customer_barcode": "8809477248999",
+      "is_active": true
+    },
+    {
+      "item_code": "REQM-ShoppingBag-L",
+      "wekeep_manage_code": "REQM-ShoppingBag-L",
+      "product_name": "리큐엠 쇼핑백 L",
+      "sku_no": "17683839956334",
+      "customer_barcode": "8809477249729",
+      "is_active": true
+    },
+    {
+      "item_code": "[RQM]-QP1000C1-PK",
+      "wekeep_manage_code": "[RQM]-QP1000C1-PK",
+      "product_name": "[리큐엠] 보조배터리 QP1000C1 핑크",
+      "sku_no": "78417288766387",
+      "customer_barcode": "8809477248180",
+      "is_active": true
+    },
+    {
+      "item_code": "CASE-QP2000C-Cloud",
+      "wekeep_manage_code": "CASE-QP2000C-Cloud",
+      "product_name": "QP2000 실리콘 케이스_클라우드",
+      "sku_no": "06252821766376",
+      "customer_barcode": "8809477248463",
+      "is_active": true
+    },
+    {
+      "item_code": "QMC-T3100_BK",
+      "wekeep_manage_code": "QMC-T3100_BK",
+      "product_name": "맥세이프 폴더블 3IN1 무선충전기_블랙 QMC-T3100_BK",
+      "sku_no": "34803484726387",
+      "customer_barcode": "8809477249576",
+      "is_active": true
+    },
+    {
+      "item_code": "ACONE-Sliconpad_CO",
+      "wekeep_manage_code": "ACONE-Sliconpad_CO",
+      "product_name": "ACONE-실리콘패드_코랄",
+      "sku_no": "38728608428850",
+      "customer_barcode": "8809477249828",
+      "is_active": true
+    },
+    {
+      "item_code": "QTC-45W_BK",
+      "wekeep_manage_code": "QTC-45W_BK",
+      "product_name": "리큐엠 45W 여행용 충전기_블랙",
+      "sku_no": "06547924486363",
+      "customer_barcode": "8809477249545",
+      "is_active": true
+    },
+    {
+      "item_code": "CASE-QP2000C_Hand_Sa",
+      "wekeep_manage_code": "CASE-QP2000C_Hand_Sa",
+      "product_name": "QP2000C 실리콘 케이스 핸디형 샌드",
+      "sku_no": "71113446726370",
+      "customer_barcode": "8809477248708",
+      "is_active": true
+    },
+    {
+      "item_code": "CASE-QP1000-Hand-GlB",
+      "wekeep_manage_code": "CASE-QP1000-Hand-GlB",
+      "product_name": "QP1000 실리콘 케이스_핸디형_글로우 블루",
+      "sku_no": "47371675986365",
+      "customer_barcode": "8809477249378",
+      "is_active": true
+    },
+    {
+      "item_code": "QMA-Bubblepad_Bl",
+      "wekeep_manage_code": "QMA-Bubblepad_Bl",
+      "product_name": "리큐엠 맥세이프 액세서리-버블패드_소프트 블루",
+      "sku_no": "35293723896396",
+      "customer_barcode": "8809477249255",
+      "is_active": true
+    },
+    {
+      "item_code": "ACONE-Sliconpad_CL",
+      "wekeep_manage_code": "ACONE-Sliconpad_CL",
+      "product_name": "ACONE-실리콘패드_클라우드",
+      "sku_no": "37474022648361",
+      "customer_barcode": "8809477249859",
+      "is_active": true
+    },
+    {
+      "item_code": "QWC-Q1500GR",
+      "wekeep_manage_code": "QWC-Q1500GR",
+      "product_name": "[리큐엠] QWC-Q1500 무선충전기 그레이",
+      "sku_no": "96511199126326",
+      "customer_barcode": "8809477244816",
+      "is_active": true
+    },
+    {
+      "item_code": "QWC-QS1500-PK",
+      "wekeep_manage_code": "QWC-QS1500-PK",
+      "product_name": "[리큐엠] 무선충전기 QWC-QS1500 핑크",
+      "sku_no": "54577736586321",
+      "customer_barcode": "8809477247992",
+      "is_active": true
+    },
+    {
+      "item_code": "CASE-QP2000C-Lavende",
+      "wekeep_manage_code": "CASE-QP2000C-Lavende",
+      "product_name": "QP2000 실리콘 케이스_라벤더",
+      "sku_no": "48787835836377",
+      "customer_barcode": "8809477248494",
+      "is_active": true
+    },
+    {
+      "item_code": "QMA-Cardwallet_BE",
+      "wekeep_manage_code": "QMA-Cardwallet_BE",
+      "product_name": "리큐엠 맥세이프 액세서리-카드지갑_베이지",
+      "sku_no": "41270263786392",
+      "customer_barcode": "8809477249149",
+      "is_active": true
+    },
+    {
+      "item_code": "QCB-CC60S_CobaltBlue",
+      "wekeep_manage_code": "QCB-CC60S_CobaltBlue",
+      "product_name": "리큐엠 케이블-CC60S_코발트블루",
+      "sku_no": "79627726876363",
+      "customer_barcode": "8809477248913",
+      "is_active": true
+    },
+    {
+      "item_code": "RQM-CC150-CS-GR",
+      "wekeep_manage_code": "RQM-CC150-CS-GR",
+      "product_name": "[리큐엠] CC150 실리케이블 충전용_그레이(60W)",
+      "sku_no": "64432321236366",
+      "customer_barcode": "8809477248630",
+      "is_active": true
+    },
+    {
+      "item_code": "GOOUTstciker_SPORTS",
+      "wekeep_manage_code": "GOOUTstciker_SPORTS",
+      "product_name": "GOOUT스티커_SPORTS",
+      "sku_no": "83228946986390",
+      "customer_barcode": "8809477249613",
+      "is_active": true
+    },
+    {
+      "item_code": "QMA-Cardwallet_NA",
+      "wekeep_manage_code": "QMA-Cardwallet_NA",
+      "product_name": "리큐엠 맥세이프 액세서리-카드지갑_네이비",
+      "sku_no": "50354176736398",
+      "customer_barcode": "8809477248784",
+      "is_active": true
+    },
+    {
+      "item_code": "[RQM]-QP1000C1-BK",
+      "wekeep_manage_code": "[RQM]-QP1000C1-BK",
+      "product_name": "[리큐엠] 보조배터리 QP1000C1 블랙",
+      "sku_no": "36905244186382",
+      "customer_barcode": "8809477248173",
+      "is_active": true
+    },
+    {
+      "item_code": "액세서리-아크릴 키링_산타",
+      "wekeep_manage_code": "액세서리-아크릴 키링_산타",
+      "product_name": "액세서리-아크릴 키링_산타",
+      "sku_no": "42622714146390",
+      "customer_barcode": "8809477249644",
+      "is_active": true
+    },
+    {
+      "item_code": "QA-Rug_GOOUT_YL",
+      "wekeep_manage_code": "QA-Rug_GOOUT_YL",
+      "product_name": "리큐엠 액세서리-Rug_GOOUT_옐로우",
+      "sku_no": "42734393486312",
+      "customer_barcode": "8809477249194",
+      "is_active": true
+    },
+    {
+      "item_code": "QA-KeyRing_Q",
+      "wekeep_manage_code": "QA-KeyRing_Q",
+      "product_name": "리큐엠 액세서리-키링_Q",
+      "sku_no": "20766659676311",
+      "customer_barcode": "8809477249354",
+      "is_active": true
+    },
+    {
+      "item_code": "QPD-330_SGY",
+      "wekeep_manage_code": "QPD-330_SGY",
+      "product_name": "리큐엠 가정용 충전기-QPD-330_솔리드그레이",
+      "sku_no": "48672786276347",
+      "customer_barcode": "8809477248982",
+      "is_active": true
+    },
+    {
+      "item_code": "POUCH-Tarpaulin-RED",
+      "wekeep_manage_code": "POUCH-Tarpaulin-RED",
+      "product_name": "타포린 파우치_레드",
+      "sku_no": "36384757986310",
+      "customer_barcode": "8809477248128",
+      "is_active": true
+    },
+    {
+      "item_code": "Velcro-tie_3M",
+      "wekeep_manage_code": "Velcro-tie_3M",
+      "product_name": "벨크로 타이 3M",
+      "sku_no": "16669049806392",
+      "customer_barcode": "8809477247510",
+      "is_active": true
+    },
+    {
+      "item_code": "QWC-Q3100S-BK",
+      "wekeep_manage_code": "QWC-Q3100S-BK",
+      "product_name": "[리큐엠] 3in1 무선충전기 Q3100S 블랙 [갤럭시워치]",
+      "sku_no": "21362649256327",
+      "customer_barcode": "8809477247350",
+      "is_active": true
+    },
+    {
+      "item_code": "ACONE-Sliconpad_SA",
+      "wekeep_manage_code": "ACONE-Sliconpad_SA",
+      "product_name": "ACONE-실리콘패드_샌드",
+      "sku_no": "62644169296393",
+      "customer_barcode": "8809477249569",
+      "is_active": true
+    },
+    {
+      "item_code": "액세서리-아크릴 키링_눈사람",
+      "wekeep_manage_code": "액세서리-아크릴 키링_눈사람",
+      "product_name": "액세서리-아크릴 키링_눈사람",
+      "sku_no": "82572348446393",
+      "customer_barcode": "8809477249637",
+      "is_active": true
+    },
+    {
+      "item_code": "CASE-QP1000C-Hand-Cl",
+      "wekeep_manage_code": "CASE-QP1000C-Hand-Cl",
+      "product_name": "QP1000 실리콘 케이스_핸디형_클라우드",
+      "sku_no": "06541324626368",
+      "customer_barcode": "8809477248364",
+      "is_active": true
+    },
+    {
+      "item_code": "POUCH-Tarpaulin-BK",
+      "wekeep_manage_code": "POUCH-Tarpaulin-BK",
+      "product_name": "타포린 파우치_블랙",
+      "sku_no": "76323646166313",
+      "customer_barcode": "8809477248104",
+      "is_active": true
+    },
+    {
+      "item_code": "QPD-365N_WH",
+      "wekeep_manage_code": "QPD-365N_WH",
+      "product_name": "리큐엠 가정용 충전기-QPD-365N_화이트",
+      "sku_no": "68164827126369",
+      "customer_barcode": "8809477248951",
+      "is_active": true
+    },
+    {
+      "item_code": "QA-Custumpouch_BL",
+      "wekeep_manage_code": "QA-Custumpouch_BL",
+      "product_name": "리큐엠 액세서리-커스텀파우치_블루",
+      "sku_no": "63384362276342",
+      "customer_barcode": "8809477248616",
+      "is_active": true
+    },
+    {
+      "item_code": "QMC-ACONE-MB",
+      "wekeep_manage_code": "QMC-ACONE-MB",
+      "product_name": "리큐엠 맥세이프 무선충전기-ACONE_모닝 브리즈 / A",
+      "sku_no": "49322240816615",
+      "customer_barcode": "8809477249781",
+      "is_active": true
+    },
+    {
+      "item_code": "QMA-Bubblepad_Bk",
+      "wekeep_manage_code": "QMA-Bubblepad_Bk",
+      "product_name": "리큐엠 맥세이프 액세서리-버블패드_소프트 블랙",
+      "sku_no": "87859847886397",
+      "customer_barcode": "8809477249262",
+      "is_active": true
+    },
+    {
+      "item_code": "QWC-Q3100S-WH",
+      "wekeep_manage_code": "QWC-Q3100S-WH",
+      "product_name": "[리큐엠] 3in1 무선충전기 Q3100S(갤럭시) 화이트",
+      "sku_no": "82877479146323",
+      "customer_barcode": "8809477247466",
+      "is_active": true
+    },
+    {
+      "item_code": "QCB-CC30S_Carrot",
+      "wekeep_manage_code": "QCB-CC30S_Carrot",
+      "product_name": "리큐엠 케이블-CC30S_캐롯",
+      "sku_no": "76785247006368",
+      "customer_barcode": "8809477248852",
+      "is_active": true
+    },
+    {
+      "item_code": "RQM-MFICA150-CS",
+      "wekeep_manage_code": "RQM-MFICA150-CS",
+      "product_name": "[리큐엠]MFI-CA150-실리콘케이블 화이트(60W) [1.5M]",
+      "sku_no": "04933548636364",
+      "customer_barcode": "8809477247831",
+      "is_active": true
+    },
+    {
+      "item_code": "CASE-QP1000C-Hand-PK",
+      "wekeep_manage_code": "CASE-QP1000C-Hand-PK",
+      "product_name": "QP1000 실리콘 케이스_핸디형_핑크",
+      "sku_no": "43026773786363",
+      "customer_barcode": "8809477248678",
+      "is_active": true
+    },
+    {
+      "item_code": "QMC-ACONE-SS",
+      "wekeep_manage_code": "QMC-ACONE-SS",
+      "product_name": "리큐엠 맥세이프 무선충전기-ACONE_선셋 / A",
+      "sku_no": "76751484965672",
+      "customer_barcode": "8809477249774",
+      "is_active": true
+    },
+    {
+      "item_code": "액세서리-아크릴 키링_트리",
+      "wekeep_manage_code": "액세서리-아크릴 키링_트리",
+      "product_name": "액세서리-아크릴 키링_트리",
+      "sku_no": "52307656856333",
+      "customer_barcode": "8809477249675",
+      "is_active": true
+    },
+    {
+      "item_code": "[RQM]-QP1000C1-WH",
+      "wekeep_manage_code": "[RQM]-QP1000C1-WH",
+      "product_name": "[리큐엠] 보조배터리 QP1000C1 화이트",
+      "sku_no": "66896227366381",
+      "customer_barcode": "8809477248166",
+      "is_active": true
+    },
+    {
+      "item_code": "QWC-CW500",
+      "wekeep_manage_code": "QWC-CW500",
+      "product_name": "[리큐엠] 차량용무선충전기 QWC-CW500",
+      "sku_no": "70211322376381",
+      "customer_barcode": "8809477247640",
+      "is_active": true
+    },
+    {
+      "item_code": "CASE-QP2000C-Green",
+      "wekeep_manage_code": "CASE-QP2000C-Green",
+      "product_name": "QP2000 실리콘 케이스_그린",
+      "sku_no": "48273346726376",
+      "customer_barcode": "8809477248487",
+      "is_active": true
+    },
+    {
+      "item_code": "CASE-QP1000A-Mint",
+      "wekeep_manage_code": "CASE-QP1000A-Mint",
+      "product_name": "QP1000 실리콘 케이스_민트",
+      "sku_no": "63094670296366",
+      "customer_barcode": "8809477248067",
+      "is_active": true
+    },
+    {
+      "item_code": "QA-Minihardpouch_BK",
+      "wekeep_manage_code": "QA-Minihardpouch_BK",
+      "product_name": "리큐엠 액세서리-미니하드파우치_블랙",
+      "sku_no": "48127811346343",
+      "customer_barcode": "8809477249453",
+      "is_active": true
+    },
+    {
+      "item_code": "RQM-CC150-CK-PK",
+      "wekeep_manage_code": "RQM-CC150-CK-PK",
+      "product_name": "[리큐엠]C.class K-CC150-실리콘케이블 핑크(100W)",
+      "sku_no": "44931824846366",
+      "customer_barcode": "8809477247817",
+      "is_active": true
+    },
+    {
+      "item_code": "CASE-QP2000C-Mint",
+      "wekeep_manage_code": "CASE-QP2000C-Mint",
+      "product_name": "QP2000 실리콘 케이스_민트",
+      "sku_no": "34709831686378",
+      "customer_barcode": "8809477248500",
+      "is_active": true
+    },
+    {
+      "item_code": "REQM-ShoppingBag-M",
+      "wekeep_manage_code": "REQM-ShoppingBag-M",
+      "product_name": "리큐엠 쇼핑백 M",
+      "sku_no": "38689745026336",
+      "customer_barcode": "8809477249736",
+      "is_active": true
+    },
+    {
+      "item_code": "CASE-QP1000C-Hand-Gr",
+      "wekeep_manage_code": "CASE-QP1000C-Hand-Gr",
+      "product_name": "QP1000 실리콘 케이스_핸디형_그린",
+      "sku_no": "02243534276362",
+      "customer_barcode": "8809477248388",
+      "is_active": true
+    },
+    {
+      "item_code": "QA-Rug_GOOUT_GR",
+      "wekeep_manage_code": "QA-Rug_GOOUT_GR",
+      "product_name": "리큐엠 액세서리-Rug_GOOUT_그린",
+      "sku_no": "28481008476311",
+      "customer_barcode": "8809477249200",
+      "is_active": true
+    },
+    {
+      "item_code": "CASE-QP1000-Hand-GlO",
+      "wekeep_manage_code": "CASE-QP1000-Hand-GlO",
+      "product_name": "QP1000 실리콘 케이스_핸디형_글로우 오렌지",
+      "sku_no": "06372414496373",
+      "customer_barcode": "8809477249392",
+      "is_active": true
+    },
+    {
+      "item_code": "QMA-Cardwallet_GR",
+      "wekeep_manage_code": "QMA-Cardwallet_GR",
+      "product_name": "리큐엠 맥세이프 액세서리-카드지갑_그린",
+      "sku_no": "89548366726397",
+      "customer_barcode": "8809477248777",
+      "is_active": true
+    },
+    {
+      "item_code": "CASE-QP1000-Cl-kyobo",
+      "wekeep_manage_code": "CASE-QP1000-Cl-kyobo",
+      "product_name": "QP1000 실리콘 케이스_투명_교보용",
+      "sku_no": "32307237236366",
+      "customer_barcode": "8809477249521",
+      "is_active": true
+    },
+    {
+      "item_code": "QA-Custumpouch_BK",
+      "wekeep_manage_code": "QA-Custumpouch_BK",
+      "product_name": "리큐엠 액세서리-커스텀파우치_블랙",
+      "sku_no": "28423366846341",
+      "customer_barcode": "8809477248586",
+      "is_active": true
+    },
+    {
+      "item_code": "CASE-QP1000C-Hand-Eb",
+      "wekeep_manage_code": "CASE-QP1000C-Hand-Eb",
+      "product_name": "QP1000 실리콘 케이스_핸디형_에보니",
+      "sku_no": "64473923506361",
+      "customer_barcode": "8809477248371",
+      "is_active": true
+    },
+    {
+      "item_code": "QMA-Cardwallet_BR",
+      "wekeep_manage_code": "QMA-Cardwallet_BR",
+      "product_name": "리큐엠 맥세이프 액세서리-카드지갑_브라운",
+      "sku_no": "35725906786394",
+      "customer_barcode": "8809477248753",
+      "is_active": true
+    },
+    {
+      "item_code": "액세서리-아크릴 키링_쿠키",
+      "wekeep_manage_code": "액세서리-아크릴 키링_쿠키",
+      "product_name": "액세서리-아크릴 키링_쿠키",
+      "sku_no": "38847714036339",
+      "customer_barcode": "8809477249668",
+      "is_active": true
+    },
+    {
+      "item_code": "QMA-Cardwallet_DBR",
+      "wekeep_manage_code": "QMA-Cardwallet_DBR",
+      "product_name": "리큐엠 맥세이프 액세서리-카드지갑_다크브라운",
+      "sku_no": "33878607506391",
+      "customer_barcode": "8809477249156",
+      "is_active": true
+    },
+    {
+      "item_code": "QWC-QS1500-GR",
+      "wekeep_manage_code": "QWC-QS1500-GR",
+      "product_name": "[리큐엠] 무선충전기 QWC-QS1500 그린",
+      "sku_no": "53754184376322",
+      "customer_barcode": "8809477248296",
+      "is_active": true
+    },
+    {
+      "item_code": "CASE-QP2000C_Hand_CL",
+      "wekeep_manage_code": "CASE-QP2000C_Hand_CL",
+      "product_name": "QP2000C 실리콘 케이스 핸디형 클라우드",
+      "sku_no": "48730344746399",
+      "customer_barcode": "8809477249507",
+      "is_active": true
+    },
+    {
+      "item_code": "CASE-QP1000C-Hand-Ye",
+      "wekeep_manage_code": "CASE-QP1000C-Hand-Ye",
+      "product_name": "QP1000 실리콘 케이스_핸디형_옐로우",
+      "sku_no": "43721474976360",
+      "customer_barcode": "8809477248449",
+      "is_active": true
+    },
+    {
+      "item_code": "POUCH-Tarpaulin-WH",
+      "wekeep_manage_code": "POUCH-Tarpaulin-WH",
+      "product_name": "타포린 파우치_화이트",
+      "sku_no": "33233190936315",
+      "customer_barcode": "8809477248135",
+      "is_active": true
+    },
+    {
+      "item_code": "CASE-QP2000C-Ebony",
+      "wekeep_manage_code": "CASE-QP2000C-Ebony",
+      "product_name": "QP2000 실리콘 케이스_에보니",
+      "sku_no": "77449472266374",
+      "customer_barcode": "8809477248470",
+      "is_active": true
+    },
+    {
+      "item_code": "CASE-QP1000A-Sand",
+      "wekeep_manage_code": "CASE-QP1000A-Sand",
+      "product_name": "QP1000 실리콘 케이스_샌드",
+      "sku_no": "40036627516364",
+      "customer_barcode": "8809477248074",
+      "is_active": true
+    },
+    {
+      "item_code": "QA-Custumpouch_YL",
+      "wekeep_manage_code": "QA-Custumpouch_YL",
+      "product_name": "리큐엠 액세서리-커스텀파우치_옐로우",
+      "sku_no": "82315582456347",
+      "customer_barcode": "8809477248593",
+      "is_active": true
+    },
+    {
+      "item_code": "CASE-QP2000-Hand-GlG",
+      "wekeep_manage_code": "CASE-QP2000-Hand-GlG",
+      "product_name": "QP2000 실리콘 케이스_핸디형_글로우 그린",
+      "sku_no": "08833125076392",
+      "customer_barcode": "8809477249422",
+      "is_active": true
+    },
+    {
+      "item_code": "QMA-Cardwallet_PK",
+      "wekeep_manage_code": "QMA-Cardwallet_PK",
+      "product_name": "리큐엠 맥세이프 액세서리-카드지갑_핑크",
+      "sku_no": "39364442986391",
+      "customer_barcode": "8809477249132",
+      "is_active": true
+    },
+    {
+      "item_code": "CASE-QP2000C_Hand_Mi",
+      "wekeep_manage_code": "CASE-QP2000C_Hand_Mi",
+      "product_name": "QP2000C 실리콘 케이스 핸디형 민트",
+      "sku_no": "83354368966373",
+      "customer_barcode": "8809477248692",
+      "is_active": true
+    },
+    {
+      "item_code": "QMC-ACONE-WL",
+      "wekeep_manage_code": "QMC-ACONE-WL",
+      "product_name": "리큐엠 맥세이프 무선충전기-ACONE_원더랜드",
+      "sku_no": "66786773786382",
+      "customer_barcode": "8809477249514",
+      "is_active": true
+    },
+    {
+      "item_code": "QMA-Cardwallet_AGY",
+      "wekeep_manage_code": "QMA-Cardwallet_AGY",
+      "product_name": "리큐엠 맥세이프 액세서리-카드지갑_애쉬그레이",
+      "sku_no": "92048806906397",
+      "customer_barcode": "8809477249170",
+      "is_active": true
+    },
+    {
+      "item_code": "VAUX-QCL100-블루",
+      "wekeep_manage_code": "VAUX-QCL100-블루",
+      "product_name": "VAUX_캠핑용 랜턴 QCL100_블루",
+      "sku_no": "15896607836346",
+      "customer_barcode": "8809477247442",
+      "is_active": true
+    },
+    {
+      "item_code": "QMA-Bubblepad-Cr",
+      "wekeep_manage_code": "QMA-Bubblepad-Cr",
+      "product_name": "리큐엠 맥세이프 액세서리-버블패드_소프트 크림",
+      "sku_no": "78636732376398",
+      "customer_barcode": "8809477249279",
+      "is_active": true
+    },
+    {
+      "item_code": "QA-KeyRing_E",
+      "wekeep_manage_code": "QA-KeyRing_E",
+      "product_name": "리큐엠 액세서리-키링_E",
+      "sku_no": "62064407386312",
+      "customer_barcode": "8809477249347",
+      "is_active": true
+    },
+    {
+      "item_code": "QMS-QMS01_BK",
+      "wekeep_manage_code": "QMS-QMS01_BK",
+      "product_name": "리큐엠 맥세이프 셀카봉-QMS01_블랙",
+      "sku_no": "39686708206340",
+      "customer_barcode": "8809477248654",
+      "is_active": true
+    },
+    {
+      "item_code": "POUCH-Tarpaulin_F-GR",
+      "wekeep_manage_code": "POUCH-Tarpaulin_F-GR",
+      "product_name": "타포린 파우치_그레이",
+      "sku_no": "88352438836363",
+      "customer_barcode": "8809477248746",
+      "is_active": true
+    },
+    {
+      "item_code": "QWC-A1500A",
+      "wekeep_manage_code": "QWC-A1500A",
+      "product_name": "무선충전기 QWC-A1500A",
+      "sku_no": "62021161896388",
+      "customer_barcode": "8809477247725",
+      "is_active": true
+    },
+    {
+      "item_code": "QA-Rug_SYMBOL-B_BL",
+      "wekeep_manage_code": "QA-Rug_SYMBOL-B_BL",
+      "product_name": "리큐엠 액세서리-Rug_SYMBOL-B_블루",
+      "sku_no": "28693108796317",
+      "customer_barcode": "8809477249224",
+      "is_active": true
+    },
+    {
+      "item_code": "ACONE-Sliconpad_MU",
+      "wekeep_manage_code": "ACONE-Sliconpad_MU",
+      "product_name": "ACONE-실리콘패드_머스타드",
+      "sku_no": "94442734338756",
+      "customer_barcode": "8809477249835",
+      "is_active": true
+    },
+    {
+      "item_code": "CASE-QP2000C_Hand_PK",
+      "wekeep_manage_code": "CASE-QP2000C_Hand_PK",
+      "product_name": "QP2000C 실리콘 케이스 핸디형 핑크",
+      "sku_no": "83334628796375",
+      "customer_barcode": "8809477248715",
+      "is_active": true
+    },
+    {
+      "item_code": "Velcro-tie_1M",
+      "wekeep_manage_code": "Velcro-tie_1M",
+      "product_name": "벨크로 타이 1M",
+      "sku_no": "22686732376391",
+      "customer_barcode": "8809477247503",
+      "is_active": true
+    },
+    {
+      "item_code": "[RQM]-QP2000C1-Green",
+      "wekeep_manage_code": "[RQM]-QP2000C1-Green",
+      "product_name": "[리큐엠] QP2000C 그린",
+      "sku_no": "82626135866341",
+      "customer_barcode": "8809477248234",
+      "is_active": true
+    },
+    {
+      "item_code": "QMA-Bubblepad_Mi",
+      "wekeep_manage_code": "QMA-Bubblepad_Mi",
+      "product_name": "리큐엠 맥세이프 액세서리-버블패드_소프트 민트",
+      "sku_no": "33735286606394",
+      "customer_barcode": "8809477249248",
+      "is_active": true
+    },
+    {
+      "item_code": "QA-Jibbitz_TRAVEL",
+      "wekeep_manage_code": "QA-Jibbitz_TRAVEL",
+      "product_name": "리큐엠 액세서리-지비츠_TRAVEL",
+      "sku_no": "33896747176317",
+      "customer_barcode": "8809477249118",
+      "is_active": true
+    },
+    {
+      "item_code": "QA-Minihardpouch_BE",
+      "wekeep_manage_code": "QA-Minihardpouch_BE",
+      "product_name": "리큐엠 액세서리-미니하드파우치_베이지",
+      "sku_no": "28744739806343",
+      "customer_barcode": "8809477249460",
+      "is_active": true
+    },
+    {
+      "item_code": "QWC-UV300-BK",
+      "wekeep_manage_code": "QWC-UV300-BK",
+      "product_name": "리큐엠-UV살균기 무선충전 시계_블랙",
+      "sku_no": "66856747866343",
+      "customer_barcode": "8809477247084",
+      "is_active": true
+    },
+    {
+      "item_code": "QMA-Cardwallet_SGY",
+      "wekeep_manage_code": "QMA-Cardwallet_SGY",
+      "product_name": "리큐엠 맥세이프 액세서리-카드지갑_솔리드그레이",
+      "sku_no": "67556472136390",
+      "customer_barcode": "8809477249163",
+      "is_active": true
+    },
+    {
+      "item_code": "CASE-QP1000C-Hand-Mi",
+      "wekeep_manage_code": "CASE-QP1000C-Hand-Mi",
+      "product_name": "QP1000 실리콘 케이스_핸디형_민트",
+      "sku_no": "63254474066360",
+      "customer_barcode": "8809477248401",
+      "is_active": true
+    },
+    {
+      "item_code": "QA-Custumpouch_GR",
+      "wekeep_manage_code": "QA-Custumpouch_GR",
+      "product_name": "리큐엠 액세서리-커스텀파우치_그린",
+      "sku_no": "88146747976341",
+      "customer_barcode": "8809477248609",
+      "is_active": true
+    },
+    {
+      "item_code": "CASE-QP1000-Hand-GlY",
+      "wekeep_manage_code": "CASE-QP1000-Hand-GlY",
+      "product_name": "QP1000 실리콘 케이스_핸디형_글로우 옐로우",
+      "sku_no": "14404241386372",
+      "customer_barcode": "8809477249408",
+      "is_active": true
+    },
+    {
+      "item_code": "QP1000C1-Butter",
+      "wekeep_manage_code": "QP1000C1-Butter",
+      "product_name": "[리큐엠] 보조배터리 QP1000C1 버터",
+      "sku_no": "48460317826383",
+      "customer_barcode": "8809477248814",
+      "is_active": true
+    },
+    {
+      "item_code": "액세서리-아크릴 키링_선물",
+      "wekeep_manage_code": "액세서리-아크릴 키링_선물",
+      "product_name": "액세서리-아크릴 키링_선물",
+      "sku_no": "23268737866395",
+      "customer_barcode": "8809477249651",
+      "is_active": true
+    },
+    {
+      "item_code": "[RQM]-QP2000C1-Beige",
+      "wekeep_manage_code": "[RQM]-QP2000C1-Beige",
+      "product_name": "[리큐엠] QP2000C 베이지",
+      "sku_no": "90278387136342",
+      "customer_barcode": "8809477248227",
+      "is_active": true
+    },
+    {
+      "item_code": "QP1000C1-Carrot",
+      "wekeep_manage_code": "QP1000C1-Carrot",
+      "product_name": "[리큐엠] 보조배터리 QP1000C1 캐롯",
+      "sku_no": "82693271746383",
+      "customer_barcode": "8809477248807",
+      "is_active": true
+    },
+    {
+      "item_code": "액세서리-아크릴 키링_장식볼-핑크",
+      "wekeep_manage_code": "액세서리-아크릴 키링_장식볼-핑크",
+      "product_name": "액세서리-아크릴 키링_장식볼-핑크",
+      "sku_no": "27084982826331",
+      "customer_barcode": "8809477249699",
+      "is_active": true
+    },
+    {
+      "item_code": "QMC-QM4100_WH",
+      "wekeep_manage_code": "QMC-QM4100_WH",
+      "product_name": "리큐엠 맥세이프 충전기-QM4100_화이트",
+      "sku_no": "04252281786320",
+      "customer_barcode": "8809477248340",
+      "is_active": true
+    },
+    {
+      "item_code": "QA-Rug_GOOUT_BL",
+      "wekeep_manage_code": "QA-Rug_GOOUT_BL",
+      "product_name": "리큐엠 액세서리-Rug_GOOUT_블루",
+      "sku_no": "62438842326310",
+      "customer_barcode": "8809477249217",
+      "is_active": true
+    },
+    {
+      "item_code": "QWC-Q1500WH",
+      "wekeep_manage_code": "QWC-Q1500WH",
+      "product_name": "[리큐엠] QWC-Q1500 무선충전기 화이트",
+      "sku_no": "48352126526327",
+      "customer_barcode": "8809477244823",
+      "is_active": true
+    },
+    {
+      "item_code": "QPD-365N_GY",
+      "wekeep_manage_code": "QPD-365N_GY",
+      "product_name": "리큐엠 가정용 충전기-QPD-365N_그레이",
+      "sku_no": "86839064676345",
+      "customer_barcode": "8809477248944",
+      "is_active": true
+    },
+    {
+      "item_code": "QP1000C1-CobaltBlue",
+      "wekeep_manage_code": "QP1000C1-CobaltBlue",
+      "product_name": "[리큐엠] 보조배터리 QP1000C1 코발트블루",
+      "sku_no": "75087824876385",
+      "customer_barcode": "8809477248838",
+      "is_active": true
+    },
+    {
+      "item_code": "CASE-QP2000C_Hand_La",
+      "wekeep_manage_code": "CASE-QP2000C_Hand_La",
+      "product_name": "QP2000C 실리콘 케이스 핸디형 라벤더",
+      "sku_no": "37277698236373",
+      "customer_barcode": "8809477248685",
+      "is_active": true
+    },
+    {
+      "item_code": "RQM-CC150-CK-BL",
+      "wekeep_manage_code": "RQM-CC150-CK-BL",
+      "product_name": "[리큐엠]C.class K-CC150-실리콘케이블 블루(100W)",
+      "sku_no": "64814233476361",
+      "customer_barcode": "8809477247824",
+      "is_active": true
+    },
+    {
+      "item_code": "[RQM]-QP2000C1-BK",
+      "wekeep_manage_code": "[RQM]-QP2000C1-BK",
+      "product_name": "[리큐엠] QP2000C 블랙",
+      "sku_no": "67822244366349",
+      "customer_barcode": "8809477248210",
+      "is_active": true
+    },
+    {
+      "item_code": "ACONE-Sliconpad_BK",
+      "wekeep_manage_code": "ACONE-Sliconpad_BK",
+      "product_name": "ACONE-실리콘패드_블랙",
+      "sku_no": "33945287268135",
+      "customer_barcode": "8809477249811",
+      "is_active": true
+    },
+    {
+      "item_code": "QMC-T3100_BE",
+      "wekeep_manage_code": "QMC-T3100_BE",
+      "product_name": "맥세이프 폴더블 3IN1 무선충전기_베이지 QMC-T3100_BE",
+      "sku_no": "84444167896386",
+      "customer_barcode": "8809477249583",
+      "is_active": true
+    },
+    {
+      "item_code": "VAUX-QCL100-화이트",
+      "wekeep_manage_code": "VAUX-QCL100-화이트",
+      "product_name": "VAUX_캠핑용 랜턴 QCL100 화이트",
+      "sku_no": "77364813346346",
+      "customer_barcode": "8809477247411",
+      "is_active": true
+    },
+    {
+      "item_code": "VAUX-QCL100-블랙",
+      "wekeep_manage_code": "VAUX-QCL100-블랙",
+      "product_name": "VAUX_캠핑용 랜턴 QCL100 블랙",
+      "sku_no": "24682388066341",
+      "customer_barcode": "8809477247404",
+      "is_active": true
+    },
+    {
+      "item_code": "QS-QST01M_WH",
+      "wekeep_manage_code": "QS-QST01M_WH",
+      "product_name": "리큐엠 셀카봉-QST01M미니_화이트",
+      "sku_no": "23872452386341",
+      "customer_barcode": "8809477247213",
+      "is_active": true
+    },
+    {
+      "item_code": "CASE-QP1000C-Hand-La",
+      "wekeep_manage_code": "CASE-QP1000C-Hand-La",
+      "product_name": "QP1000 실리콘 케이스_핸디형_라벤더",
+      "sku_no": "44823877776361",
+      "customer_barcode": "8809477248395",
+      "is_active": true
+    },
+    {
+      "item_code": "ACONE-Sliconpad_RD",
+      "wekeep_manage_code": "ACONE-Sliconpad_RD",
+      "product_name": "ACONE-실리콘패드_레드",
+      "sku_no": "88208428998952",
+      "customer_barcode": "8809477249842",
+      "is_active": true
+    },
+    {
+      "item_code": "QA-KeyRing_R",
+      "wekeep_manage_code": "QA-KeyRing_R",
+      "product_name": "리큐엠 액세서리-키링_R",
+      "sku_no": "06682307966313",
+      "customer_barcode": "8809477249330",
+      "is_active": true
+    },
+    {
+      "item_code": "QCB-CC30S_Lavender",
+      "wekeep_manage_code": "QCB-CC30S_Lavender",
+      "product_name": "리큐엠 케이블-CC30S_라벤더",
+      "sku_no": "63609449246361",
+      "customer_barcode": "8809477248883",
+      "is_active": true
+    },
+    {
+      "item_code": "SOMEONE-BLUE",
+      "wekeep_manage_code": "SOMEONE-BLUE",
+      "product_name": "SOMEONE -블루(DIFUNG)",
+      "sku_no": "18716346686320",
+      "customer_barcode": "8809477248272",
+      "is_active": true
+    },
+    {
+      "item_code": "QCB-CC30S_Butter",
+      "wekeep_manage_code": "QCB-CC30S_Butter",
+      "product_name": "리큐엠 케이블-CC30S_버터",
+      "sku_no": "86773964036367",
+      "customer_barcode": "8809477248845",
+      "is_active": true
+    },
+    {
+      "item_code": "QMA-Ringsticker_BK",
+      "wekeep_manage_code": "QMA-Ringsticker_BK",
+      "product_name": "리큐엠 맥세이프 액세서리-링스티커_블랙",
+      "sku_no": "33359762766392",
+      "customer_barcode": "8809477248791",
+      "is_active": true
+    },
+    {
+      "item_code": "QCB-CC30S_NeonGreen",
+      "wekeep_manage_code": "QCB-CC30S_NeonGreen",
+      "product_name": "리큐엠 케이블-CC30S_네온그린",
+      "sku_no": "28576722856362",
+      "customer_barcode": "8809477248876",
+      "is_active": true
+    },
+    {
+      "item_code": "QA-Jibbitz_SPORTS",
+      "wekeep_manage_code": "QA-Jibbitz_SPORTS",
+      "product_name": "리큐엠 액세서리-지비츠_SPORTS",
+      "sku_no": "88684988466318",
+      "customer_barcode": "8809477249125",
+      "is_active": true
+    },
+    {
+      "item_code": "QA-Jibbitz_CAMPING",
+      "wekeep_manage_code": "QA-Jibbitz_CAMPING",
+      "product_name": "리큐엠 액세서리-지비츠_CAMPING",
+      "sku_no": "78486575876316",
+      "customer_barcode": "8809477249101",
+      "is_active": true
+    },
+    {
+      "item_code": "QCB-CC60S_Carrot",
+      "wekeep_manage_code": "QCB-CC60S_Carrot",
+      "product_name": "리큐엠 케이블-CC60S_캐롯",
+      "sku_no": "46791245166367",
+      "customer_barcode": "8809477248906",
+      "is_active": true
+    }
+  ]
+}

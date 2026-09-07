@@ -87,6 +87,8 @@ from integration_account_dialog import IntegrationAccountDialog
 from integration_credential_store import load_integration_credentials, print_board_credentials
 from program_login_store import delete_program_login, load_program_login, save_program_login
 from wekeep_report_service import load_config as load_wekeep_report_config, save_config as save_wekeep_report_config, register_daily_task, remove_daily_task, open_login_window, run_report, TASK_NAME
+from wekeep_order_automation import open_order_registration
+from wekeep_transfer_dialog import WeKeepTransferDialog
 
 
 APP_DIR = Path(__file__).resolve().parent
@@ -107,7 +109,7 @@ DEFAULT_CONFIG = {
     },
 }
 ADMIN_USER_ID = "c7937d51-1a14-47aa-987e-6254c6c79014"
-APP_VERSION = "1.0.96"
+APP_VERSION = "1.0.97"
 TEST_MODE = os.getenv("REQM_TEST_MODE", "").strip().casefold() in {"1", "true", "yes"}
 UPDATE_BASE_URL = "https://jcslohuraqclhryeqxoc.supabase.co/storage/v1/object/public/reqm-updates"
 UPDATE_MANIFEST_URL = f"{UPDATE_BASE_URL}/manifest.json"
@@ -2638,6 +2640,9 @@ class MainWindow(QMainWindow):
         self.ecount_button = QPushButton("이카운트 창고이동")
         self.ecount_button.setObjectName("exportButton")
         self.ecount_button.setEnabled(False)
+        self.wekeep_transfer_button = QPushButton("위킵 반영 미리보기")
+        self.wekeep_transfer_button.setObjectName("exportButton")
+        self.wekeep_transfer_button.setEnabled(False)
         self.output_format_combo = QComboBox()
         self.output_format_combo.setMinimumWidth(220)
         self.output_format_manage_button = QPushButton("출력 양식 관리")
@@ -2747,6 +2752,7 @@ class MainWindow(QMainWindow):
         export_row.addWidget(self.output_format_combo)
         export_row.addWidget(self.output_format_manage_button)
         export_row.addStretch(1)
+        export_row.addWidget(self.wekeep_transfer_button)
         export_row.addWidget(self.ecount_button)
         export_row.addWidget(self.export_button)
         layout.addLayout(export_row)
@@ -2775,6 +2781,7 @@ class MainWindow(QMainWindow):
         self.db_button.clicked.connect(self.open_db_manager)
         self.export_button.clicked.connect(self.export_file)
         self.ecount_button.clicked.connect(self.open_ecount_transfer)
+        self.wekeep_transfer_button.clicked.connect(self.open_wekeep_transfer)
         self.output_format_manage_button.clicked.connect(self.manage_output_formats)
         self.location_manage_button.clicked.connect(self.manage_locations)
         self.location_apply_button.clicked.connect(self.apply_location)
@@ -3577,6 +3584,7 @@ class MainWindow(QMainWindow):
         self.dashboard_db_button.setEnabled(self.is_admin)
         self.dashboard_users_button.setEnabled(self.is_admin)
         self.ecount_button.setEnabled(self.can_ecount_transfer and bool(self.current_orders))
+        self.wekeep_transfer_button.setEnabled(bool(self.current_orders))
         self.matcher = ProductMatcher(
             catalog["items"], catalog["products"], catalog["components"],
             catalog["aliases"], catalog["barcodes"],
@@ -3768,6 +3776,7 @@ class MainWindow(QMainWindow):
         self.b2b_button.setEnabled(False)
         self.export_button.setEnabled(False)
         self.ecount_button.setEnabled(False)
+        self.wekeep_transfer_button.setEnabled(False)
         self.header_row.removeWidget(self.login_button)
         self.login_row.addWidget(self.login_button)
         self.login_button.setText("로그인")
@@ -4125,6 +4134,7 @@ class MainWindow(QMainWindow):
             return
         self.current_orders = orders
         self.ecount_button.setEnabled(self.can_ecount_transfer and bool(self.current_orders))
+        self.wekeep_transfer_button.setEnabled(bool(self.current_orders))
         self.populate_table(self.current_orders)
         counts = {key: sum(1 for row in orders if row.get("status") == key) for key in ("exact", "similar", "ambiguous", "missing", "barcode_error")}
         self.status.setText(
@@ -4289,6 +4299,12 @@ class MainWindow(QMainWindow):
         else:
             self.status.setText(f"수동 수정 완료: {len(targets)}개 행에 적용")
 
+    def open_wekeep_transfer(self) -> None:
+        if not self.current_orders:
+            QMessageBox.warning(self, "주문 없음", "먼저 출고 주문 파일을 분석하세요.")
+            return
+        WeKeepTransferDialog(self.current_orders, self.current_mode, self).exec()
+
     def export_file(self) -> None:
         if not self.current_orders:
             QMessageBox.warning(self, "저장할 데이터 없음", "먼저 주문 파일을 불러오세요.")
@@ -4376,6 +4392,17 @@ if __name__ == "__main__":
         raise SystemExit(0)
     if "--wekeep-login" in sys.argv:
         open_login_window()
+        raise SystemExit(0)
+    if "--wekeep-order-preview" in sys.argv:
+        try:
+            argument_index = sys.argv.index("--wekeep-order-preview") + 1
+            open_order_registration(sys.argv[argument_index])
+        except Exception as exc:
+            error_path = Path(os.getenv("LOCALAPPDATA", str(Path.home()))) / "REQM" / "wekeep_orders" / "last_error.txt"
+            error_path.parent.mkdir(parents=True, exist_ok=True)
+            error_path.write_text(str(exc), encoding="utf-8")
+            subprocess.Popen(["notepad.exe", str(error_path)])
+            raise SystemExit(1)
         raise SystemExit(0)
     remove_legacy_transfer_credentials()
     register_windows_app_id()
