@@ -54,6 +54,13 @@ class IntegrationAccountDialog(QDialog):
             ("게시판 비밀번호", self.print_board_password),
         )))
 
+        self.webmail_user_id = QLineEdit()
+        self.webmail_password = self.secret_field("REQM 웹메일 비밀번호")
+        layout.addWidget(self.card("와이즐리 주문 메일", (
+            ("웹메일 ID", self.webmail_user_id),
+            ("웹메일 비밀번호", self.webmail_password),
+        )))
+
         security = QLabel("모든 값은 현재 Windows 사용자만 해독할 수 있도록 암호화해 저장합니다.")
         security.setObjectName("hint"); security.setWordWrap(True); layout.addWidget(security)
         actions = QHBoxLayout()
@@ -89,6 +96,8 @@ class IntegrationAccountDialog(QDialog):
             "ecount_api_key": self.ecount_api_key.text().strip(),
             "print_board_user_id": self.print_board_user_id.text().strip(),
             "print_board_password": self.print_board_password.text(),
+            "webmail_user_id": self.webmail_user_id.text().strip(),
+            "webmail_password": self.webmail_password.text(),
         }
 
     def load_saved(self) -> None:
@@ -116,6 +125,7 @@ class IntegrationAccountDialog(QDialog):
         for field in (
             self.ecount_user_id, self.ecount_password, self.ecount_api_key,
             self.print_board_user_id, self.print_board_password,
+            self.webmail_user_id, self.webmail_password,
         ):
             field.clear()
         QMessageBox.information(self, "저장정보 삭제", "저장된 연동 계정을 삭제했습니다.")

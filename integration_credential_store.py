@@ -16,6 +16,8 @@ FIELDS = (
     "ecount_api_key",
     "print_board_user_id",
     "print_board_password",
+    "webmail_user_id",
+    "webmail_password",
 )
 
 
@@ -25,6 +27,8 @@ def save_integration_credentials(values: dict[str, str], path: Path = INTEGRATIO
         raise ValueError("이카운트 사용자 ID와 API 인증키를 입력하세요.")
     if not normalized["print_board_user_id"] or not normalized["print_board_password"]:
         raise ValueError("인쇄 게시판 아이디와 비밀번호를 입력하세요.")
+    if bool(normalized["webmail_user_id"]) != bool(normalized["webmail_password"]):
+        raise ValueError("REQM 웹메일 아이디와 비밀번호를 모두 입력하세요.")
     encrypted = {field: protect_secret(value) for field, value in normalized.items() if value}
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(".tmp")
@@ -62,4 +66,3 @@ def print_board_credentials() -> dict[str, str]:
         "user_id": values["print_board_user_id"],
         "password": values["print_board_password"],
     }
-

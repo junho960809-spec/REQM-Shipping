@@ -11,7 +11,7 @@ from format_store import load_formats
 
 COLUMN_ALIASES = {
     "channel": ["판매처명", "판매처", "쇼핑몰명", "mall"],
-    "order_number": ["판매처주문번호", "주문번호", "쇼핑몰주문번호", "품목별 주문번호", "배송번호"],
+    "order_number": ["판매처주문번호", "주문번호", "쇼핑몰주문번호", "품목별 주문번호", "품목주문번호", "배송번호"],
     "serial_number": ["일련번호"],
     "recipient": ["수령인", "수취인", "받는분", "수령자", "수령인명", "인수자"],
     "zipcode": ["수령자우편번호", "우편번호", "수령인 우편번호(XXXXXX)"],
@@ -23,7 +23,7 @@ COLUMN_ALIASES = {
         "수령인 핸드폰", "수령인 전화번호", "인수자 HP",
     ],
     "product_name": ["판매처상품명", "상품명", "품목명", "주문상품명(기간할인 제목+버전)"],
-    "item_code": ["품목코드", "상품코드", "제품코드", "재고코드", "협력사상품코드", "SKU", "PROD_CD", "ITEM CODE"],
+    "item_code": ["품목코드", "상품코드", "상품코드(SKU 코드)", "제품코드", "재고코드", "협력사상품코드", "SKU", "PROD_CD", "ITEM CODE"],
     "option1": ["상품옵션", "옵션", "속성명"],
     "option2": ["상품옵션2", "옵션2"],
     "option3": ["상품옵션3", "옵션3"],
@@ -212,6 +212,12 @@ def _find_header(rows: list[list[Any]], profile: dict[str, Any] | None = None) -
         )
     elif {"인수자", "인수자hp", "속성명", "협력사상품코드"}.issubset(header_values):
         format_name = "판매처 직접파일 · 현대홈쇼핑"
+    elif {"id", "품목주문번호", "상품코드(sku코드)", "상품옵션코드", "환불수량"}.issubset(header_values):
+        format_name = "판매처 직접파일 · 와이즐리"
+        best_map["order_number"] = next(
+            index for index, value in enumerate(rows[best_row])
+            if _normalize_header(value) == "품목주문번호"
+        )
     elif {"mall", "수령인명", "업체명", "모델명"}.issubset(header_values):
         format_name = "판매처 직접파일 · 이알아이"
     elif "재고매칭1옵션내용" in header_values or "재고매칭1" in header_values:
@@ -287,6 +293,8 @@ def load_orders(file_path: str, profile: dict[str, Any] | None = None) -> tuple[
             channel = "쌤몰"
         elif format_name == "판매처 직접파일 · 현대홈쇼핑":
             channel = "현대홈쇼핑"
+        elif format_name == "판매처 직접파일 · 와이즐리":
+            channel = "와이즐리"
         model = get("model")
         if not model and format_name.startswith("판매처 직접파일"):
             # 판매처 파일에 모델 열이 없을 때 상품명 안의 영문+숫자 모델을 사용한다.

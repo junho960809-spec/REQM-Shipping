@@ -89,6 +89,7 @@ from program_login_store import delete_program_login, load_program_login, save_p
 from wekeep_report_service import load_config as load_wekeep_report_config, save_config as save_wekeep_report_config, register_daily_task, remove_daily_task, open_login_window, run_report, TASK_NAME
 from wekeep_order_automation import open_order_registration
 from wekeep_transfer_dialog import WeKeepTransferDialog
+from wisely_mail_service import download_today_order
 
 
 APP_DIR = Path(__file__).resolve().parent
@@ -109,7 +110,7 @@ DEFAULT_CONFIG = {
     },
 }
 ADMIN_USER_ID = "c7937d51-1a14-47aa-987e-6254c6c79014"
-APP_VERSION = "1.0.98"
+APP_VERSION = "1.0.99"
 TEST_MODE = os.getenv("REQM_TEST_MODE", "").strip().casefold() in {"1", "true", "yes"}
 UPDATE_BASE_URL = "https://jcslohuraqclhryeqxoc.supabase.co/storage/v1/object/public/reqm-updates"
 UPDATE_MANIFEST_URL = f"{UPDATE_BASE_URL}/manifest.json"
@@ -1853,6 +1854,22 @@ class InventoryWorker(QThread):
             self.failed.emit(str(exc))
 
 
+class WiselyMailWorker(QThread):
+    succeeded = Signal(str)
+    failed = Signal(str)
+
+    def __init__(self, user_id: str, password: str):
+        super().__init__()
+        self.user_id = user_id
+        self.password = password
+
+    def run(self) -> None:
+        try:
+            self.succeeded.emit(str(download_today_order(self.user_id, self.password)))
+        except Exception as exc:
+            self.failed.emit(str(exc))
+
+
 class InventoryPreviewDialog(QDialog):
     """Design preview for the future Ecount inventory lookup workflow."""
 
@@ -2618,6 +2635,11 @@ class MainWindow(QMainWindow):
         self.auto_button.setFixedHeight(34)
         self.auto_button.setMaximumWidth(175)
         self.auto_button.setEnabled(False)
+        self.wisely_mail_button = QPushButton("와이즐리 주문 자동 가져오기")
+        self.wisely_mail_button.setObjectName("fileButton")
+        self.wisely_mail_button.setFixedHeight(34)
+        self.wisely_mail_button.setMaximumWidth(190)
+        self.wisely_mail_button.setEnabled(False)
         self.db_button = QPushButton("▣  DB 관리")
         self.db_button.setObjectName("adminButton")
         self.db_button.setMaximumWidth(155)
@@ -2712,6 +2734,7 @@ class MainWindow(QMainWindow):
         self.order_drop_zone.filesDropped.connect(self.load_dropped_order_files)
         file_layout.addWidget(file_label)
         file_layout.addWidget(self.auto_button, 0, Qt.AlignmentFlag.AlignCenter)
+        file_layout.addWidget(self.wisely_mail_button, 0, Qt.AlignmentFlag.AlignCenter)
         file_layout.addWidget(self.order_drop_zone, 0, Qt.AlignmentFlag.AlignCenter)
         file_card.setFixedWidth(215)
         top_work_row = QHBoxLayout()
@@ -2778,6 +2801,7 @@ class MainWindow(QMainWindow):
         self.b2c_button.clicked.connect(self.select_b2c_file)
         self.b2b_button.clicked.connect(self.select_b2b_file)
         self.auto_button.clicked.connect(lambda: self.select_file("auto"))
+        self.wisely_mail_button.clicked.connect(self.fetch_wisely_order)
         self.db_button.clicked.connect(self.open_db_manager)
         self.export_button.clicked.connect(self.export_file)
         self.ecount_button.clicked.connect(self.open_ecount_transfer)
@@ -3572,6 +3596,7 @@ class MainWindow(QMainWindow):
         self.b2c_button.setEnabled(True)
         self.b2b_button.setEnabled(True)
         self.auto_button.setEnabled(True)
+        self.wisely_mail_button.setEnabled(True)
         self.supabase_client = catalog["client"]
         self.catalog = catalog
         self.duty_locations, restored_count = sync_remote_locations(catalog.get("duty_locations", []))
@@ -3772,6 +3797,7 @@ class MainWindow(QMainWindow):
         self.dashboard_db_button.setEnabled(False)
         self.dashboard_users_button.setEnabled(False)
         self.auto_button.setEnabled(False)
+        self.wisely_mail_button.setEnabled(False)
         self.b2c_button.setEnabled(False)
         self.b2b_button.setEnabled(False)
         self.export_button.setEnabled(False)
@@ -3991,6 +4017,38 @@ class MainWindow(QMainWindow):
 
     def select_b2c_file(self) -> None:
         self.select_file("b2c")
+
+    def fetch_wisely_order(self) -> None:
+        credentials = load_integration_credentials()
+        if not credentials.get("webmail_user_id") or not credentials.get("webmail_password"):
+            QMessageBox.information(
+                self, "와이즐리 주문 메일",
+                "먼저 메인 화면의 '연동 계정'에서 REQM 웹메일 계정을 저장해 주세요.",
+            )
+            return
+        if getattr(self, "wisely_mail_worker", None) and self.wisely_mail_worker.isRunning():
+            return
+        self.wisely_mail_button.setEnabled(False)
+        self.status.setText("오늘 와이즐리 주문 메일과 첨부파일을 확인하는 중...")
+        self.wisely_mail_worker = WiselyMailWorker(
+            credentials["webmail_user_id"], credentials["webmail_password"],
+        )
+        self.wisely_mail_worker.succeeded.connect(self.on_wisely_order_downloaded)
+        self.wisely_mail_worker.failed.connect(self.on_wisely_order_failed)
+        self.wisely_mail_worker.start()
+
+    def on_wisely_order_downloaded(self, path: str) -> None:
+        self.wisely_mail_button.setEnabled(True)
+        self.load_order_file(path, "b2c")
+        if self.current_orders:
+            self.status.setText(
+                self.status.text() + " · 와이즐리 메일 자동 수신 · 위킵 B2C 일반 등록 대상"
+            )
+
+    def on_wisely_order_failed(self, message: str) -> None:
+        self.wisely_mail_button.setEnabled(True)
+        self.status.setText("와이즐리 주문 메일 확인 실패")
+        QMessageBox.warning(self, "와이즐리 주문 메일", message)
 
     def select_b2b_file(self) -> None:
         self.select_file("b2b")
