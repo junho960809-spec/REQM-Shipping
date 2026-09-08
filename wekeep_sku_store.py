@@ -106,6 +106,7 @@ def prepare_wekeep_orders(
             "phone": str(order.get("phone") or "").strip(),
             "zipcode": str(order.get("zipcode") or "").strip(),
             "address": str(order.get("address") or "").strip(),
+            "message": str(order.get("message") or "").strip(),
         }
         if str(order.get("status") or "") in blocked_statuses:
             result.append({**base, "state": "review", "reason": "REQM 품목 매칭을 먼저 확정하세요."})

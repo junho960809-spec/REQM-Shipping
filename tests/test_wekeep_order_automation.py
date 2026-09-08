@@ -16,6 +16,9 @@ class FakeLocator:
     def click(self) -> None:
         self.calls.append(("click", self.name))
 
+    def set_input_files(self, path: str) -> None:
+        self.calls.append(("files", self.name, path))
+
 
 class FakePage:
     def __init__(self) -> None:
@@ -41,6 +44,25 @@ class WeKeepOrderAutomationTests(unittest.TestCase):
 
         self.assertIn(("locator", 'button[id^="B2B-"]'), page.calls)
         self.assertIn(("click", 'button[id^="B2B-"]'), page.calls)
+        self.assertIn(("click", "#excelOrderBtn"), page.calls)
+
+    def test_opens_distinct_b2b_buying_route(self) -> None:
+        page = FakePage()
+
+        open_registration_panel(page, "b2b_buying")
+
+        self.assertIn(("click", 'button[id^="B2B-"]'), page.calls)
+        self.assertIn(("click", "#shipmentExcelBtn"), page.calls)
+
+    def test_attaches_file_without_clicking_save(self) -> None:
+        page = FakePage()
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "upload.xlsx"
+            path.write_bytes(b"xlsx")
+            open_registration_panel(page, "b2c_buying", path)
+
+        self.assertTrue(any(call[:2] == ("files", "#file_upload_excelPopup_shipment") for call in page.calls))
+        self.assertFalse(any("excelFileUpload" in str(call) for call in page.calls))
 
     def test_load_pending_payload(self) -> None:
         with tempfile.TemporaryDirectory() as folder:

@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
 
 from wekeep_sku_store import load_wekeep_sku_mappings, prepare_wekeep_orders, readiness_counts
 from wekeep_order_automation import save_pending_payload
+from wekeep_upload_file import ORDER_KIND_LABELS, create_wekeep_upload
 
 
 PENDING_DIR = Path(os.getenv("LOCALAPPDATA", str(Path.home()))) / "REQM" / "wekeep_orders"
@@ -46,8 +47,9 @@ class WeKeepTransferDialog(QDialog):
         guide.setWordWrap(True)
         self.kind = QComboBox()
         self.kind.addItem("B2C 일반주문", "b2c")
+        self.kind.addItem("B2C 사입형", "b2c_buying")
         self.kind.addItem("B2B 일반주문", "b2b")
-        self.kind.addItem("사입형 B2C", "buying")
+        self.kind.addItem("B2B 사입형", "b2b_buying")
         self.kind.setCurrentIndex(1 if current_mode == "duty_free" else 0)
         self.summary = QLabel()
         self.summary.setStyleSheet("font-weight:800;padding:8px")
@@ -65,7 +67,7 @@ class WeKeepTransferDialog(QDialog):
         self.table.setAlternatingRowColors(True)
         self.table.verticalHeader().setVisible(False)
 
-        self.open_button = QPushButton("위킵 입력 화면 열기")
+        self.open_button = QPushButton("업로드 파일 생성 · 위킵에 첨부")
         self.open_button.setObjectName("primaryButton")
         close_button = QPushButton("닫기")
         buttons = QHBoxLayout()
@@ -122,11 +124,23 @@ class WeKeepTransferDialog(QDialog):
             QMessageBox.warning(self, "위킵 반영 보류", "검토 필요 주문을 먼저 수동 매칭해 주세요.")
             return
         PENDING_DIR.mkdir(parents=True, exist_ok=True)
+        order_kind = str(self.kind.currentData())
+        try:
+            upload_path = create_wekeep_upload(self.rows, order_kind)
+        except Exception as exc:
+            QMessageBox.critical(self, "위킵 파일 생성 실패", str(exc))
+            return
         path = PENDING_DIR / f"pending_{datetime.now():%Y%m%d_%H%M%S}.json"
-        save_pending_payload(path, {"version": 1, "order_kind": self.kind.currentData(), "rows": self.rows})
+        save_pending_payload(path, {
+            "version": 2,
+            "order_kind": order_kind,
+            "upload_path": str(upload_path),
+            "rows": self.rows,
+        })
         subprocess.Popen([sys.executable, "--wekeep-order-preview", str(path)])
         QMessageBox.information(
             self,
-            "위킵 화면 열기",
-            "위킵 주문등록 화면을 엽니다. 현재 단계에서는 개인정보를 자동 입력하거나 최종 저장하지 않습니다.",
+            "위킵 파일 첨부",
+            f"{ORDER_KIND_LABELS[order_kind]} 공식 양식을 생성해 위킵에 자동 첨부합니다.\n"
+            "열린 화면의 내용을 확인한 뒤 최종 '저장'은 작업자가 눌러 주세요.",
         )
