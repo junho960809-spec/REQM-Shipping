@@ -110,7 +110,7 @@ DEFAULT_CONFIG = {
     },
 }
 ADMIN_USER_ID = "c7937d51-1a14-47aa-987e-6254c6c79014"
-APP_VERSION = "1.0.99"
+APP_VERSION = "1.1.0"
 TEST_MODE = os.getenv("REQM_TEST_MODE", "").strip().casefold() in {"1", "true", "yes"}
 UPDATE_BASE_URL = "https://jcslohuraqclhryeqxoc.supabase.co/storage/v1/object/public/reqm-updates"
 UPDATE_MANIFEST_URL = f"{UPDATE_BASE_URL}/manifest.json"
@@ -2734,12 +2734,12 @@ class MainWindow(QMainWindow):
         self.order_drop_zone.filesDropped.connect(self.load_dropped_order_files)
         file_layout.addWidget(file_label)
         file_layout.addWidget(self.auto_button, 0, Qt.AlignmentFlag.AlignCenter)
-        file_layout.addWidget(self.wisely_mail_button, 0, Qt.AlignmentFlag.AlignCenter)
         file_layout.addWidget(self.order_drop_zone, 0, Qt.AlignmentFlag.AlignCenter)
         file_card.setFixedWidth(215)
         top_work_row = QHBoxLayout()
         top_work_row.setSpacing(18)
         top_work_row.addWidget(self.login_card, 0, Qt.AlignmentFlag.AlignTop)
+        top_work_row.addWidget(self.wisely_mail_button, 0, Qt.AlignmentFlag.AlignTop)
         top_work_row.addStretch(1)
         top_work_row.addWidget(file_card, 0, Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignRight)
         layout.addLayout(top_work_row)

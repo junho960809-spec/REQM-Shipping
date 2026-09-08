@@ -35,6 +35,16 @@ def _clean_text(value: object) -> str:
     return "'" + text if text.startswith(("=", "+", "-", "@")) else text
 
 
+def _quantity_text(value: object) -> str:
+    try:
+        quantity = float(str(value if value is not None else "").replace(",", "").strip())
+    except ValueError as exc:
+        raise ValueError(f"위킵 수량이 숫자가 아닙니다: {value}") from exc
+    if quantity <= 0 or not quantity.is_integer():
+        raise ValueError(f"위킵 수량은 1 이상의 정수여야 합니다: {value}")
+    return str(int(quantity))
+
+
 def _b2c_values(row: dict) -> list[object]:
     phone = _clean_text(row.get("phone"))
     return [
@@ -42,7 +52,7 @@ def _b2c_values(row: dict) -> list[object]:
         _clean_text(row.get("sku_no")),
         _clean_text(row.get("wekeep_product_name") or row.get("source_product_name")),
         _clean_text(row.get("options")),
-        int(row.get("quantity") or 0),
+        _quantity_text(row.get("quantity")),
         None,
         None,
         _clean_text(row.get("recipient")),
@@ -62,7 +72,7 @@ def _b2b_values(row: dict) -> list[object]:
     values[0] = _clean_text(row.get("order_number"))
     values[1] = _clean_text(row.get("wekeep_product_name") or row.get("source_product_name"))
     values[2] = _clean_text(row.get("sku_no"))
-    values[6] = int(row.get("quantity") or 0)
+    values[6] = _quantity_text(row.get("quantity"))
     values[9] = _clean_text(row.get("recipient"))
     values[10] = phone
     values[11] = phone
@@ -103,4 +113,23 @@ def create_wekeep_upload(
         for column_index, value in enumerate(values_for(row), start=1):
             sheet.cell(row_index, column_index).value = value
     workbook.save(target)
+    workbook.close()
+
+    quantity_column = 7 if order_kind.startswith("b2b") else 5
+    verification = load_workbook(target, read_only=True, data_only=True)
+    try:
+        saved_sheet = verification.active
+        invalid_rows = []
+        for row_index in range(2, len(rows) + 2):
+            saved_value = str(saved_sheet.cell(row_index, quantity_column).value or "").strip()
+            if not saved_value.isdigit() or int(saved_value) <= 0:
+                invalid_rows.append(row_index)
+    finally:
+        verification.close()
+    if invalid_rows:
+        target.unlink(missing_ok=True)
+        raise ValueError(
+            "위킵 업로드 파일의 수량 검증에 실패했습니다. 행: "
+            + ", ".join(map(str, invalid_rows))
+        )
     return target

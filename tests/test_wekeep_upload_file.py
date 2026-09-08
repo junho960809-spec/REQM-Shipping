@@ -38,7 +38,7 @@ class WeKeepUploadFileTests(unittest.TestCase):
             with patch.object(export, "bundled_template_path", return_value=template):
                 export.create_wekeep_upload([self._row()], "b2c", target)
             row = [cell.value for cell in load_workbook(target).active[2]]
-        self.assertEqual(row[:5], ["O-1", "SKU-1", "제품", "블루", 2])
+        self.assertEqual(row[:5], ["O-1", "SKU-1", "제품", "블루", "2"])
         self.assertEqual(row[7:13], ["홍길동", "010-1234-5678", "010-1234-5678", "01234", "서울시", "문 앞"])
 
     def test_creates_b2b_official_layout(self) -> None:
@@ -50,12 +50,18 @@ class WeKeepUploadFileTests(unittest.TestCase):
                 export.create_wekeep_upload([self._row()], "b2b_buying", target)
             row = [cell.value for cell in load_workbook(target).active[2]]
         self.assertEqual(row[:3], ["O-1", "제품", "SKU-1"])
-        self.assertEqual(row[6], 2)
+        self.assertEqual(row[6], "2")
         self.assertEqual(row[9:15], ["홍길동", "010-1234-5678", "010-1234-5678", "01234", "서울시", "문 앞"])
 
     def test_rejects_review_rows(self) -> None:
         with self.assertRaisesRegex(ValueError, "검토 필요"):
             export.create_wekeep_upload([{"state": "review"}], "b2c")
+
+    def test_rejects_zero_quantity_before_opening_wekeep(self) -> None:
+        row = self._row()
+        row["quantity"] = 0
+        with self.assertRaisesRegex(ValueError, "1 이상의 정수"):
+            export.create_wekeep_upload([row], "b2c")
 
 
 if __name__ == "__main__":
