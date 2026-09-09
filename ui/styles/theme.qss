@@ -1,0 +1,119 @@
+QMainWindow, QWidget#mainContainer, QDialog {
+    background: #f6f8f8;
+    color: #172321;
+    font-family: "맑은 고딕";
+    font-size: 13px;
+}
+
+QLabel#appTitle, QLabel#dashboardTitle {
+    color: #102521;
+    font-size: 30px;
+    font-weight: 900;
+}
+QLabel#appSubtitle, QLabel#dashboardHint, QLabel[role="muted"] {
+    color: #687773;
+    font-size: 13px;
+}
+QLabel#versionLabel { color: #98a39f; font-size: 10px; }
+QLabel#sectionTitle, QLabel[role="sectionTitle"] {
+    color: #102521;
+    font-size: 18px;
+    font-weight: 850;
+    padding: 7px 2px;
+}
+QLabel#statusCard, QLabel[role="status"] {
+    background: #e5f5f1;
+    color: #24564e;
+    border: 1px solid #cde8e2;
+    border-radius: 14px;
+    padding: 12px 16px;
+}
+
+QFrame#loginCard, QFrame#fileCard, QFrame#locationCard,
+QFrame#accountCard, QFrame[role="card"] {
+    background: #ffffff;
+    border: 1px solid #dce5e2;
+    border-radius: 16px;
+}
+QFrame#fileCard { background: #eef3f1; }
+QFrame#locationCard { background: #faf2e7; border-color: #f1dfc8; }
+
+QLineEdit, QComboBox, QSpinBox, QDateEdit, QTimeEdit, QTextEdit {
+    background: #ffffff;
+    color: #172321;
+    border: 1px solid #ccd9d5;
+    border-radius: 10px;
+    padding: 9px 12px;
+    selection-background-color: #41b8aa;
+}
+QLineEdit:focus, QComboBox:focus, QTextEdit:focus { border: 2px solid #188f82; }
+
+QPushButton {
+    background: #ffffff;
+    color: #172321;
+    border: 1px solid #c7d4d0;
+    border-radius: 11px;
+    padding: 9px 15px;
+    font-weight: 700;
+}
+QPushButton:hover { background: #eaf7f4; border-color: #47b8ab; }
+QPushButton:pressed { background: #d7eee9; }
+QPushButton:disabled { background: #e9eeec; color: #9aa6a2; border-color: #e0e7e4; }
+QPushButton#primaryButton, QPushButton#fileButton, QPushButton#exportButton,
+QPushButton[variant="primary"] {
+    background: #153f38;
+    color: #ffffff;
+    border: none;
+}
+QPushButton#primaryButton:hover, QPushButton#fileButton:hover,
+QPushButton#exportButton:hover, QPushButton[variant="primary"]:hover { background: #246b60; }
+QPushButton#exportButton { padding: 13px 25px; font-size: 15px; }
+QPushButton[variant="danger"] { color: #b93822; border-color: #efb3a8; background: #fff7f5; }
+
+QPushButton#dashboardCard {
+    background: #ffffff;
+    border: 1px solid #dbe5e2;
+    border-radius: 18px;
+    padding: 20px;
+    font-size: 16px;
+    text-align: left;
+}
+QPushButton#dashboardCard:hover { background: #eaf7f4; border: 2px solid #47b8ab; }
+
+QTableWidget {
+    background: #ffffff;
+    alternate-background-color: #f7faf9;
+    border: 1px solid #dce5e2;
+    border-radius: 12px;
+    gridline-color: #e8eeec;
+    selection-background-color: #d5efea;
+    selection-color: #172321;
+}
+QHeaderView::section {
+    background: #eaf0ee;
+    color: #20332f;
+    border: none;
+    border-right: 1px solid #d9e2df;
+    border-bottom: 1px solid #d3ddda;
+    padding: 10px;
+    font-weight: 800;
+}
+
+QDialog#startupLogin { background: #f6f8f8; }
+QFrame#loginBrandCard { background: #e3f6f1; border: none; border-radius: 18px; }
+QLabel#loginLogo { background: #188f82; color: white; border-radius: 12px; font-size: 22px; font-weight: 900; }
+QLabel#loginEyebrow { color: #188f82; font-size: 11px; font-weight: 800; letter-spacing: 2px; }
+QLabel#loginTitle { color: #102521; font-size: 26px; font-weight: 900; }
+QLabel#loginHint, QLabel#loginMessage { color: #687773; font-size: 12px; }
+QFrame#loginFormCard { background: #ffffff; border: 1px solid #dce5e2; border-radius: 16px; }
+
+QDialog#integrationAccounts, QDialog#wekeepPreview { background: #f6f8f8; }
+QLabel#dialogTitle { color: #102521; font-size: 24px; font-weight: 900; }
+QLabel#dialogGuide { color: #687773; font-size: 12px; }
+QLabel#dialogSummary { font-weight: 800; padding: 8px; }
+
+QScrollBar:vertical { background: #edf2f0; width: 18px; margin: 2px; border-radius: 8px; }
+QScrollBar::handle:vertical { background: #8fc9c0; min-height: 44px; border-radius: 7px; margin: 2px; }
+QScrollBar:horizontal { background: #edf2f0; height: 18px; margin: 2px; border-radius: 8px; }
+QScrollBar::handle:horizontal { background: #8fc9c0; min-width: 44px; border-radius: 7px; margin: 2px; }
+QScrollBar::add-line, QScrollBar::sub-line { width: 0; height: 0; }

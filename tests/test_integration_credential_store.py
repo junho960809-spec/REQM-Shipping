@@ -43,6 +43,13 @@ class IntegrationCredentialStoreTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "웹메일"):
                 save_integration_credentials(values, Path(folder) / "credentials.json")
 
+    def test_wekeep_credentials_must_be_saved_as_a_pair(self):
+        values = {field: f"value-{field}" for field in FIELDS}
+        values["wekeep_password"] = ""
+        with tempfile.TemporaryDirectory() as folder:
+            with self.assertRaisesRegex(ValueError, "위킵"):
+                save_integration_credentials(values, Path(folder) / "credentials.json")
+
 
 if __name__ == "__main__":
     unittest.main()

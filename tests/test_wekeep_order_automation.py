@@ -4,14 +4,24 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import Mock, patch
 
-from wekeep_order_automation import load_pending_payload, open_registration_panel, save_pending_payload
+from shipment_job_store import ShipmentJobStore
+from wekeep_order_automation import (
+    load_pending_payload,
+    ensure_authenticated,
+    open_registration_panel,
+    save_pending_payload,
+    submit_registration,
+    run_wekeep_job,
+)
 
 
 class FakeLocator:
-    def __init__(self, calls: list, name: str) -> None:
+    def __init__(self, calls: list, name: str, page=None) -> None:
         self.calls = calls
         self.name = name
+        self.page = page
 
     def click(self) -> None:
         self.calls.append(("click", self.name))
@@ -19,24 +29,57 @@ class FakeLocator:
     def set_input_files(self, path: str) -> None:
         self.calls.append(("files", self.name, path))
 
+    def count(self) -> int:
+        return 1
+
+    def is_visible(self) -> bool:
+        return True
+
+    def is_enabled(self) -> bool:
+        return True
+
+    def inner_text(self) -> str:
+        return self.page.body_text if self.name == "body" else ""
+
+    def fill(self, value: str) -> None:
+        self.calls.append(("fill", self.name, value))
+
+    def check(self) -> None:
+        self.calls.append(("check", self.name))
+
 
 class FakePage:
     def __init__(self) -> None:
         self.calls: list = []
+        self.body_text = ""
+        self.url = "https://fbw.wekeep.co.kr/fbw/login"
 
     def get_by_role(self, role: str, **kwargs) -> FakeLocator:
         self.calls.append(("role", role, kwargs))
-        return FakeLocator(self.calls, kwargs["name"])
+        return FakeLocator(self.calls, kwargs["name"], self)
 
     def locator(self, selector: str) -> FakeLocator:
         self.calls.append(("locator", selector))
-        return FakeLocator(self.calls, selector)
+        return FakeLocator(self.calls, selector, self)
 
     def wait_for_timeout(self, value: int) -> None:
         self.calls.append(("wait", value))
 
+    def goto(self, url: str, **kwargs) -> None:
+        self.calls.append(("goto", url))
+        self.url = url
+
 
 class WeKeepOrderAutomationTests(unittest.TestCase):
+    @staticmethod
+    def _prepared_rows() -> list[dict]:
+        return [{
+            "state": "ready", "order_number": "O-1", "channel": "와이즐리",
+            "item_code": "A", "sku_no": "SKU-A", "wekeep_product_name": "제품",
+            "quantity": 1, "recipient": "홍길동", "phone": "010-1234-5678",
+            "zipcode": "01234", "address": "서울",
+        }]
+
     def test_opens_verified_b2b_seller_panel(self) -> None:
         page = FakePage()
 
@@ -63,6 +106,61 @@ class WeKeepOrderAutomationTests(unittest.TestCase):
 
         self.assertTrue(any(call[:2] == ("files", "#file_upload_excelPopup_shipment") for call in page.calls))
         self.assertFalse(any("excelFileUpload" in str(call) for call in page.calls))
+
+    def test_submits_only_exact_route_button_and_requires_success_response(self) -> None:
+        page = FakePage()
+        page.body_text = "주문이 등록되었습니다. 주문번호: WK-123"
+
+        result = submit_registration(page, "b2c")
+
+        self.assertIn(("click", "#excelFileUpload"), page.calls)
+        self.assertEqual(result, {"state": "completed", "provider_reference": "WK-123"})
+
+    def test_unconfirmed_response_is_never_reported_as_success(self) -> None:
+        page = FakePage()
+        page.body_text = "주문 목록"
+
+        self.assertEqual(submit_registration(page, "b2c_buying")["state"], "unknown")
+
+    def test_saved_credentials_can_log_in_without_showing_browser(self) -> None:
+        page = FakePage()
+
+        ensure_authenticated(page, "wekeep-user", "wekeep-secret")
+
+        self.assertIn(("fill", 'input[name="j_username"]', "wekeep-user"), page.calls)
+        self.assertIn(("fill", 'input[name="j_password"]', "wekeep-secret"), page.calls)
+        self.assertIn(("click", 'input[type="submit"][value="시작하기"]'), page.calls)
+
+    def test_headless_job_is_completed_only_after_submit_confirmation(self) -> None:
+        class PlaywrightManager:
+            def __enter__(self):
+                return object()
+
+            def __exit__(self, *_args):
+                return False
+
+        with tempfile.TemporaryDirectory() as folder:
+            store = ShipmentJobStore(Path(folder) / "jobs.sqlite3")
+            job = store.create(self._prepared_rows(), "b2c")
+            page = Mock(url="https://fbw.wekeep.co.kr/fbw/admin/v2/order/list.do")
+            context = Mock(pages=[page])
+
+            def confirmed(_page, _kind, *, on_submitted=None):
+                on_submitted()
+                return {"state": "completed", "provider_reference": "WK-123"}
+
+            with patch("playwright.sync_api.sync_playwright", return_value=PlaywrightManager()), patch(
+                "wekeep_order_automation.launch_wekeep_context", return_value=context
+            ), patch("wekeep_order_automation.create_wekeep_upload"), patch(
+                "wekeep_order_automation.load_integration_credentials",
+                return_value={"wekeep_user_id": "user", "wekeep_password": "secret"},
+            ), patch("wekeep_order_automation.ensure_authenticated"), patch(
+                "wekeep_order_automation.open_registration_panel"
+            ), patch("wekeep_order_automation.submit_registration", side_effect=confirmed):
+                completed = run_wekeep_job(job["id"], store.path)
+
+            self.assertEqual(completed["state"], "completed")
+            self.assertEqual(completed["provider_reference"], "WK-123")
 
     def test_load_pending_payload(self) -> None:
         with tempfile.TemporaryDirectory() as folder:

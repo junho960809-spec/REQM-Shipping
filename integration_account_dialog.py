@@ -12,15 +12,17 @@ from integration_credential_store import (
     load_integration_credentials,
     save_integration_credentials,
 )
+from ui.texts import text
+from ui.theme import load_theme
 
 
 class IntegrationAccountDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("연동 계정 관리")
+        self.setWindowTitle(text("accounts.window_title"))
         self.setMinimumWidth(620)
         self.setObjectName("integrationAccounts")
-        self.setStyleSheet("""
+        self.setStyleSheet(load_theme() or """
             QDialog#integrationAccounts { background:#f4f7fb;color:#172f52;font-family:'맑은 고딕';font-size:13px; }
             QFrame#accountCard { background:white;border:1px solid #d9e3ee;border-radius:14px; }
             QLabel#title { font-size:24px;font-weight:900;color:#10294a; }
@@ -34,8 +36,8 @@ class IntegrationAccountDialog(QDialog):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(24, 22, 24, 22)
         layout.setSpacing(14)
-        title = QLabel("연동 계정 관리"); title.setObjectName("title")
-        hint = QLabel("한 번 저장하면 이카운트와 인쇄 발주 기능에서 자동으로 사용합니다."); hint.setObjectName("hint")
+        title = QLabel(text("accounts.title")); title.setObjectName("dialogTitle")
+        hint = QLabel(text("accounts.guide")); hint.setObjectName("dialogGuide")
         layout.addWidget(title); layout.addWidget(hint)
 
         self.ecount_user_id = QLineEdit()
@@ -61,12 +63,19 @@ class IntegrationAccountDialog(QDialog):
             ("웹메일 비밀번호", self.webmail_password),
         )))
 
-        security = QLabel("모든 값은 현재 Windows 사용자만 해독할 수 있도록 암호화해 저장합니다.")
-        security.setObjectName("hint"); security.setWordWrap(True); layout.addWidget(security)
+        self.wekeep_user_id = QLineEdit()
+        self.wekeep_password = self.secret_field("위킵 비밀번호")
+        layout.addWidget(self.card("위킵 출고", (
+            ("위킵 ID", self.wekeep_user_id),
+            ("위킵 비밀번호", self.wekeep_password),
+        )))
+
+        security = QLabel(text("accounts.security"))
+        security.setObjectName("dialogGuide"); security.setWordWrap(True); layout.addWidget(security)
         actions = QHBoxLayout()
-        delete_button = QPushButton("저장정보 삭제"); delete_button.setObjectName("danger")
-        close_button = QPushButton("닫기")
-        save_button = QPushButton("저장"); save_button.setObjectName("primary")
+        delete_button = QPushButton("저장정보 삭제"); delete_button.setProperty("variant", "danger")
+        close_button = QPushButton(text("common.close"))
+        save_button = QPushButton("저장"); save_button.setProperty("variant", "primary")
         actions.addWidget(delete_button); actions.addStretch(1); actions.addWidget(close_button); actions.addWidget(save_button)
         layout.addLayout(actions)
         delete_button.clicked.connect(self.delete_saved)
@@ -98,6 +107,8 @@ class IntegrationAccountDialog(QDialog):
             "print_board_password": self.print_board_password.text(),
             "webmail_user_id": self.webmail_user_id.text().strip(),
             "webmail_password": self.webmail_password.text(),
+            "wekeep_user_id": self.wekeep_user_id.text().strip(),
+            "wekeep_password": self.wekeep_password.text(),
         }
 
     def load_saved(self) -> None:
@@ -126,6 +137,7 @@ class IntegrationAccountDialog(QDialog):
             self.ecount_user_id, self.ecount_password, self.ecount_api_key,
             self.print_board_user_id, self.print_board_password,
             self.webmail_user_id, self.webmail_password,
+            self.wekeep_user_id, self.wekeep_password,
         ):
             field.clear()
         QMessageBox.information(self, "저장정보 삭제", "저장된 연동 계정을 삭제했습니다.")

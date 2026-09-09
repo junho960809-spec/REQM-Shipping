@@ -18,6 +18,8 @@ FIELDS = (
     "print_board_password",
     "webmail_user_id",
     "webmail_password",
+    "wekeep_user_id",
+    "wekeep_password",
 )
 
 
@@ -29,6 +31,8 @@ def save_integration_credentials(values: dict[str, str], path: Path = INTEGRATIO
         raise ValueError("인쇄 게시판 아이디와 비밀번호를 입력하세요.")
     if bool(normalized["webmail_user_id"]) != bool(normalized["webmail_password"]):
         raise ValueError("REQM 웹메일 아이디와 비밀번호를 모두 입력하세요.")
+    if bool(normalized["wekeep_user_id"]) != bool(normalized["wekeep_password"]):
+        raise ValueError("위킵 아이디와 비밀번호를 모두 입력하세요.")
     encrypted = {field: protect_secret(value) for field, value in normalized.items() if value}
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(".tmp")

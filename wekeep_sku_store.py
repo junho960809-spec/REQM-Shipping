@@ -7,6 +7,8 @@ import re
 import sys
 from pathlib import Path
 
+from shipment_domain import ShipmentValidationError, positive_integer, validate_prepared_shipment
+
 
 APP_DIR = Path(__file__).resolve().parent
 LOCAL_DIR = Path(os.getenv("LOCALAPPDATA", str(Path.home()))) / "REQM"
@@ -115,7 +117,11 @@ def prepare_wekeep_orders(
         if not components:
             result.append({**base, "state": "review", "reason": "연결된 내부 품목코드가 없습니다."})
             continue
-        order_quantity = max(1, int(float(order.get("quantity") or 1)))
+        try:
+            order_quantity = positive_integer(order.get("quantity"), label="주문 수량")
+        except ShipmentValidationError as exc:
+            result.append({**base, "state": "review", "reason": str(exc)})
+            continue
         missing_codes = [code for code, _ in components if code.casefold() not in index]
         if missing_codes:
             result.append({
@@ -127,7 +133,7 @@ def prepare_wekeep_orders(
             continue
         for item_code, component_quantity in components:
             mapping = index[item_code.casefold()]
-            result.append({
+            prepared = {
                 **base,
                 "state": "ready",
                 "reason": "위킵 자동입력 준비 완료",
@@ -137,7 +143,13 @@ def prepare_wekeep_orders(
                 "sku_no": mapping.get("sku_no", ""),
                 "customer_barcode": mapping.get("customer_barcode", ""),
                 "quantity": order_quantity * component_quantity,
-            })
+            }
+            try:
+                validate_prepared_shipment(prepared, order_kind)
+            except ShipmentValidationError as exc:
+                prepared["state"] = "review"
+                prepared["reason"] = str(exc)
+            result.append(prepared)
     return result
 
 

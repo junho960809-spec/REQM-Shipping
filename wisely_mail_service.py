@@ -5,8 +5,13 @@ import hashlib
 import os
 from datetime import date
 from pathlib import Path
+from urllib.parse import urlparse
 
-WEBMAIL_URL = "http://webmail.reqm.co.kr/intro.php"
+WEBMAIL_URL = os.getenv("REQM_WEBMAIL_URL", "https://webmail.reqm.co.kr/intro.php")
+WEBMAIL_INBOX_URL = os.getenv(
+    "REQM_WEBMAIL_INBOX_URL",
+    "https://webmail.reqm.co.kr/user/mail/main.php?page=list&mbox=INBOX",
+)
 SENDER_ADDRESS = "purchase@wisely.store"
 SENDER_NAME = "와이즐리 물류팀"
 DOWNLOAD_DIR = Path(os.getenv("LOCALAPPDATA", str(Path.home()))) / "REQM" / "wisely_orders"
@@ -38,6 +43,12 @@ def file_sha256(path: str | Path) -> str:
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
+def require_secure_webmail_urls() -> None:
+    for url in (WEBMAIL_URL, WEBMAIL_INBOX_URL):
+        if urlparse(url).scheme.casefold() != "https":
+            raise RuntimeError("웹메일 자동 로그인은 HTTPS 보안 연결에서만 사용할 수 있습니다.")
+
+
 def download_today_order(user_id: str, password: str, *, day: date | None = None) -> Path:
     """Log in when needed and download the exact sender/date attachment."""
     from playwright.sync_api import sync_playwright
@@ -47,6 +58,7 @@ def download_today_order(user_id: str, password: str, *, day: date | None = None
     expected_name = attachment_name_for(target_day)
     if not str(user_id).strip() or not password:
         raise ValueError("연동 계정에서 REQM 웹메일 아이디와 비밀번호를 저장해 주세요.")
+    require_secure_webmail_urls()
 
     DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
     with sync_playwright() as playwright:
@@ -59,7 +71,7 @@ def download_today_order(user_id: str, password: str, *, day: date | None = None
                 page.locator('form[name="userLoginForm"] input[name="password"]').fill(password)
                 page.locator("form[name=\"userLoginForm\"] button[type=\"submit\"]").click()
                 page.wait_for_url("**/user/mail/**", timeout=60_000)
-            page.goto("http://webmail.reqm.co.kr/user/mail/main.php?page=list&mbox=INBOX", wait_until="domcontentloaded", timeout=60_000)
+            page.goto(WEBMAIL_INBOX_URL, wait_until="domcontentloaded", timeout=60_000)
             row = page.locator("tr").filter(has_text=SENDER_NAME).filter(has_text=expected_subject).first
             if not row.is_visible():
                 raise FileNotFoundError(f"오늘 와이즐리 주문 메일을 찾지 못했습니다: {expected_subject}")

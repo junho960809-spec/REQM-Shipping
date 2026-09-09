@@ -2,10 +2,14 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 from ecount_credential_store import protect_secret, unprotect_secret
+from integration_credential_store import load_integration_credentials
+from shipment_job_store import ALLOWED_TRANSITIONS, ShipmentJobStore
 from wekeep_report_service import PROFILE_PATH, launch_wekeep_context
+from wekeep_upload_file import OUTPUT_DIR, create_wekeep_upload
 
 
 ORDER_LIST_URL = "https://fbw.wekeep.co.kr/fbw/admin/v2/order/list.do"
@@ -15,6 +19,14 @@ ORDER_ROUTES = {
     "b2b": ('button[id^="B2B-"]', "#excelOrderBtn", "#file_upload_excelPopup"),
     "b2b_buying": ('button[id^="B2B-"]', "#shipmentExcelBtn", "#file_upload_excelPopup_shipment"),
 }
+SUBMIT_SELECTORS = {
+    "b2c": "#excelFileUpload",
+    "b2b": "#excelFileUpload",
+    "b2c_buying": "#shipmentExcelFileUpload",
+    "b2b_buying": "#shipmentExcelFileUpload",
+}
+SUCCESS_MARKERS = ("등록되었습니다", "등록 완료", "성공적으로 등록")
+FAILURE_MARKERS = ("등록 실패", "오류가 발생", "업로드 실패")
 
 
 def load_pending_payload(path: str | Path) -> dict:
@@ -50,6 +62,95 @@ def open_registration_panel(page, order_kind: str, upload_path: str | Path | Non
             raise FileNotFoundError(f"위킵 업로드 파일을 찾을 수 없습니다: {path}")
         page.locator(file_selector).set_input_files(str(path))
         page.wait_for_timeout(300)
+
+
+def ensure_authenticated(page, user_id: str, password: str) -> None:
+    """Reuse the saved session, or log in with encrypted integration credentials."""
+    if "/order/list.do" in page.url:
+        return
+    if not str(user_id).strip() or not password:
+        raise RuntimeError("연동 계정에서 위킵 아이디와 비밀번호를 저장해 주세요.")
+    username = page.locator('input[name="j_username"]')
+    password_field = page.locator('input[name="j_password"]')
+    if not username.is_visible() or not password_field.is_visible():
+        raise RuntimeError("위킵 로그인 화면을 확인할 수 없습니다. 사이트 화면이 변경됐을 수 있습니다.")
+    username.fill(str(user_id).strip())
+    password_field.fill(password)
+    remember = page.locator("#_spring_security_remember_me")
+    if remember.count() == 1:
+        remember.check()
+    page.locator('input[type="submit"][value="시작하기"]').click()
+    page.wait_for_timeout(1_000)
+    page.goto(ORDER_LIST_URL, wait_until="domcontentloaded", timeout=60_000)
+    if "/order/list.do" not in page.url:
+        raise RuntimeError("위킵 자동 로그인에 실패했습니다. 계정 정보 또는 추가 인증을 확인해 주세요.")
+
+
+def submit_registration(page, order_kind: str, *, on_submitted=None) -> dict:
+    """Click the exact final button and classify only an explicit response as success."""
+    selector = SUBMIT_SELECTORS.get(order_kind)
+    if not selector:
+        raise ValueError(f"지원하지 않는 위킵 주문 유형입니다: {order_kind}")
+    button = page.locator(selector)
+    if button.count() != 1 or not button.is_visible() or not button.is_enabled():
+        raise RuntimeError(
+            "위킵 최종 등록 버튼을 정확히 확인하지 못했습니다. 사이트 화면이 변경됐을 수 있어 전송을 중단합니다."
+        )
+    if on_submitted:
+        on_submitted()
+    button.click()
+    page.wait_for_timeout(1_500)
+    body_text = page.locator("body").inner_text()
+    if any(marker in body_text for marker in FAILURE_MARKERS):
+        raise RuntimeError("위킵이 주문 등록 실패를 반환했습니다.")
+    if any(marker in body_text for marker in SUCCESS_MARKERS):
+        reference_match = re.search(r"(?:주문|접수)번호\s*[:：]?\s*([A-Za-z0-9_-]+)", body_text)
+        return {"state": "completed", "provider_reference": reference_match.group(1) if reference_match else ""}
+    return {"state": "unknown", "provider_reference": ""}
+
+
+def run_wekeep_job(job_id: str, db_path: str | Path | None = None) -> dict:
+    """Submit an approved job headlessly and persist every safety-relevant state."""
+    from playwright.sync_api import sync_playwright
+
+    store = ShipmentJobStore(db_path) if db_path is not None else ShipmentJobStore()
+    job = store.get(job_id, include_payload=True)
+    rows = job["payload"]["rows"]
+    upload_path = OUTPUT_DIR / f"wekeep_{job_id}.xlsx"
+    submitted = False
+    try:
+        create_wekeep_upload(rows, job["order_kind"], upload_path)
+        store.transition(job_id, "submitting", detail="위킵 백그라운드 전송 시작", upload_path=upload_path)
+        credentials = load_integration_credentials()
+        PROFILE_PATH.mkdir(parents=True, exist_ok=True)
+        with sync_playwright() as playwright:
+            context = launch_wekeep_context(playwright, headless=True)
+            try:
+                page = context.pages[0] if context.pages else context.new_page()
+                page.goto(ORDER_LIST_URL, wait_until="domcontentloaded", timeout=60_000)
+                ensure_authenticated(page, credentials.get("wekeep_user_id", ""), credentials.get("wekeep_password", ""))
+                open_registration_panel(page, job["order_kind"], upload_path)
+
+                def mark_submitted() -> None:
+                    nonlocal submitted
+                    submitted = True
+                    store.transition(job_id, "verifying", detail="위킵 최종 등록 버튼 클릭")
+
+                result = submit_registration(page, job["order_kind"], on_submitted=mark_submitted)
+            finally:
+                context.close()
+        if result["state"] == "completed":
+            return store.transition(
+                job_id, "completed", detail="위킵 성공 응답 확인",
+                provider_reference=result.get("provider_reference", ""),
+            )
+        return store.transition(job_id, "unknown", detail="등록 요청 후 성공 응답을 확인하지 못함")
+    except Exception as exc:
+        current = store.get(job_id)
+        target = "unknown" if submitted or current["state"] == "verifying" else "failed"
+        if target in ALLOWED_TRANSITIONS.get(current["state"], set()):
+            store.transition(job_id, target, error=str(exc))
+        raise
 
 
 def open_order_registration(payload_path: str | Path) -> None:

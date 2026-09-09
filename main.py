@@ -90,6 +90,8 @@ from wekeep_report_service import load_config as load_wekeep_report_config, save
 from wekeep_order_automation import open_order_registration
 from wekeep_transfer_dialog import WeKeepTransferDialog
 from wisely_mail_service import download_today_order
+from ui.texts import text
+from ui.theme import load_theme
 
 
 APP_DIR = Path(__file__).resolve().parent
@@ -110,7 +112,7 @@ DEFAULT_CONFIG = {
     },
 }
 ADMIN_USER_ID = "c7937d51-1a14-47aa-987e-6254c6c79014"
-APP_VERSION = "1.1.1"
+APP_VERSION = "1.2.0"
 TEST_MODE = os.getenv("REQM_TEST_MODE", "").strip().casefold() in {"1", "true", "yes"}
 UPDATE_BASE_URL = "https://jcslohuraqclhryeqxoc.supabase.co/storage/v1/object/public/reqm-updates"
 UPDATE_MANIFEST_URL = f"{UPDATE_BASE_URL}/manifest.json"
@@ -1530,12 +1532,12 @@ class StartupLoginDialog(QDialog):
         self.catalog = None
         self.item_count = 0
         self.setObjectName("startupLogin")
-        self.setWindowTitle("REQM 로그인")
+        self.setWindowTitle(text("login.window_title"))
         self.setWindowIcon(QApplication.windowIcon())
         self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
         self.setFixedSize(520, 420)
         self.setModal(True)
-        self.setStyleSheet("""
+        self.setStyleSheet(load_theme() or """
             QDialog#startupLogin { background: #f7f7f3; color: #151515; font-family: '맑은 고딕'; font-size: 13px; }
             QFrame#loginBrandCard { background: #e3f6f3; border: none; border-radius: 22px; }
             QLabel#loginLogo { background: #12b8a6; color: #ffffff; border-radius: 13px; font-size: 22px; font-weight: 900; }
@@ -1567,9 +1569,9 @@ class StartupLoginDialog(QDialog):
         logo.setAlignment(Qt.AlignmentFlag.AlignCenter)
         brand_text = QVBoxLayout()
         brand_text.setSpacing(2)
-        eyebrow = QLabel("REQM OPERATIONS")
+        eyebrow = QLabel(text("login.eyebrow"))
         eyebrow.setObjectName("loginEyebrow")
-        title = QLabel("물류 업무를 시작합니다")
+        title = QLabel(text("login.title"))
         title.setObjectName("loginTitle")
         brand_text.addWidget(eyebrow)
         brand_text.addWidget(title)
@@ -1581,27 +1583,27 @@ class StartupLoginDialog(QDialog):
         form_layout = QVBoxLayout(form_card)
         form_layout.setContentsMargins(20, 18, 20, 18)
         form_layout.setSpacing(11)
-        subtitle = QLabel("등록된 프로그램 계정으로 로그인해 주세요.")
+        subtitle = QLabel(text("login.guide"))
         subtitle.setObjectName("loginHint")
         self.email = QLineEdit()
-        self.email.setPlaceholderText("프로그램 계정 이메일")
+        self.email.setPlaceholderText(text("login.email_placeholder"))
         self.email.setFixedHeight(43)
         self.password = QLineEdit()
-        self.password.setPlaceholderText("비밀번호")
+        self.password.setPlaceholderText(text("login.password_placeholder"))
         self.password.setEchoMode(QLineEdit.EchoMode.Password)
         self.password.setFixedHeight(43)
         saved_email, saved_password = load_program_login()
         self.email.setText(saved_email)
         self.password.setText(saved_password)
-        self.remember_login = QCheckBox("로그인 정보 저장")
+        self.remember_login = QCheckBox(text("login.remember"))
         self.remember_login.setChecked(bool(saved_email and saved_password))
-        self.message = QLabel("로그인 후 물류 대시보드를 사용할 수 있습니다.")
+        self.message = QLabel(text("login.ready"))
         self.message.setObjectName("loginMessage")
         self.message.setWordWrap(True)
-        self.login_button = QPushButton("로그인")
+        self.login_button = QPushButton(text("login.submit"))
         self.login_button.setObjectName("primaryButton")
         self.login_button.setFixedHeight(44)
-        cancel_button = QPushButton("종료")
+        cancel_button = QPushButton(text("login.exit"))
         cancel_button.setFixedHeight(44)
         cancel_button.setFixedWidth(88)
         cancel_button.clicked.connect(self.reject)
@@ -2533,9 +2535,9 @@ class MainWindow(QMainWindow):
         self.inventory_timer = QTimer(self)
         self.inventory_timer.setInterval(120_000)
         self.inventory_timer.timeout.connect(self.refresh_inventory)
-        self.setWindowTitle("REQM 출고 관리")
+        self.setWindowTitle(text("app.title"))
         self.resize(1420, 860)
-        self.setStyleSheet("""
+        self.setStyleSheet(load_theme() or """
             QMainWindow, QWidget#mainContainer { background: #f7f7f3; color: #151515; font-family: '맑은 고딕'; font-size: 13px; }
             QLabel#appTitle { color: #111111; font-size: 30px; font-weight: 900; letter-spacing: -1px; }
             QLabel#appSubtitle { color: #6f716f; font-size: 13px; padding-left: 3px; }
@@ -2611,11 +2613,11 @@ class MainWindow(QMainWindow):
             QScrollBar::add-page, QScrollBar::sub-page { background: transparent; }
         """)
 
-        title = QLabel("REQM  출고 관리")
+        title = QLabel(text("app.title"))
         title.setObjectName("appTitle")
         version_label = QLabel(f"v{APP_VERSION}")
         version_label.setObjectName("versionLabel")
-        subtitle = QLabel("주문 파일을 자동 분석하고 정확한 출고 데이터로 변환합니다")
+        subtitle = QLabel(text("app.subtitle"))
         subtitle.setObjectName("appSubtitle")
         self.email = QLineEdit()
         self.email.setPlaceholderText("프로그램 계정 이메일")
@@ -4468,6 +4470,7 @@ if __name__ == "__main__":
     app.setApplicationName("REQM")
     app.setOrganizationName("REQM")
     app.setWindowIcon(create_app_icon())
+    app.setStyleSheet(load_theme())
     window = MainWindow()
     if not window.require_startup_login():
         window.close()

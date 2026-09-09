@@ -17,6 +17,7 @@ a = Analysis(
         ("assets/wekeep_templates/b2c_buying.xlsx", "assets/wekeep_templates"),
         ("assets/wekeep_templates/b2b.xlsx", "assets/wekeep_templates"),
         ("assets/wekeep_templates/b2b_buying.xlsx", "assets/wekeep_templates"),
+        ("ui/styles/theme.qss", "ui/styles"),
     ],
     hiddenimports=pdf_hidden + miner_hidden + playwright_hidden, hookspath=[], hooksconfig={}, runtime_hooks=["tools/pyside6_runtime.py"],
     excludes=[], noarchive=False, optimize=1,

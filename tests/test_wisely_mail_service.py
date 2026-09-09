@@ -5,7 +5,9 @@ import unittest
 from datetime import date
 from pathlib import Path
 
-from wisely_mail_service import attachment_name_for, file_sha256, subject_for
+from unittest.mock import patch
+
+from wisely_mail_service import attachment_name_for, file_sha256, require_secure_webmail_urls, subject_for
 
 
 class WiselyMailServiceTests(unittest.TestCase):
@@ -21,6 +23,11 @@ class WiselyMailServiceTests(unittest.TestCase):
             first = file_sha256(path)
             second = file_sha256(path)
         self.assertEqual(first, second)
+
+    def test_plain_http_login_is_rejected(self) -> None:
+        with patch("wisely_mail_service.WEBMAIL_URL", "http://webmail.example.test/login"):
+            with self.assertRaisesRegex(RuntimeError, "HTTPS"):
+                require_secure_webmail_urls()
 
 
 if __name__ == "__main__":

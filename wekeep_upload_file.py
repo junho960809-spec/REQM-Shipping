@@ -9,6 +9,8 @@ from pathlib import Path
 
 from openpyxl import load_workbook
 
+from shipment_domain import positive_integer, validate_prepared_shipment
+
 
 APP_DIR = Path(__file__).resolve().parent
 OUTPUT_DIR = Path(os.getenv("LOCALAPPDATA", str(Path.home()))) / "REQM" / "wekeep_orders"
@@ -40,13 +42,7 @@ def _clean_text(value: object) -> str:
 
 
 def _quantity_text(value: object) -> str:
-    try:
-        quantity = float(str(value if value is not None else "").replace(",", "").strip())
-    except ValueError as exc:
-        raise ValueError(f"위킵 수량이 숫자가 아닙니다: {value}") from exc
-    if quantity <= 0 or not quantity.is_integer():
-        raise ValueError(f"위킵 수량은 1 이상의 정수여야 합니다: {value}")
-    return str(int(quantity))
+    return str(positive_integer(value, label="위킵 수량"))
 
 
 def _b2c_general_values(row: dict) -> list[object]:
@@ -112,6 +108,8 @@ def create_wekeep_upload(
         raise ValueError("위킵에 반영할 주문이 없습니다.")
     if any(row.get("state") != "ready" for row in rows):
         raise ValueError("검토 필요 주문이 남아 있어 위킵 파일을 만들 수 없습니다.")
+    for row in rows:
+        validate_prepared_shipment(row, order_kind)
 
     template = bundled_template_path(order_kind)
     if not template.exists():

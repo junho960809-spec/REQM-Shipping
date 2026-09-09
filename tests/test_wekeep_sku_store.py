@@ -37,7 +37,8 @@ class WeKeepSkuStoreTests(unittest.TestCase):
     def test_prepare_expands_components_and_multiplies_quantity(self) -> None:
         rows = store.prepare_wekeep_orders([{
             "status": "manual", "components": "A×2 + B×1", "quantity": "3",
-            "order_number": "ORDER-1", "product_name": "세트상품",
+            "order_number": "ORDER-1", "product_name": "세트상품", "channel": "와이즐리",
+            "recipient": "홍길동", "phone": "010-1234-5678", "zipcode": "01234", "address": "서울",
         }], order_kind="b2c", mappings=[
             {"item_code": "A", "sku_no": "SKU-A", "is_active": True},
             {"item_code": "B", "sku_no": "SKU-B", "is_active": True},
@@ -45,6 +46,21 @@ class WeKeepSkuStoreTests(unittest.TestCase):
 
         self.assertEqual([(row["sku_no"], row["quantity"]) for row in rows], [("SKU-A", 6), ("SKU-B", 3)])
         self.assertTrue(all(row["state"] == "ready" for row in rows))
+
+    def test_invalid_quantity_is_reviewed_without_rounding_or_clamping(self) -> None:
+        base = {
+            "status": "manual", "components": "A×1", "order_number": "ORDER-1",
+            "product_name": "상품", "channel": "와이즐리", "recipient": "홍길동",
+            "phone": "010-1234-5678", "zipcode": "01234", "address": "서울",
+        }
+        mapping = [{"item_code": "A", "sku_no": "SKU-A", "is_active": True}]
+        for quantity in (0, -1, 1.5):
+            with self.subTest(quantity=quantity):
+                row = store.prepare_wekeep_orders(
+                    [{**base, "quantity": quantity}], order_kind="b2c", mappings=mapping,
+                )[0]
+                self.assertEqual(row["state"], "review")
+                self.assertIn("정수", row["reason"])
 
     def test_unmatched_order_stays_in_review(self) -> None:
         rows = store.prepare_wekeep_orders([{
