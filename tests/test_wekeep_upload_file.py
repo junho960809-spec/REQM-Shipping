@@ -25,6 +25,7 @@ class WeKeepUploadFileTests(unittest.TestCase):
     def _row() -> dict:
         return {
             "state": "ready", "order_number": "O-1", "sku_no": "SKU-1",
+            "channel": "와이즐리",
             "wekeep_product_name": "제품", "source_product_name": "원본", "options": "블루",
             "quantity": 2, "recipient": "홍길동", "phone": "010-1234-5678",
             "zipcode": "01234", "address": "서울시", "message": "문 앞",
@@ -37,6 +38,20 @@ class WeKeepUploadFileTests(unittest.TestCase):
             self._template(template, 15)
             with patch.object(export, "bundled_template_path", return_value=template):
                 export.create_wekeep_upload([self._row()], "b2c", target)
+            sheet = load_workbook(target).active
+            headers = [cell.value for cell in sheet[1]]
+            row = [cell.value for cell in sheet[2]]
+        self.assertEqual(headers, export.B2C_GENERAL_HEADERS)
+        self.assertEqual(row[:4], ["O-1", "와이즐리", "제품", "2"])
+        self.assertEqual(row[4:9], ["홍길동", "010-1234-5678", "01234", "서울시", "문 앞"])
+
+    def test_creates_b2c_buying_layout_with_quantity_in_column_e(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            template = Path(folder) / "template.xlsx"
+            target = Path(folder) / "result.xlsx"
+            self._template(template, 15)
+            with patch.object(export, "bundled_template_path", return_value=template):
+                export.create_wekeep_upload([self._row()], "b2c_buying", target)
             row = [cell.value for cell in load_workbook(target).active[2]]
         self.assertEqual(row[:5], ["O-1", "SKU-1", "제품", "블루", "2"])
         self.assertEqual(row[7:13], ["홍길동", "010-1234-5678", "010-1234-5678", "01234", "서울시", "문 앞"])

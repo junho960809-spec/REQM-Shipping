@@ -46,6 +46,9 @@ class DashboardNavigationTests(unittest.TestCase):
             ["📦  출고 파일 변환", "▤  재고 조회", "🛠  AS 일일 현황", "▦  주간 재고조사", "▣  인쇄 발주 관리"],
         )
 
+    def test_wisely_order_button_uses_short_label(self) -> None:
+        self.assertEqual(self.window.wisely_mail_button.text(), "와이즐리 주문")
+
     def test_startup_login_uses_restored_card_design(self) -> None:
         with patch("main.load_program_login", return_value=("saved@example.com", "saved-secret")):
             dialog = StartupLoginDialog()

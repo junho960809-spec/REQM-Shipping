@@ -20,6 +20,10 @@ ORDER_KIND_LABELS = {
     "b2b_buying": "B2B 사입형",
 }
 ORDER_KIND_CAPACITIES = {"b2c": 42, "b2c_buying": 42, "b2b": 1003, "b2b_buying": 1003}
+B2C_GENERAL_HEADERS = [
+    "주문번호", "판매처", "상품명", "수량", "수령자", "핸드폰", "우편번호",
+    "주소", "배송메세지", "송장번호", "일련번호",
+]
 
 
 def bundled_template_path(order_kind: str) -> Path:
@@ -45,7 +49,23 @@ def _quantity_text(value: object) -> str:
     return str(int(quantity))
 
 
-def _b2c_values(row: dict) -> list[object]:
+def _b2c_general_values(row: dict) -> list[object]:
+    return [
+        _clean_text(row.get("order_number")),
+        _clean_text(row.get("channel")),
+        _clean_text(row.get("wekeep_product_name") or row.get("source_product_name")),
+        _quantity_text(row.get("quantity")),
+        _clean_text(row.get("recipient")),
+        _clean_text(row.get("phone")),
+        _clean_text(row.get("zipcode")),
+        _clean_text(row.get("address")),
+        _clean_text(row.get("message")),
+        None,
+        _clean_text(row.get("serial_number")),
+    ]
+
+
+def _b2c_buying_values(row: dict) -> list[object]:
     phone = _clean_text(row.get("phone"))
     return [
         _clean_text(row.get("order_number")),
@@ -104,18 +124,33 @@ def create_wekeep_upload(
 
     workbook = load_workbook(target)
     sheet = workbook.active
+    if order_kind == "b2c":
+        # B2C 일반주문은 11열 양식이며 수량이 D열이다. 사입형 15열 양식과
+        # 혼용하면 위킵이 빈 옵션명(D열)을 수량으로 읽어 등록을 거절한다.
+        if sheet.max_column > len(B2C_GENERAL_HEADERS):
+            sheet.delete_cols(
+                len(B2C_GENERAL_HEADERS) + 1,
+                sheet.max_column - len(B2C_GENERAL_HEADERS),
+            )
+        for column_index, header in enumerate(B2C_GENERAL_HEADERS, start=1):
+            sheet.cell(1, column_index).value = header
     capacity = ORDER_KIND_CAPACITIES[order_kind]
     if len(rows) > capacity:
         target.unlink(missing_ok=True)
         raise ValueError(f"위킵 공식 양식은 한 번에 최대 {capacity:,}행까지 등록할 수 있습니다.")
-    values_for = _b2b_values if order_kind.startswith("b2b") else _b2c_values
+    values_for = {
+        "b2c": _b2c_general_values,
+        "b2c_buying": _b2c_buying_values,
+        "b2b": _b2b_values,
+        "b2b_buying": _b2b_values,
+    }[order_kind]
     for row_index, row in enumerate(rows, start=2):
         for column_index, value in enumerate(values_for(row), start=1):
             sheet.cell(row_index, column_index).value = value
     workbook.save(target)
     workbook.close()
 
-    quantity_column = 7 if order_kind.startswith("b2b") else 5
+    quantity_column = {"b2c": 4, "b2c_buying": 5, "b2b": 7, "b2b_buying": 7}[order_kind]
     verification = load_workbook(target, read_only=True, data_only=True)
     try:
         saved_sheet = verification.active
