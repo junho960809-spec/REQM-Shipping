@@ -41,6 +41,10 @@ class FakeLocator:
     def inner_text(self) -> str:
         return self.page.body_text if self.name == "body" else ""
 
+    def get_by_role(self, role: str, **kwargs):
+        self.calls.append(("scoped_role", self.name, role, kwargs))
+        return FakeLocator(self.calls, f"{self.name}::{kwargs['name']}", self.page)
+
     def fill(self, value: str) -> None:
         self.calls.append(("fill", self.name, value))
 
@@ -51,7 +55,7 @@ class FakeLocator:
 class FakePage:
     def __init__(self) -> None:
         self.calls: list = []
-        self.body_text = ""
+        self.body_text = "주식회사 리큐엠(B2C) 주식회사 리큐엠(사입형B2C) 주식회사 리큐엠(B2B)"
         self.url = "https://fbw.wekeep.co.kr/fbw/login"
 
     def get_by_role(self, role: str, **kwargs) -> FakeLocator:
@@ -60,7 +64,10 @@ class FakePage:
 
     def locator(self, selector: str) -> FakeLocator:
         self.calls.append(("locator", selector))
-        return FakeLocator(self.calls, selector, self)
+        locator = FakeLocator(self.calls, selector, self)
+        if selector in ("#orderExcelPopup", "#shipmentOrderExcelPopup"):
+            locator.inner_text = lambda: self.body_text
+        return locator
 
     def wait_for_timeout(self, value: int) -> None:
         self.calls.append(("wait", value))
@@ -109,16 +116,25 @@ class WeKeepOrderAutomationTests(unittest.TestCase):
 
     def test_submits_only_exact_route_button_and_requires_success_response(self) -> None:
         page = FakePage()
-        page.body_text = "주문이 등록되었습니다. 주문번호: WK-123"
+        page.body_text = "주식회사 리큐엠(B2C) 주문이 등록되었습니다. 주문번호: WK-123"
 
         result = submit_registration(page, "b2c")
 
-        self.assertIn(("click", "#excelFileUpload"), page.calls)
+        self.assertIn(("click", "#orderExcelPopup::저장"), page.calls)
         self.assertEqual(result, {"state": "completed", "provider_reference": "WK-123"})
+
+    def test_refuses_to_submit_when_popup_seller_does_not_match_route(self) -> None:
+        page = FakePage()
+        page.body_text = "주식회사 리큐엠(B2B)"
+
+        with self.assertRaisesRegex(RuntimeError, "판매처가 일치하지 않습니다"):
+            submit_registration(page, "b2c")
+
+        self.assertFalse(any(call[0] == "click" and "저장" in call[1] for call in page.calls))
 
     def test_unconfirmed_response_is_never_reported_as_success(self) -> None:
         page = FakePage()
-        page.body_text = "주문 목록"
+        page.body_text = "주식회사 리큐엠(사입형B2C) 주문 목록"
 
         self.assertEqual(submit_registration(page, "b2c_buying")["state"], "unknown")
 

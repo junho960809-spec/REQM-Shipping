@@ -19,14 +19,30 @@ ORDER_ROUTES = {
     "b2b": ('button[id^="B2B-"]', "#excelOrderBtn", "#file_upload_excelPopup"),
     "b2b_buying": ('button[id^="B2B-"]', "#shipmentExcelBtn", "#file_upload_excelPopup_shipment"),
 }
-SUBMIT_SELECTORS = {
-    "b2c": "#excelFileUpload",
-    "b2b": "#excelFileUpload",
-    "b2c_buying": "#shipmentExcelFileUpload",
-    "b2b_buying": "#shipmentExcelFileUpload",
+REGISTRATION_PANELS = {
+    "b2c": ("#orderExcelPopup", "주식회사 리큐엠(B2C)"),
+    "b2b": ("#orderExcelPopup", "주식회사 리큐엠(B2B)"),
+    "b2c_buying": ("#shipmentOrderExcelPopup", "주식회사 리큐엠(사입형B2C)"),
+    "b2b_buying": ("#shipmentOrderExcelPopup", "주식회사 리큐엠(B2B)"),
 }
 SUCCESS_MARKERS = ("등록되었습니다", "등록 완료", "성공적으로 등록")
 FAILURE_MARKERS = ("등록 실패", "오류가 발생", "업로드 실패")
+
+
+def verified_registration_panel(page, order_kind: str):
+    """Return only the visible upload modal whose seller matches the requested route."""
+    panel_config = REGISTRATION_PANELS.get(order_kind)
+    if not panel_config:
+        raise ValueError(f"지원하지 않는 위킵 주문 유형입니다: {order_kind}")
+    panel_selector, expected_seller = panel_config
+    panel = page.locator(panel_selector)
+    if panel.count() != 1 or not panel.is_visible():
+        raise RuntimeError("선택한 판매처의 위킵 엑셀 등록 화면을 확인하지 못했습니다.")
+    if expected_seller not in panel.inner_text():
+        raise RuntimeError(
+            f"위킵 등록 화면의 판매처가 일치하지 않습니다. 전송 대상: {expected_seller}"
+        )
+    return panel
 
 
 def load_pending_payload(path: str | Path) -> dict:
@@ -56,6 +72,7 @@ def open_registration_panel(page, order_kind: str, upload_path: str | Path | Non
     page.locator(seller_selector).click()
     page.locator(registration_selector).click()
     page.wait_for_timeout(300)
+    verified_registration_panel(page, order_kind)
     if upload_path:
         path = Path(upload_path).resolve()
         if not path.exists():
@@ -88,13 +105,11 @@ def ensure_authenticated(page, user_id: str, password: str) -> None:
 
 def submit_registration(page, order_kind: str, *, on_submitted=None) -> dict:
     """Click the exact final button and classify only an explicit response as success."""
-    selector = SUBMIT_SELECTORS.get(order_kind)
-    if not selector:
-        raise ValueError(f"지원하지 않는 위킵 주문 유형입니다: {order_kind}")
-    button = page.locator(selector)
+    panel = verified_registration_panel(page, order_kind)
+    button = panel.get_by_role("button", name="저장", exact=True)
     if button.count() != 1 or not button.is_visible() or not button.is_enabled():
         raise RuntimeError(
-            "위킵 최종 등록 버튼을 정확히 확인하지 못했습니다. 사이트 화면이 변경됐을 수 있어 전송을 중단합니다."
+            "선택한 판매처의 엑셀 등록 화면에서 저장 버튼을 정확히 확인하지 못했습니다. 전송을 중단합니다."
         )
     if on_submitted:
         on_submitted()
