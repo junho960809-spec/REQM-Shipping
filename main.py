@@ -89,6 +89,7 @@ from program_login_store import delete_program_login, load_program_login, save_p
 from wekeep_report_service import load_config as load_wekeep_report_config, save_config as save_wekeep_report_config, register_daily_task, remove_daily_task, open_login_window, run_report, TASK_NAME
 from wekeep_order_automation import open_order_registration
 from wekeep_transfer_dialog import WeKeepTransferDialog
+from wekeep_sku_store import readiness_counts
 from wekeep_tracking_dialog import WeKeepTrackingDialog
 from wisely_mail_service import download_today_order
 from ui.texts import text
@@ -113,7 +114,7 @@ DEFAULT_CONFIG = {
     },
 }
 ADMIN_USER_ID = "c7937d51-1a14-47aa-987e-6254c6c79014"
-APP_VERSION = "1.2.4"
+APP_VERSION = "1.2.5"
 TEST_MODE = os.getenv("REQM_TEST_MODE", "").strip().casefold() in {"1", "true", "yes"}
 UPDATE_BASE_URL = "https://jcslohuraqclhryeqxoc.supabase.co/storage/v1/object/public/reqm-updates"
 UPDATE_MANIFEST_URL = f"{UPDATE_BASE_URL}/manifest.json"
@@ -2665,9 +2666,11 @@ class MainWindow(QMainWindow):
         self.ecount_button = QPushButton("이카운트 창고이동")
         self.ecount_button.setObjectName("exportButton")
         self.ecount_button.setEnabled(False)
-        self.wekeep_transfer_button = QPushButton("위킵 반영 미리보기")
-        self.wekeep_transfer_button.setObjectName("exportButton")
-        self.wekeep_transfer_button.setEnabled(False)
+        self.wekeep_kind_combo = QComboBox()
+        self.wekeep_kind_combo.addItem("위킵 B2C 일반", "b2c")
+        self.wekeep_kind_combo.addItem("위킵 B2C 사입형", "b2c_buying")
+        self.wekeep_kind_combo.addItem("위킵 B2B 일반", "b2b")
+        self.wekeep_kind_combo.addItem("위킵 B2B 사입형", "b2b_buying")
         self.wekeep_tracking_button = QPushButton("송장번호 가져오기")
         self.wekeep_tracking_button.setObjectName("exportButton")
         self.wekeep_tracking_button.setEnabled(False)
@@ -2781,7 +2784,7 @@ class MainWindow(QMainWindow):
         export_row.addWidget(self.output_format_combo)
         export_row.addWidget(self.output_format_manage_button)
         export_row.addStretch(1)
-        export_row.addWidget(self.wekeep_transfer_button)
+        export_row.addWidget(self.wekeep_kind_combo)
         export_row.addWidget(self.wekeep_tracking_button)
         export_row.addWidget(self.ecount_button)
         export_row.addWidget(self.export_button)
@@ -2812,7 +2815,6 @@ class MainWindow(QMainWindow):
         self.db_button.clicked.connect(self.open_db_manager)
         self.export_button.clicked.connect(self.export_file)
         self.ecount_button.clicked.connect(self.open_ecount_transfer)
-        self.wekeep_transfer_button.clicked.connect(self.open_wekeep_transfer)
         self.wekeep_tracking_button.clicked.connect(self.open_wekeep_tracking)
         self.output_format_manage_button.clicked.connect(self.manage_output_formats)
         self.location_manage_button.clicked.connect(self.manage_locations)
@@ -3617,7 +3619,6 @@ class MainWindow(QMainWindow):
         self.dashboard_db_button.setEnabled(self.is_admin)
         self.dashboard_users_button.setEnabled(self.is_admin)
         self.ecount_button.setEnabled(self.can_ecount_transfer and bool(self.current_orders))
-        self.wekeep_transfer_button.setEnabled(bool(self.current_orders))
         self.wekeep_tracking_button.setEnabled(bool(self.current_orders))
         self.matcher = ProductMatcher(
             catalog["items"], catalog["products"], catalog["components"],
@@ -3811,7 +3812,6 @@ class MainWindow(QMainWindow):
         self.b2b_button.setEnabled(False)
         self.export_button.setEnabled(False)
         self.ecount_button.setEnabled(False)
-        self.wekeep_transfer_button.setEnabled(False)
         self.wekeep_tracking_button.setEnabled(False)
         self.header_row.removeWidget(self.login_button)
         self.login_row.addWidget(self.login_button)
@@ -4202,7 +4202,6 @@ class MainWindow(QMainWindow):
             return
         self.current_orders = orders
         self.ecount_button.setEnabled(self.can_ecount_transfer and bool(self.current_orders))
-        self.wekeep_transfer_button.setEnabled(bool(self.current_orders))
         self.wekeep_tracking_button.setEnabled(bool(self.current_orders))
         self.populate_table(self.current_orders)
         counts = {key: sum(1 for row in orders if row.get("status") == key) for key in ("exact", "similar", "ambiguous", "missing", "barcode_error")}
@@ -4433,7 +4432,46 @@ class MainWindow(QMainWindow):
             {"source_type": "duty_free" if self.current_mode == "duty_free" else "b2c", "order_count": len(self.current_orders), "format_name": str(profile.get("name", ""))},
         )
         self.record_recent_work(file_path, str(profile.get("name", "출고 양식")))
-        QMessageBox.information(self, "저장 완료", f"위킵 출고 파일을 저장했습니다.\n{file_path}")
+        try:
+            os.startfile(file_path)
+        except OSError as exc:
+            QMessageBox.warning(
+                self, "Excel 자동 열기 실패",
+                f"출고 파일은 저장했지만 Excel을 자동으로 열지 못했습니다.\n{file_path}\n\n{exc}",
+            )
+        self.offer_wekeep_after_export(file_path)
+
+    def offer_wekeep_after_export(self, file_path: str) -> None:
+        """Offer one integrated WeKeep submission from the exact exported order data."""
+        order_kind = str(self.wekeep_kind_combo.currentData() or "b2c")
+        dialog = WeKeepTransferDialog(
+            self.current_orders, self.current_mode, self,
+            initial_kind=order_kind,
+        )
+        counts = readiness_counts(dialog.rows)
+        total_quantity = sum(int(row.get("quantity") or 0) for row in dialog.rows if row.get("state") == "ready")
+        answer = QMessageBox.question(
+            self,
+            "출고 변환 완료",
+            f"출고 엑셀을 생성하고 열었습니다.\n{file_path}\n\n"
+            f"{dialog.kind.currentText()} · 주문 품목 {counts['total']:,}행 · 총 수량 {total_quantity:,}개\n"
+            "같은 DB 변환 결과를 위킵에도 반영하시겠습니까?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        if counts["review"]:
+            QMessageBox.information(
+                self, "위킵 반영 검토",
+                f"검토가 필요한 품목이 {counts['review']:,}개 있습니다.\n"
+                "문제 행을 두 번 눌러 수정한 뒤 위킵 등록을 진행하세요.",
+            )
+            dialog.exec()
+            return
+        dialog.use_progress_mode()
+        dialog.start_submission()
+        dialog.exec()
 
     def open_ecount_transfer(self) -> None:
         if not self.can_ecount_transfer:

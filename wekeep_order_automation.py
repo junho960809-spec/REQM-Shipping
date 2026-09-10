@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import re
+from datetime import date
 from pathlib import Path
 
 from ecount_credential_store import protect_secret, unprotect_secret
@@ -111,17 +112,39 @@ def submit_registration(page, order_kind: str, *, on_submitted=None) -> dict:
         raise RuntimeError(
             "선택한 판매처의 엑셀 등록 화면에서 저장 버튼을 정확히 확인하지 못했습니다. 전송을 중단합니다."
         )
+    dialog_messages: list[str] = []
+    if hasattr(page, "on"):
+        def handle_dialog(dialog) -> None:
+            dialog_messages.append(str(dialog.message))
+            dialog.accept()
+        page.on("dialog", handle_dialog)
     if on_submitted:
         on_submitted()
     button.click()
     page.wait_for_timeout(1_500)
     body_text = page.locator("body").inner_text()
-    if any(marker in body_text for marker in FAILURE_MARKERS):
-        raise RuntimeError("위킵이 주문 등록 실패를 반환했습니다.")
-    if any(marker in body_text for marker in SUCCESS_MARKERS):
-        reference_match = re.search(r"(?:주문|접수)번호\s*[:：]?\s*([A-Za-z0-9_-]+)", body_text)
+    response_text = "\n".join([body_text, *dialog_messages])
+    if any(marker in response_text for marker in FAILURE_MARKERS):
+        raise RuntimeError("위킵이 주문 등록 실패를 반환했습니다. " + " / ".join(dialog_messages))
+    if any(marker in response_text for marker in SUCCESS_MARKERS):
+        reference_match = re.search(r"(?:주문|접수)번호\s*[:：]?\s*([A-Za-z0-9_-]+)", response_text)
         return {"state": "completed", "provider_reference": reference_match.group(1) if reference_match else ""}
-    return {"state": "unknown", "provider_reference": ""}
+    return {"state": "unknown", "provider_reference": "", "message": " / ".join(dialog_messages)}
+
+
+def verify_registered_orders(page, rows: list[dict], order_kind: str) -> bool:
+    """Confirm an uncertain submission by finding every order on today's seller list."""
+    from wekeep_tracking_service import SALE_CHANNELS, collect_tracking_rows
+
+    lookup_kind = "b2b" if order_kind == "b2b_buying" else order_kind
+    sale_channel = SALE_CHANNELS.get(lookup_kind)
+    if not sale_channel:
+        return False
+    remote_rows = collect_tracking_rows(page, date.today(), sale_channel)
+    expected = {re.sub(r"\W", "", str(row.get("order_number") or "")).casefold() for row in rows}
+    found = {re.sub(r"\W", "", str(row.get("order_number") or "")).casefold() for row in remote_rows}
+    expected.discard("")
+    return bool(expected) and expected.issubset(found)
 
 
 def run_wekeep_job(job_id: str, db_path: str | Path | None = None) -> dict:
@@ -152,6 +175,12 @@ def run_wekeep_job(job_id: str, db_path: str | Path | None = None) -> dict:
                     store.transition(job_id, "verifying", detail="위킵 최종 등록 버튼 클릭")
 
                 result = submit_registration(page, job["order_kind"], on_submitted=mark_submitted)
+                if result["state"] != "completed":
+                    try:
+                        if verify_registered_orders(page, rows, job["order_kind"]):
+                            result = {"state": "completed", "provider_reference": ""}
+                    except Exception:
+                        pass
             finally:
                 context.close()
         if result["state"] == "completed":
@@ -159,7 +188,10 @@ def run_wekeep_job(job_id: str, db_path: str | Path | None = None) -> dict:
                 job_id, "completed", detail="위킵 성공 응답 확인",
                 provider_reference=result.get("provider_reference", ""),
             )
-        return store.transition(job_id, "unknown", detail="등록 요청 후 성공 응답을 확인하지 못함")
+        detail = "등록 요청 후 주문 목록에서 결과를 확인하지 못함"
+        if result.get("message"):
+            detail += " · 위킵 알림: " + result["message"]
+        return store.transition(job_id, "unknown", detail=detail)
     except Exception as exc:
         current = store.get(job_id)
         target = "unknown" if submitted or current["state"] == "verifying" else "failed"

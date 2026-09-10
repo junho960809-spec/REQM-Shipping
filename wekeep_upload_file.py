@@ -45,11 +45,21 @@ def _quantity_text(value: object) -> str:
     return str(positive_integer(value, label="위킵 수량"))
 
 
+def _upload_product_name(row: dict) -> str:
+    """Use the same DB-standardized name workers see in the shipping export."""
+    return _clean_text(
+        row.get("standard_product_name")
+        or row.get("converted_product_name")
+        or row.get("wekeep_product_name")
+        or row.get("source_product_name")
+    )
+
+
 def _b2c_general_values(row: dict) -> list[object]:
     return [
         _clean_text(row.get("order_number")),
         _clean_text(row.get("channel")),
-        _clean_text(row.get("wekeep_product_name") or row.get("source_product_name")),
+        _upload_product_name(row),
         _quantity_text(row.get("quantity")),
         _clean_text(row.get("recipient")),
         _clean_text(row.get("phone")),
@@ -66,7 +76,7 @@ def _b2c_buying_values(row: dict) -> list[object]:
     return [
         _clean_text(row.get("order_number")),
         _clean_text(row.get("sku_no")),
-        _clean_text(row.get("wekeep_product_name") or row.get("source_product_name")),
+        _upload_product_name(row),
         _clean_text(row.get("options")),
         _quantity_text(row.get("quantity")),
         None,
@@ -86,7 +96,7 @@ def _b2b_values(row: dict) -> list[object]:
     phone = _clean_text(row.get("phone"))
     values: list[object] = [None] * 29
     values[0] = _clean_text(row.get("order_number"))
-    values[1] = _clean_text(row.get("wekeep_product_name") or row.get("source_product_name"))
+    values[1] = _upload_product_name(row)
     values[2] = _clean_text(row.get("sku_no"))
     values[6] = _quantity_text(row.get("quantity"))
     values[9] = _clean_text(row.get("recipient"))

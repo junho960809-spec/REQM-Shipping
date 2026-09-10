@@ -41,7 +41,7 @@ class WeKeepSubmissionWorker(QThread):
 
 
 class WeKeepTransferDialog(QDialog):
-    def __init__(self, orders: list[dict], current_mode: str, parent=None):
+    def __init__(self, orders: list[dict], current_mode: str, parent=None, initial_kind: str = ""):
         super().__init__(parent)
         self.orders = orders
         self.current_mode = current_mode
@@ -53,19 +53,23 @@ class WeKeepTransferDialog(QDialog):
         self.setWindowTitle(text("wekeep.preview.window_title"))
         self.resize(1380, 680)
 
-        title = QLabel(text("wekeep.preview.title"))
-        title.setObjectName("dialogTitle")
-        guide = QLabel(
+        self.title = QLabel(text("wekeep.preview.title"))
+        self.title.setObjectName("dialogTitle")
+        self.guide = QLabel(
             text("wekeep.preview.guide")
         )
-        guide.setObjectName("dialogGuide")
-        guide.setWordWrap(True)
+        self.guide.setObjectName("dialogGuide")
+        self.guide.setWordWrap(True)
         self.kind = QComboBox()
         self.kind.addItem("B2C 일반주문", "b2c")
         self.kind.addItem("B2C 사입형", "b2c_buying")
         self.kind.addItem("B2B 일반주문", "b2b")
         self.kind.addItem("B2B 사입형", "b2b_buying")
         self.kind.setCurrentIndex(1 if current_mode == "duty_free" else 0)
+        if initial_kind:
+            selected = self.kind.findData(initial_kind)
+            if selected >= 0:
+                self.kind.setCurrentIndex(selected)
         self.summary = QLabel()
         self.summary.setObjectName("dialogSummary")
 
@@ -84,6 +88,7 @@ class WeKeepTransferDialog(QDialog):
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.table.setAlternatingRowColors(True)
         self.table.verticalHeader().setVisible(False)
+        self.table.cellDoubleClicked.connect(self.edit_problem_row)
 
         self.open_button = QPushButton(text("wekeep.preview.submit"))
         self.open_button.setObjectName("primaryButton")
@@ -94,8 +99,8 @@ class WeKeepTransferDialog(QDialog):
         buttons.addWidget(self.open_button)
 
         layout = QVBoxLayout(self)
-        layout.addWidget(title)
-        layout.addWidget(guide)
+        layout.addWidget(self.title)
+        layout.addWidget(self.guide)
         layout.addLayout(top)
         layout.addWidget(self.table, 1)
         layout.addLayout(buttons)
@@ -104,6 +109,16 @@ class WeKeepTransferDialog(QDialog):
         self.open_button.clicked.connect(self.open_wekeep)
         self.close_button.clicked.connect(self.accept)
         self.refresh()
+
+    def use_progress_mode(self) -> None:
+        """Hide the preview when every row has already passed validation."""
+        self.setWindowTitle("위킵 반영")
+        self.title.setText("위킵 반영 중")
+        self.guide.setText("검증된 변환 데이터로 위킵 등록 결과를 확인하고 있습니다.")
+        self.table.hide()
+        self.open_button.hide()
+        self.kind.setEnabled(False)
+        self.resize(640, 230)
 
     def refresh(self) -> None:
         self.rows = prepare_wekeep_orders(
@@ -139,6 +154,15 @@ class WeKeepTransferDialog(QDialog):
                 self.table.setItem(row_index, column, item)
         self.table.resizeColumnsToContents()
 
+    def edit_problem_row(self, row_index: int, _column_index: int) -> None:
+        if not (0 <= row_index < len(self.rows)) or self.rows[row_index].get("state") == "ready":
+            return
+        source_index = int(self.rows[row_index].get("source_index", -1))
+        parent = self.parent()
+        if parent is not None and hasattr(parent, "edit_match") and 0 <= source_index < len(self.orders):
+            parent.edit_match(source_index, 0)
+            self.refresh()
+
     def open_wekeep(self) -> None:
         counts = readiness_counts(self.rows)
         if not self.rows or counts["review"]:
@@ -158,8 +182,16 @@ class WeKeepTransferDialog(QDialog):
         )
         if answer != QMessageBox.StandardButton.Yes:
             return
+        self.start_submission()
+
+    def start_submission(self) -> None:
+        """Start a previously confirmed, fully validated WeKeep submission."""
+        counts = readiness_counts(self.rows)
+        if not self.rows or counts["review"]:
+            QMessageBox.warning(self, "위킵 반영 보류", "검토 필요 주문을 먼저 수동 매칭해 주세요.")
+            return
         try:
-            job = self.job_store.create(self.rows, order_kind)
+            job = self.job_store.create(self.rows, str(self.kind.currentData()))
         except Exception as exc:
             QMessageBox.critical(self, "위킵 출고 작업 생성 실패", str(exc))
             return
