@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import json
 import os
-import re
 import sys
 from pathlib import Path
 
@@ -13,7 +12,6 @@ from shipment_domain import ShipmentValidationError, positive_integer, validate_
 APP_DIR = Path(__file__).resolve().parent
 LOCAL_DIR = Path(os.getenv("LOCALAPPDATA", str(Path.home()))) / "REQM"
 LOCAL_MAPPING_PATH = LOCAL_DIR / "wekeep_sku_mappings.json"
-COMPONENT_RE = re.compile(r"\s*([^+×]+?)\s*×\s*(\d+)\s*(?:\+|$)")
 
 
 def bundled_mapping_path() -> Path:
@@ -78,11 +76,21 @@ def save_wekeep_sku_mapping(mapping: dict, local_path: Path | None = None) -> No
 
 
 def component_codes(value: str) -> list[tuple[str, int]]:
+    """Parse every matched code; omitted quantities mean one, never skip a part."""
     text = str(value or "").strip()
     if not text:
         return []
-    parsed = [(code.strip(), int(quantity)) for code, quantity in COMPONENT_RE.findall(text)]
-    return parsed or [(text, 1)]
+    components: dict[str, tuple[str, int]] = {}
+    for part in text.split("+"):
+        code, separator, quantity_text = part.strip().partition("×")
+        code = code.strip()
+        if not code:
+            raise ShipmentValidationError("세트 구성 품목코드가 비어 있습니다.")
+        quantity = positive_integer(quantity_text, label=f"구성 품목 {code} 수량") if separator else 1
+        key = code.casefold()
+        previous_code, previous_quantity = components.get(key, (code, 0))
+        components[key] = (previous_code, previous_quantity + quantity)
+    return list(components.values())
 
 
 def prepare_wekeep_orders(
@@ -113,7 +121,11 @@ def prepare_wekeep_orders(
         if str(order.get("status") or "") in blocked_statuses:
             result.append({**base, "state": "review", "reason": "REQM 품목 매칭을 먼저 확정하세요."})
             continue
-        components = component_codes(str(order.get("components") or ""))
+        try:
+            components = component_codes(str(order.get("components") or ""))
+        except ShipmentValidationError as exc:
+            result.append({**base, "state": "review", "reason": str(exc)})
+            continue
         if not components:
             result.append({**base, "state": "review", "reason": "연결된 내부 품목코드가 없습니다."})
             continue

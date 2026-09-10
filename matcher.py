@@ -168,7 +168,7 @@ class ProductMatcher:
             return {
                 "status": status,
                 "matched_product": matched_name,
-                "components": " + ".join(str(item.get("item_code", "")) for item in found),
+                "components": " + ".join(f"{item.get('item_code', '')}×1" for item in found),
                 "reason": " | ".join(notes),
             }
 
