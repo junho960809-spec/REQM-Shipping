@@ -89,6 +89,7 @@ from program_login_store import delete_program_login, load_program_login, save_p
 from wekeep_report_service import load_config as load_wekeep_report_config, save_config as save_wekeep_report_config, register_daily_task, remove_daily_task, open_login_window, run_report, TASK_NAME
 from wekeep_order_automation import open_order_registration
 from wekeep_transfer_dialog import WeKeepTransferDialog
+from wekeep_tracking_dialog import WeKeepTrackingDialog
 from wisely_mail_service import download_today_order
 from ui.texts import text
 from ui.theme import load_theme
@@ -112,7 +113,7 @@ DEFAULT_CONFIG = {
     },
 }
 ADMIN_USER_ID = "c7937d51-1a14-47aa-987e-6254c6c79014"
-APP_VERSION = "1.2.1"
+APP_VERSION = "1.2.2"
 TEST_MODE = os.getenv("REQM_TEST_MODE", "").strip().casefold() in {"1", "true", "yes"}
 UPDATE_BASE_URL = "https://jcslohuraqclhryeqxoc.supabase.co/storage/v1/object/public/reqm-updates"
 UPDATE_MANIFEST_URL = f"{UPDATE_BASE_URL}/manifest.json"
@@ -2667,6 +2668,9 @@ class MainWindow(QMainWindow):
         self.wekeep_transfer_button = QPushButton("위킵 반영 미리보기")
         self.wekeep_transfer_button.setObjectName("exportButton")
         self.wekeep_transfer_button.setEnabled(False)
+        self.wekeep_tracking_button = QPushButton("송장번호 가져오기")
+        self.wekeep_tracking_button.setObjectName("exportButton")
+        self.wekeep_tracking_button.setEnabled(False)
         self.output_format_combo = QComboBox()
         self.output_format_combo.setMinimumWidth(220)
         self.output_format_manage_button = QPushButton("출력 양식 관리")
@@ -2778,6 +2782,7 @@ class MainWindow(QMainWindow):
         export_row.addWidget(self.output_format_manage_button)
         export_row.addStretch(1)
         export_row.addWidget(self.wekeep_transfer_button)
+        export_row.addWidget(self.wekeep_tracking_button)
         export_row.addWidget(self.ecount_button)
         export_row.addWidget(self.export_button)
         layout.addLayout(export_row)
@@ -2808,6 +2813,7 @@ class MainWindow(QMainWindow):
         self.export_button.clicked.connect(self.export_file)
         self.ecount_button.clicked.connect(self.open_ecount_transfer)
         self.wekeep_transfer_button.clicked.connect(self.open_wekeep_transfer)
+        self.wekeep_tracking_button.clicked.connect(self.open_wekeep_tracking)
         self.output_format_manage_button.clicked.connect(self.manage_output_formats)
         self.location_manage_button.clicked.connect(self.manage_locations)
         self.location_apply_button.clicked.connect(self.apply_location)
@@ -3612,6 +3618,7 @@ class MainWindow(QMainWindow):
         self.dashboard_users_button.setEnabled(self.is_admin)
         self.ecount_button.setEnabled(self.can_ecount_transfer and bool(self.current_orders))
         self.wekeep_transfer_button.setEnabled(bool(self.current_orders))
+        self.wekeep_tracking_button.setEnabled(bool(self.current_orders))
         self.matcher = ProductMatcher(
             catalog["items"], catalog["products"], catalog["components"],
             catalog["aliases"], catalog["barcodes"],
@@ -3805,6 +3812,7 @@ class MainWindow(QMainWindow):
         self.export_button.setEnabled(False)
         self.ecount_button.setEnabled(False)
         self.wekeep_transfer_button.setEnabled(False)
+        self.wekeep_tracking_button.setEnabled(False)
         self.header_row.removeWidget(self.login_button)
         self.login_row.addWidget(self.login_button)
         self.login_button.setText("로그인")
@@ -4195,6 +4203,7 @@ class MainWindow(QMainWindow):
         self.current_orders = orders
         self.ecount_button.setEnabled(self.can_ecount_transfer and bool(self.current_orders))
         self.wekeep_transfer_button.setEnabled(bool(self.current_orders))
+        self.wekeep_tracking_button.setEnabled(bool(self.current_orders))
         self.populate_table(self.current_orders)
         counts = {key: sum(1 for row in orders if row.get("status") == key) for key in ("exact", "similar", "ambiguous", "missing", "barcode_error")}
         self.status.setText(
@@ -4364,6 +4373,12 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "주문 없음", "먼저 출고 주문 파일을 분석하세요.")
             return
         WeKeepTransferDialog(self.current_orders, self.current_mode, self).exec()
+
+    def open_wekeep_tracking(self) -> None:
+        if not self.current_orders:
+            QMessageBox.warning(self, "주문 없음", "먼저 출고 주문 파일을 분석하세요.")
+            return
+        WeKeepTrackingDialog(self.current_orders, self).exec()
 
     def export_file(self) -> None:
         if not self.current_orders:

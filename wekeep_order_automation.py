@@ -66,7 +66,7 @@ def open_registration_panel(page, order_kind: str, upload_path: str | Path | Non
 
 def ensure_authenticated(page, user_id: str, password: str) -> None:
     """Reuse the saved session, or log in with encrypted integration credentials."""
-    if "/order/list.do" in page.url:
+    if "/order/" in page.url:
         return
     if not str(user_id).strip() or not password:
         raise RuntimeError("연동 계정에서 위킵 아이디와 비밀번호를 저장해 주세요.")
