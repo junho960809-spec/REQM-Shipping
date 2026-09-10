@@ -95,12 +95,18 @@ def component_codes(value: str) -> list[tuple[str, int]]:
 
 def prepare_wekeep_orders(
     orders: list[dict], *, order_kind: str, mappings: list[dict] | None = None,
+    items: list[dict] | None = None,
 ) -> list[dict]:
     """Expand matched REQM order rows into WeKeep-ready SKU rows."""
     index = {
         str(row.get("item_code") or "").casefold(): row
         for row in (mappings if mappings is not None else load_wekeep_sku_mappings())
         if row.get("is_active", True)
+    }
+    standard_names = {
+        str(row.get("item_code") or "").casefold(): str(row.get("standard_name") or "").strip()
+        for row in (items or [])
+        if row.get("item_code")
     }
     result: list[dict] = []
     blocked_statuses = {"missing", "ambiguous", "barcode_error", "duplicate"}
@@ -111,6 +117,9 @@ def prepare_wekeep_orders(
             "order_number": str(order.get("order_number") or "").strip(),
             "channel": str(order.get("channel") or "").strip(),
             "source_product_name": str(order.get("product_name") or "").strip(),
+            "converted_product_name": str(
+                order.get("matched_product") or order.get("matched_name") or order.get("product_name") or ""
+            ).strip(),
             "options": str(order.get("options") or "").strip(),
             "recipient": str(order.get("recipient") or "").strip(),
             "phone": str(order.get("phone") or "").strip(),
@@ -150,6 +159,8 @@ def prepare_wekeep_orders(
                 "state": "ready",
                 "reason": "위킵 자동입력 준비 완료",
                 "item_code": item_code,
+                "standard_product_name": standard_names.get(item_code.casefold(), "")
+                or str(order.get("matched_product") or order.get("matched_name") or "").strip(),
                 "wekeep_manage_code": mapping.get("wekeep_manage_code", ""),
                 "wekeep_product_name": mapping.get("product_name", ""),
                 "sku_no": mapping.get("sku_no", ""),

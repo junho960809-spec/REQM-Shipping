@@ -45,6 +45,7 @@ class WeKeepTransferDialog(QDialog):
         super().__init__(parent)
         self.orders = orders
         self.current_mode = current_mode
+        self.catalog_items = list(getattr(parent, "catalog", {}).get("items", []) or [])
         self.rows: list[dict] = []
         self.job_store = ShipmentJobStore()
         self.submission_worker: WeKeepSubmissionWorker | None = None
@@ -74,7 +75,10 @@ class WeKeepTransferDialog(QDialog):
         top.addStretch(1)
         top.addWidget(self.summary)
 
-        headers = ["상태", "주문번호", "수령인", "원본 상품", "내부 품목코드", "위킵 SKU", "바코드", "수량", "확인 내용"]
+        headers = [
+            "상태", "주문번호", "수령인", "원본 상품", "변환 상품명",
+            "위킵 등록 상품명", "내부 품목코드", "위킵 SKU", "바코드", "수량", "확인 내용",
+        ]
         self.table = QTableWidget(0, len(headers))
         self.table.setHorizontalHeaderLabels(headers)
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
@@ -106,6 +110,7 @@ class WeKeepTransferDialog(QDialog):
             self.orders,
             order_kind=str(self.kind.currentData()),
             mappings=load_wekeep_sku_mappings(),
+            items=self.catalog_items,
         )
         counts = readiness_counts(self.rows)
         self.summary.setText(f"전체 {counts['total']:,}행 · 준비 {counts['ready']:,} · 검토 필요 {counts['review']:,}")
@@ -118,6 +123,8 @@ class WeKeepTransferDialog(QDialog):
                 row.get("order_number", ""),
                 row.get("recipient", ""),
                 row.get("source_product_name", ""),
+                row.get("standard_product_name", "") or row.get("converted_product_name", ""),
+                row.get("wekeep_product_name", ""),
                 row.get("item_code", ""),
                 row.get("sku_no", ""),
                 row.get("customer_barcode", ""),

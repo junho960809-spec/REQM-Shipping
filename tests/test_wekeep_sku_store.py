@@ -42,10 +42,26 @@ class WeKeepSkuStoreTests(unittest.TestCase):
         }], order_kind="b2c", mappings=[
             {"item_code": "A", "sku_no": "SKU-A", "is_active": True},
             {"item_code": "B", "sku_no": "SKU-B", "is_active": True},
+        ], items=[
+            {"item_code": "A", "standard_name": "에이"},
+            {"item_code": "B", "standard_name": "비"},
         ])
 
         self.assertEqual([(row["sku_no"], row["quantity"]) for row in rows], [("SKU-A", 6), ("SKU-B", 3)])
+        self.assertEqual([row["standard_product_name"] for row in rows], ["에이", "비"])
         self.assertTrue(all(row["state"] == "ready" for row in rows))
+
+    def test_keeps_standard_and_wekeep_product_names_separate(self) -> None:
+        rows = store.prepare_wekeep_orders([{
+            "status": "exact", "components": "A×1", "quantity": "1",
+            "product_name": "판매처의 긴 상품명", "matched_product": "표준 상품명",
+        }], order_kind="b2c", mappings=[{
+            "item_code": "A", "product_name": "위킵 공식 상품명", "sku_no": "SKU-A",
+        }], items=[{"item_code": "A", "standard_name": "표준 상품명"}])
+
+        self.assertEqual(rows[0]["converted_product_name"], "표준 상품명")
+        self.assertEqual(rows[0]["standard_product_name"], "표준 상품명")
+        self.assertEqual(rows[0]["wekeep_product_name"], "위킵 공식 상품명")
 
     def test_invalid_quantity_is_reviewed_without_rounding_or_clamping(self) -> None:
         base = {
