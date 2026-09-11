@@ -7,7 +7,13 @@ from pathlib import Path
 
 from unittest.mock import patch
 
-from wisely_mail_service import attachment_name_for, file_sha256, require_secure_webmail_urls, subject_for
+from wisely_mail_service import (
+    attachment_name_for,
+    file_sha256,
+    require_allowed_webmail_page,
+    require_secure_webmail_urls,
+    subject_for,
+)
 
 
 class WiselyMailServiceTests(unittest.TestCase):
@@ -24,10 +30,21 @@ class WiselyMailServiceTests(unittest.TestCase):
             second = file_sha256(path)
         self.assertEqual(first, second)
 
-    def test_plain_http_login_is_rejected(self) -> None:
+    def test_reqm_http_login_is_allowed(self) -> None:
+        with patch("wisely_mail_service.WEBMAIL_URL", "http://webmail.reqm.co.kr/intro.php"), patch(
+            "wisely_mail_service.WEBMAIL_INBOX_URL",
+            "http://webmail.reqm.co.kr/user/mail/main.php?page=list&mbox=INBOX",
+        ):
+            require_secure_webmail_urls()
+
+    def test_other_plain_http_login_is_rejected(self) -> None:
         with patch("wisely_mail_service.WEBMAIL_URL", "http://webmail.example.test/login"):
-            with self.assertRaisesRegex(RuntimeError, "HTTPS"):
+            with self.assertRaisesRegex(RuntimeError, "REQM"):
                 require_secure_webmail_urls()
+
+    def test_redirect_to_external_host_is_rejected(self) -> None:
+        with self.assertRaisesRegex(RuntimeError, "외부 주소"):
+            require_allowed_webmail_page("https://example.test/login")
 
 
 if __name__ == "__main__":
