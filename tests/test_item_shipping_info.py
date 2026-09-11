@@ -25,14 +25,22 @@ class FakeQuery:
     def update(self, payload): self.action, self.payload = "update", payload; return self
     def delete(self): self.action = "delete"; return self
     def insert(self, payload): self.action, self.payload = "insert", payload; return self
+    def upsert(self, payload, on_conflict=None): self.action, self.payload = "upsert", payload; return self
+    def select(self, value): self.action = "select"; return self
+    def range(self, start, end): return self
     def eq(self, key, value): self.filters.append((key, value)); return self
     def execute(self):
         self.client.operations.append((self.table, self.action, self.payload, tuple(self.filters)))
-        return type("Response", (), {"data": []})()
+        if self.table == "wekeep_sku_mappings" and self.action == "upsert":
+            values = self.payload if isinstance(self.payload, list) else [self.payload]
+            for value in values:
+                self.client.remote_mappings[str(value["item_code"])] = dict(value)
+        data = list(self.client.remote_mappings.values()) if self.table == "wekeep_sku_mappings" and self.action == "select" else []
+        return type("Response", (), {"data": data})()
 
 
 class FakeClient:
-    def __init__(self): self.operations = []
+    def __init__(self): self.operations = []; self.remote_mappings = {}
     def table(self, name): return FakeQuery(self, name)
 
 
@@ -67,6 +75,32 @@ class ItemShippingInfoTests(unittest.TestCase):
         self.assertTrue(any(operation[0] == "items" and operation[1] == "update" for operation in client.operations))
         self.assertTrue(any(operation[0] == "item_barcodes" and operation[1] == "delete" for operation in client.operations))
         self.assertTrue(any(operation[0] == "item_barcodes" and operation[1] == "insert" for operation in client.operations))
+
+    def test_shared_sku_is_upserted_and_reloaded_from_supabase(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            sku_path = Path(folder) / "sku.json"
+            client = FakeClient()
+            items = [{"item_code": "ITEM-A", "standard_name": "상품", "is_active": True}]
+            dialog = ItemManagerDialog(
+                client, items, [], sku_path=sku_path,
+                sku_mappings=[], sku_shared_available=True, user_id="user-1",
+            )
+            dialog.shipping_grid.selectRow(0)
+            dialog.shipping_sku.setText("12345678901234")
+            dialog.shipping_wekeep_name.setText("공용 위킵 상품명")
+            with patch.object(QMessageBox, "information"), patch.object(QMessageBox, "warning"), patch.object(QMessageBox, "critical") as critical:
+                dialog.save_shipping_info()
+            dialog.close()
+
+        self.assertFalse(critical.called)
+        saved = client.remote_mappings["ITEM-A"]
+        self.assertEqual(saved["sku_no"], "12345678901234")
+        self.assertEqual(saved["product_name"], "공용 위킵 상품명")
+        self.assertEqual(saved["updated_by"], "user-1")
+        self.assertTrue(any(
+            operation[0] == "wekeep_sku_mappings" and operation[1] == "upsert"
+            for operation in client.operations
+        ))
 
 
 if __name__ == "__main__":

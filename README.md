@@ -93,6 +93,11 @@ python tools/publish_update.py C:\release\reqm-shipping-update-1.0.71
 최초 사용 전에 Supabase SQL Editor에서
 `supabase/migrations/20260828_ecount_sales_rawdata.sql`을 실행해야 합니다.
 
+위킵 품목 정보를 여러 사용자가 공유하려면 Supabase SQL Editor에서
+`supabase/migrations/20260911_wekeep_sku_mappings.sql`도 한 번 실행해야 합니다.
+적용 후 관리자가 처음 로그인하면 기존 기본·로컬 SKU 정보가 빈 공용 테이블로 자동 이전됩니다.
+이후 위킵 SKU와 상품관리명은 Supabase를 원본으로 사용하며 로컬 JSON은 통신 장애 대비 캐시로 유지됩니다.
+
 - `판매자료 자동 동기화`: 지난주 금요일부터 이번주 목요일까지 이카운트 판매현황을 조회하고 해당 기간을 교체합니다.
 - `주간재고조사 Excel 생성`: Supabase 누적 자료를 `RAWDATA_이카운트` 시트에 기록합니다.
 

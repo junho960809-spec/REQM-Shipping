@@ -78,6 +78,17 @@ class DashboardNavigationTests(unittest.TestCase):
         self.assertIn("assets/windows_ocr.ps1", spec)
         self.assertEqual([path.name for path in root.glob("*.spec")], ["REQM.spec"])
 
+    def test_shared_wekeep_sku_migration_has_rls_and_admin_write_policy(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        sql = (root / "supabase" / "migrations" / "20260911_wekeep_sku_mappings.sql").read_text(
+            encoding="utf-8"
+        ).lower()
+        self.assertIn("create table if not exists public.wekeep_sku_mappings", sql)
+        self.assertIn("enable row level security", sql)
+        self.assertIn("authenticated users read wekeep sku mappings", sql)
+        self.assertIn("admins write wekeep sku mappings", sql)
+        self.assertIn("unique index", sql)
+
     def test_removed_marketplace_automation_is_not_in_production_root(self) -> None:
         root = Path(__file__).resolve().parents[1]
         legacy_modules = (

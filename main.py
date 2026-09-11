@@ -120,7 +120,7 @@ DEFAULT_CONFIG = {
     },
 }
 ADMIN_USER_ID = "c7937d51-1a14-47aa-987e-6254c6c79014"
-APP_VERSION = "1.2.6"
+APP_VERSION = "1.2.7"
 TEST_MODE = os.getenv("REQM_TEST_MODE", "").strip().casefold() in {"1", "true", "yes"}
 UPDATE_BASE_URL = "https://jcslohuraqclhryeqxoc.supabase.co/storage/v1/object/public/reqm-updates"
 UPDATE_MANIFEST_URL = f"{UPDATE_BASE_URL}/manifest.json"
@@ -454,13 +454,15 @@ class ItemManagerDialog(QDialog):
     def __init__(
         self, client: Client, items: list[dict], barcodes: list[dict], parent=None,
         user_id: str = "", user_email: str = "", sku_path: Path | None = None,
+        sku_mappings: list[dict] | None = None, sku_shared_available: bool = False,
     ):
         super().__init__(parent)
         self.client, self.items, self.barcodes = client, items, barcodes
         self.user_id = user_id
         self.user_email = user_email
         self.sku_path = sku_path
-        self.sku_mappings = self.load_sku_mappings()
+        self.sku_shared_available = sku_shared_available
+        self.sku_mappings = list(sku_mappings) if sku_mappings is not None else self.load_sku_mappings()
         self.setWindowTitle("REQM 품목 정보 관리")
         self.resize(1320, 720)
         try:
@@ -527,7 +529,7 @@ class ItemManagerDialog(QDialog):
         self.shipping_search.setPlaceholderText("품목명 · 코드 · 바코드 · SKU 검색")
         self.shipping_search.setMinimumWidth(330)
         refresh_button = QPushButton("새로고침")
-        refresh_button.clicked.connect(self.refresh_shipping_info)
+        refresh_button.clicked.connect(self.refresh_shared_sku_mappings)
         self.fit_button(refresh_button)
         toolbar.addWidget(self.shipping_filter)
         toolbar.addWidget(self.shipping_search, 1)
@@ -620,6 +622,23 @@ class ItemManagerDialog(QDialog):
             row for row in self.sku_mappings
             if str(row.get("item_code") or "").strip().casefold() == item_code.casefold()
         ), {})
+
+    def refresh_shared_sku_mappings(self) -> None:
+        """Reload the shared SKU catalog; local data is only an offline fallback."""
+        if self.sku_shared_available:
+            try:
+                self.sku_mappings = fetch_all_rows(self.client, "wekeep_sku_mappings")
+                parent = self.parent()
+                if parent is not None and getattr(parent, "catalog", None) is not None:
+                    parent.catalog["wekeep_sku_mappings"] = list(self.sku_mappings)
+                for mapping in self.sku_mappings:
+                    save_wekeep_sku_mapping(mapping, local_path=self.sku_path or LOCAL_MAPPING_PATH)
+            except Exception as exc:
+                QMessageBox.warning(self, "공용 품목 정보 조회 실패", f"로컬 캐시를 유지합니다.\n\n{exc}")
+                return
+        else:
+            self.sku_mappings = self.load_sku_mappings()
+        self.refresh_shipping_info()
 
     def refresh_shipping_info(self) -> None:
         selected_code = self.shipping_item_code.text().strip()
@@ -782,14 +801,24 @@ class ItemManagerDialog(QDialog):
                 payload = [{"item_code": code, "barcode": value, "is_active": True} for value in new_barcodes]
                 self.client.table("item_barcodes").insert(payload).execute()
             current_mapping = self.sku_mapping(code)
-            save_wekeep_sku_mapping({
+            mapping_payload = {
                 "item_code": code,
                 "wekeep_manage_code": current_mapping.get("wekeep_manage_code") or code,
                 "product_name": wekeep_name,
-                "sku_no": sku,
+                "sku_no": sku or None,
                 "customer_barcode": barcodes[0] if barcodes else "",
                 "is_active": bool(sku),
-            }, local_path=self.sku_path or LOCAL_MAPPING_PATH)
+            }
+            if self.sku_shared_available:
+                remote_payload = {
+                    **mapping_payload,
+                    "updated_by": self.user_id or None,
+                    "updated_at": datetime.now().astimezone().isoformat(),
+                }
+                self.client.table("wekeep_sku_mappings").upsert(
+                    remote_payload, on_conflict="item_code"
+                ).execute()
+            save_wekeep_sku_mapping(mapping_payload, local_path=self.sku_path or LOCAL_MAPPING_PATH)
         except Exception as exc:
             QMessageBox.critical(self, "품목 정보 저장 실패", str(exc))
             return
@@ -809,7 +838,20 @@ class ItemManagerDialog(QDialog):
                 known_barcodes[value]["is_active"] = True
             else:
                 self.barcodes.append({"item_code": code, "barcode": value, "is_active": True})
-        self.sku_mappings = self.load_sku_mappings()
+        if self.sku_shared_available:
+            try:
+                self.sku_mappings = fetch_all_rows(self.client, "wekeep_sku_mappings")
+            except Exception:
+                self.sku_mappings = [
+                    row for row in self.sku_mappings
+                    if str(row.get("item_code") or "").strip().casefold() != code.casefold()
+                ]
+                self.sku_mappings.append(dict(mapping_payload))
+        else:
+            self.sku_mappings = self.load_sku_mappings()
+        parent = self.parent()
+        if parent is not None and getattr(parent, "catalog", None) is not None:
+            parent.catalog["wekeep_sku_mappings"] = list(self.sku_mappings)
         self.audit("item_shipping_info_updated", code, {
             "before": before,
             "after": {"standard_name": name, "barcodes": barcodes, "sku_no": sku, "wekeep_product_name": wekeep_name},
@@ -1849,6 +1891,12 @@ class LoginWorker(QThread):
             except Exception:
                 calendar_events = []
                 calendar_shared_available = False
+            try:
+                wekeep_sku_mappings = fetch_all_rows(client, "wekeep_sku_mappings")
+                sku_shared_available = True
+            except Exception:
+                wekeep_sku_mappings = load_wekeep_sku_mappings()
+                sku_shared_available = False
             self.succeeded.emit(
                 len(items),
                 {"items": items, "products": products, "components": components, "barcodes": barcodes,
@@ -1856,7 +1904,9 @@ class LoginWorker(QThread):
                  "auth_user_id": auth_user_id, "auth_email": auth_email, "app_role": app_role,
                  "can_ecount_transfer": can_ecount_transfer,
                  "calendar_events": calendar_events,
-                 "calendar_shared_available": calendar_shared_available},
+                 "calendar_shared_available": calendar_shared_available,
+                 "wekeep_sku_mappings": wekeep_sku_mappings,
+                 "sku_shared_available": sku_shared_available},
             )
         except Exception as exc:
             self.failed.emit(str(exc))
@@ -3950,6 +4000,7 @@ class MainWindow(QMainWindow):
         self.can_ecount_transfer = bool(catalog.get("can_ecount_transfer", False))
         migrated_safety_count = self.migrate_local_safety_stocks()
         migrated_calendar_count = self.initialize_shared_calendar_events()
+        migrated_sku_count = self.initialize_shared_wekeep_mappings()
         self.db_button.setEnabled(self.is_admin)
         self.dashboard_db_button.setEnabled(self.is_admin)
         self.dashboard_users_button.setEnabled(self.is_admin)
@@ -3972,9 +4023,44 @@ class MainWindow(QMainWindow):
             f"DB 준비 완료: 품목 {count:,}개 · 등록상품 {len(catalog['products']):,}개 · "
             f"구성품 {len(catalog['components']):,}개 · 주소 복구 {restored_count:,}건 · "
             f"권한: {'관리자' if self.is_admin else '일반 사용자'} · 창고이동: {'허용' if self.can_ecount_transfer else '미허용'}"
+            f" · 위킵 품목: {'공용 DB' if self.catalog.get('sku_shared_available', False) else '로컬 캐시'}"
             f"{' · 안전재고 공용 이전 ' + str(migrated_safety_count) + '건' if migrated_safety_count else ''}"
             f"{' · 일정 공용 이전 ' + str(migrated_calendar_count) + '건' if migrated_calendar_count else ''}"
+            f"{' · 위킵 품목 공용 이전 ' + str(migrated_sku_count) + '건' if migrated_sku_count else ''}"
         )
+
+    def initialize_shared_wekeep_mappings(self) -> int:
+        """Seed an empty shared catalog once, then make Supabase authoritative."""
+        if self.supabase_client is None or not self.catalog.get("sku_shared_available", False):
+            return 0
+        remote_rows = list(self.catalog.get("wekeep_sku_mappings", []))
+        migrated = 0
+        if not remote_rows and self.is_admin:
+            seed_rows = load_wekeep_sku_mappings()
+            if seed_rows:
+                payload = [{
+                    **row,
+                    "sku_no": str(row.get("sku_no") or "").strip() or None,
+                    "updated_by": self.catalog.get("auth_user_id") or None,
+                } for row in seed_rows]
+                try:
+                    self.supabase_client.table("wekeep_sku_mappings").upsert(
+                        payload, on_conflict="item_code"
+                    ).execute()
+                    remote_rows = fetch_all_rows(self.supabase_client, "wekeep_sku_mappings")
+                    migrated = len(remote_rows)
+                except Exception as exc:
+                    self.catalog["sku_shared_available"] = False
+                    self.status.setText(f"위킵 품목 공용 이전 실패 · 로컬 캐시 사용: {exc}")
+                    return 0
+        # An empty table remains usable for regular users; bundled mappings provide a
+        # temporary read-only fallback until an administrator completes the first seed.
+        if not remote_rows:
+            remote_rows = load_wekeep_sku_mappings()
+        self.catalog["wekeep_sku_mappings"] = remote_rows
+        for row in remote_rows:
+            save_wekeep_sku_mapping(row)
+        return migrated
 
     def initialize_shared_calendar_events(self) -> int:
         if self.supabase_client is None or not self.catalog.get("calendar_shared_available", False):
@@ -4280,6 +4366,8 @@ class MainWindow(QMainWindow):
         ItemManagerDialog(
             self.supabase_client, self.catalog["items"], self.catalog["barcodes"], self,
             user_id=str(self.catalog.get("auth_user_id", "")), user_email=str(self.catalog.get("auth_email", "")),
+            sku_mappings=self.catalog.get("wekeep_sku_mappings", []),
+            sku_shared_available=bool(self.catalog.get("sku_shared_available", False)),
         ).exec()
 
     def apply_item_manager_changes(self) -> None:
@@ -4329,6 +4417,10 @@ class MainWindow(QMainWindow):
                 ("aliases", "item_aliases"),
             ):
                 self.catalog[key] = fetch_all_rows(self.supabase_client, table)
+            if self.catalog.get("sku_shared_available", False):
+                self.catalog["wekeep_sku_mappings"] = fetch_all_rows(
+                    self.supabase_client, "wekeep_sku_mappings"
+                )
             self.matcher = ProductMatcher(
                 self.catalog["items"], self.catalog["products"],
                 self.catalog["components"], self.catalog["aliases"], self.catalog["barcodes"],

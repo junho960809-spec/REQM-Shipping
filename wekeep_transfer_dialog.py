@@ -46,6 +46,10 @@ class WeKeepTransferDialog(QDialog):
         self.orders = orders
         self.current_mode = current_mode
         self.catalog_items = list(getattr(parent, "catalog", {}).get("items", []) or [])
+        self.sku_mappings = list(
+            getattr(parent, "catalog", {}).get("wekeep_sku_mappings", [])
+            or load_wekeep_sku_mappings()
+        )
         self.rows: list[dict] = []
         self.job_store = ShipmentJobStore()
         self.submission_worker: WeKeepSubmissionWorker | None = None
@@ -124,7 +128,7 @@ class WeKeepTransferDialog(QDialog):
         self.rows = prepare_wekeep_orders(
             self.orders,
             order_kind=str(self.kind.currentData()),
-            mappings=load_wekeep_sku_mappings(),
+            mappings=self.sku_mappings,
             items=self.catalog_items,
         )
         counts = readiness_counts(self.rows)
