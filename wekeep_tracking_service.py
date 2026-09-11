@@ -9,7 +9,7 @@ from pathlib import Path
 from openpyxl import load_workbook
 
 from integration_credential_store import load_integration_credentials
-from shipping_export import export_wekep
+from shipping_export import export_with_format
 from wekeep_order_automation import ensure_authenticated
 from wekeep_report_service import PROFILE_PATH, launch_wekeep_context
 
@@ -148,16 +148,30 @@ def reconcile_tracking_numbers(orders: list[dict], remote_rows: list[dict]) -> l
     return results
 
 
-def export_tracking_workbook(rows: list[dict], output_path: str | Path) -> Path:
+def export_tracking_workbook(
+    rows: list[dict], output_path: str | Path, output_profile: dict | None = None,
+) -> Path:
     """Write the existing 11-column carrier workbook with invoice numbers in column J."""
     target = Path(output_path)
-    export_wekep(rows, str(target))
+    profile = output_profile or {"id": "default_b2c"}
+    export_with_format(rows, str(target), profile)
     workbook = load_workbook(target)
     try:
         sheet = workbook.active
-        for row_index, row in enumerate(rows, start=2):
-            sheet.cell(row_index, 10).value = str(row.get("tracking_number") or "")
-            sheet.cell(row_index, 10).number_format = "@"
+        tracking_column = 10
+        data_start_row = 2
+        if profile.get("id") != "default_b2c":
+            mapping = dict(profile.get("mapping") or {})
+            tracking_header = mapping.get("tracking_number")
+            header_row = int(profile.get("header_row", 0)) + 1
+            data_start_row = header_row + 1
+            if tracking_header:
+                headers = [sheet.cell(header_row, column).value for column in range(1, sheet.max_column + 1)]
+                if tracking_header in headers:
+                    tracking_column = headers.index(tracking_header) + 1
+        for row_index, row in enumerate(rows, start=data_start_row):
+            sheet.cell(row_index, tracking_column).value = str(row.get("tracking_number") or "")
+            sheet.cell(row_index, tracking_column).number_format = "@"
         workbook.save(target)
     finally:
         workbook.close()

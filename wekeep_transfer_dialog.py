@@ -41,10 +41,15 @@ class WeKeepSubmissionWorker(QThread):
 
 
 class WeKeepTransferDialog(QDialog):
-    def __init__(self, orders: list[dict], current_mode: str, parent=None, initial_kind: str = ""):
+    def __init__(
+        self, orders: list[dict], current_mode: str, parent=None, initial_kind: str = "",
+        output_profile: dict | None = None, source_name: str = "",
+    ):
         super().__init__(parent)
         self.orders = orders
         self.current_mode = current_mode
+        self.output_profile = dict(output_profile or {})
+        self.source_name = str(source_name)
         self.catalog_items = list(getattr(parent, "catalog", {}).get("items", []) or [])
         self.sku_mappings = list(
             getattr(parent, "catalog", {}).get("wekeep_sku_mappings", [])
@@ -195,7 +200,13 @@ class WeKeepTransferDialog(QDialog):
             QMessageBox.warning(self, "위킵 반영 보류", "검토 필요 주문을 먼저 수동 매칭해 주세요.")
             return
         try:
-            job = self.job_store.create(self.rows, str(self.kind.currentData()))
+            job = self.job_store.create(
+                self.rows,
+                str(self.kind.currentData()),
+                export_rows=self.orders,
+                output_profile=self.output_profile,
+                source_name=self.source_name,
+            )
         except Exception as exc:
             QMessageBox.critical(self, "위킵 출고 작업 생성 실패", str(exc))
             return

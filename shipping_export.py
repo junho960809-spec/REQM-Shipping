@@ -18,7 +18,10 @@ def export_wekep(orders: list[dict[str, str]], file_path: str) -> None:
     sheet.title = "택배출고"
     sheet.append(HEADERS)
     for order in orders:
-        product_name = order.get("matched_product") or order.get("matched_name") or order.get("product_name")
+        product_name = (
+            order.get("standard_product_name") or order.get("converted_product_name")
+            or order.get("matched_product") or order.get("matched_name") or order.get("product_name")
+        )
         sheet.append(
             [
                 order.get("order_number", ""),

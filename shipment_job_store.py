@@ -80,10 +80,22 @@ class ShipmentJobStore:
                     detail TEXT NOT NULL DEFAULT '',
                     created_at TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS shipment_tracking_snapshots (
+                    job_id TEXT PRIMARY KEY REFERENCES shipment_jobs(id),
+                    results_encrypted TEXT NOT NULL,
+                    matched_count INTEGER NOT NULL DEFAULT 0,
+                    total_count INTEGER NOT NULL DEFAULT 0,
+                    exported_at TEXT NOT NULL DEFAULT '',
+                    updated_at TEXT NOT NULL
+                );
                 """
             )
 
-    def create(self, rows: list[dict], order_kind: str, *, provider: str = "wekeep") -> dict:
+    def create(
+        self, rows: list[dict], order_kind: str, *, provider: str = "wekeep",
+        export_rows: list[dict] | None = None, output_profile: dict | None = None,
+        source_name: str = "",
+    ) -> dict:
         key = shipment_idempotency_key(rows, order_kind, provider)
         existing = self.find_blocking(key)
         if existing:
@@ -92,7 +104,12 @@ class ShipmentJobStore:
             )
         job_id = str(uuid.uuid4())
         timestamp = _now()
-        encrypted = protect_secret(json.dumps({"rows": rows}, ensure_ascii=False))
+        encrypted = protect_secret(json.dumps({
+            "rows": rows,
+            "export_rows": export_rows if export_rows is not None else rows,
+            "output_profile": output_profile or {},
+            "source_name": str(source_name),
+        }, ensure_ascii=False))
         try:
             with self._session() as connection:
                 connection.execute(
@@ -108,6 +125,65 @@ class ShipmentJobStore:
         except sqlite3.IntegrityError as exc:
             raise ValueError("동일한 출고 작업이 동시에 생성되어 중복 실행을 차단했습니다.") from exc
         return self.get(job_id)
+
+    def list_recent(self, *, limit: int = 100, include_payload: bool = False) -> list[dict]:
+        with self._session() as connection:
+            rows = connection.execute(
+                """SELECT j.*, COALESCE(t.matched_count, 0) AS matched_count,
+                          COALESCE(t.total_count, 0) AS tracking_total_count,
+                          COALESCE(t.exported_at, '') AS exported_at
+                   FROM shipment_jobs j
+                   LEFT JOIN shipment_tracking_snapshots t ON t.job_id = j.id
+                   WHERE j.provider = 'wekeep' AND j.state = 'completed'
+                   ORDER BY j.updated_at DESC LIMIT ?""",
+                (max(1, int(limit)),),
+            ).fetchall()
+        results = []
+        for row in rows:
+            item = dict(row)
+            encrypted = item.pop("payload_encrypted")
+            if include_payload:
+                item["payload"] = json.loads(unprotect_secret(encrypted))
+            results.append(item)
+        return results
+
+    def save_tracking_results(self, job_id: str, rows: list[dict]) -> None:
+        self.get(job_id)
+        timestamp = _now()
+        order_keys = {str(row.get("order_number") or index) for index, row in enumerate(rows)}
+        matched_keys = {
+            str(row.get("order_number") or index) for index, row in enumerate(rows)
+            if row.get("tracking_match_state") == "matched"
+        }
+        encrypted = protect_secret(json.dumps({"rows": rows}, ensure_ascii=False))
+        with self._session() as connection:
+            connection.execute(
+                """INSERT INTO shipment_tracking_snapshots
+                   (job_id, results_encrypted, matched_count, total_count, updated_at)
+                   VALUES (?, ?, ?, ?, ?)
+                   ON CONFLICT(job_id) DO UPDATE SET
+                     results_encrypted = excluded.results_encrypted,
+                     matched_count = excluded.matched_count,
+                     total_count = excluded.total_count,
+                     updated_at = excluded.updated_at""",
+                (job_id, encrypted, len(matched_keys), len(order_keys), timestamp),
+            )
+
+    def load_tracking_results(self, job_id: str) -> list[dict]:
+        with self._session() as connection:
+            row = connection.execute(
+                "SELECT results_encrypted FROM shipment_tracking_snapshots WHERE job_id = ?", (job_id,)
+            ).fetchone()
+        if row is None:
+            return []
+        return list(json.loads(unprotect_secret(row["results_encrypted"])).get("rows") or [])
+
+    def mark_tracking_exported(self, job_id: str) -> None:
+        with self._session() as connection:
+            connection.execute(
+                "UPDATE shipment_tracking_snapshots SET exported_at = ?, updated_at = ? WHERE job_id = ?",
+                (_now(), _now(), job_id),
+            )
 
     def get(self, job_id: str, *, include_payload: bool = False) -> dict:
         with self._session() as connection:

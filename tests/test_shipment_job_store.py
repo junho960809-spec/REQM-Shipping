@@ -33,6 +33,41 @@ class ShipmentJobStoreTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "허용되지 않는"):
                 store.transition(job["id"], "submitting")
 
+    def test_completed_job_retains_export_rows_and_tracking_progress(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            store = ShipmentJobStore(Path(folder) / "jobs.sqlite3")
+            profile = {"id": "default_b2c", "name": "기본 택배출고"}
+            job = store.create(
+                self._rows(), "b2c", export_rows=self._rows(),
+                output_profile=profile, source_name="A_출고.xlsx",
+            )
+            store.transition(job["id"], "submitting")
+            store.transition(job["id"], "completed")
+            tracking = [{**self._rows()[0], "tracking_match_state": "matched", "tracking_number": "1234567890"}]
+            store.save_tracking_results(job["id"], tracking)
+            recent = store.list_recent(include_payload=True)
+            self.assertEqual(recent[0]["payload"]["source_name"], "A_출고.xlsx")
+            self.assertEqual(recent[0]["payload"]["output_profile"], profile)
+            self.assertEqual(recent[0]["matched_count"], 1)
+            self.assertEqual(store.load_tracking_results(job["id"]), tracking)
+
+    def test_tracking_progress_counts_orders_instead_of_set_component_rows(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            store = ShipmentJobStore(Path(folder) / "jobs.sqlite3")
+            rows = [
+                {**self._rows()[0], "item_code": "MAIN"},
+                {**self._rows()[0], "item_code": "OPTION"},
+            ]
+            job = store.create(rows, "b2c")
+            store.transition(job["id"], "submitting")
+            store.transition(job["id"], "completed")
+            store.save_tracking_results(job["id"], [
+                {**row, "tracking_match_state": "matched", "tracking_number": "1234567890"}
+                for row in rows
+            ])
+            recent = store.list_recent()
+            self.assertEqual((recent[0]["matched_count"], recent[0]["tracking_total_count"]), (1, 1))
+
 
 if __name__ == "__main__":
     unittest.main()
