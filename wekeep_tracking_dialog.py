@@ -1,6 +1,7 @@
 """Dialog for fetching and exporting WeKeep tracking numbers."""
 from __future__ import annotations
 
+import os
 from datetime import date
 
 from PySide6.QtCore import QDate, QThread, Signal
@@ -92,6 +93,14 @@ class WeKeepTrackingDialog(QDialog):
         except Exception as exc:
             QMessageBox.critical(self, "송장 Excel 저장 실패", str(exc))
             return
+        try:
+            os.startfile(file_path)
+        except OSError as exc:
+            QMessageBox.warning(
+                self,
+                "Excel 자동 열기 실패",
+                f"송장 Excel은 저장했지만 자동으로 열지 못했습니다.\n{file_path}\n\n{exc}",
+            )
         QMessageBox.information(self, "송장 Excel 저장 완료", f"확인된 송장번호를 기존 택배출고 양식에 입력했습니다.\n\n{file_path}")
 
     def closeEvent(self, event) -> None:

@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from pathlib import Path
+import os
 import sys
 
 from openpyxl import load_workbook
@@ -1021,6 +1022,14 @@ class InventoryDialog(QDialog):
         except Exception as exc:
             QMessageBox.critical(self, "Excel 생성 실패", str(exc))
             return
+        try:
+            os.startfile(path)
+        except OSError as exc:
+            QMessageBox.warning(
+                self,
+                "Excel 자동 열기 실패",
+                f"주간재고조사 파일은 저장했지만 자동으로 열지 못했습니다.\n{path}\n\n{exc}",
+            )
         QMessageBox.information(self, "Excel 생성 완료", f"주간재고조사 파일을 저장했습니다.\n{path}")
 
 
