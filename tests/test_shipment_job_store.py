@@ -68,6 +68,18 @@ class ShipmentJobStoreTests(unittest.TestCase):
             recent = store.list_recent()
             self.assertEqual((recent[0]["matched_count"], recent[0]["tracking_total_count"]), (1, 1))
 
+    def test_unknown_job_is_visible_for_confirmation_and_can_be_released_for_retry(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            store = ShipmentJobStore(Path(folder) / "jobs.sqlite3")
+            job = store.create(self._rows(), "b2c")
+            store.transition(job["id"], "submitting")
+            store.transition(job["id"], "verifying")
+            store.transition(job["id"], "unknown")
+            self.assertEqual(store.list_recent()[0]["state"], "unknown")
+            store.transition(job["id"], "failed", detail="위킵 미등록 확인")
+            replacement = store.create(self._rows(), "b2c")
+            self.assertNotEqual(replacement["id"], job["id"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -28,6 +28,11 @@ REGISTRATION_PANELS = {
 }
 SUCCESS_MARKERS = ("등록되었습니다", "등록 완료", "성공적으로 등록")
 FAILURE_MARKERS = ("등록 실패", "오류가 발생", "업로드 실패")
+ALERT_FAILURE_MARKERS = FAILURE_MARKERS + ("중복", "이미 등록", "등록할 수 없", "유효하지 않", "필수 항목")
+
+
+class ConfirmedSubmissionFailure(RuntimeError):
+    """The provider explicitly rejected the submitted workbook."""
 
 
 def verified_registration_panel(page, order_kind: str):
@@ -121,15 +126,28 @@ def submit_registration(page, order_kind: str, *, on_submitted=None) -> dict:
     if on_submitted:
         on_submitted()
     button.click()
-    page.wait_for_timeout(1_500)
+    page.wait_for_timeout(700)
+    alert_messages: list[str] = []
+    alert_selector = "[role='alert'], .toast, .toast-message, .alert, .swal2-popup, .bootbox, .notification, .notify"
+    for _ in range(6):
+        try:
+            for message in page.locator(alert_selector).all_inner_texts():
+                message = str(message).strip()
+                if message and message not in alert_messages:
+                    alert_messages.append(message)
+        except Exception:
+            pass
+        page.wait_for_timeout(500)
     body_text = page.locator("body").inner_text()
-    response_text = "\n".join([body_text, *dialog_messages])
-    if any(marker in response_text for marker in FAILURE_MARKERS):
-        raise RuntimeError("위킵이 주문 등록 실패를 반환했습니다. " + " / ".join(dialog_messages))
+    response_text = "\n".join([body_text, *dialog_messages, *alert_messages])
+    explicit_messages = "\n".join([*dialog_messages, *alert_messages])
+    if any(marker in body_text for marker in FAILURE_MARKERS) or any(marker in explicit_messages for marker in ALERT_FAILURE_MARKERS):
+        detail = " / ".join([*dialog_messages, *alert_messages]) or "위킵 화면에서 실패 문구 확인"
+        raise ConfirmedSubmissionFailure("위킵이 주문 등록을 거절했습니다. " + detail)
     if any(marker in response_text for marker in SUCCESS_MARKERS):
         reference_match = re.search(r"(?:주문|접수)번호\s*[:：]?\s*([A-Za-z0-9_-]+)", response_text)
         return {"state": "completed", "provider_reference": reference_match.group(1) if reference_match else ""}
-    return {"state": "unknown", "provider_reference": "", "message": " / ".join(dialog_messages)}
+    return {"state": "unknown", "provider_reference": "", "message": " / ".join([*dialog_messages, *alert_messages])}
 
 
 def verify_registered_orders(page, rows: list[dict], order_kind: str) -> bool:
@@ -194,7 +212,9 @@ def run_wekeep_job(job_id: str, db_path: str | Path | None = None) -> dict:
         return store.transition(job_id, "unknown", detail=detail)
     except Exception as exc:
         current = store.get(job_id)
-        target = "unknown" if submitted or current["state"] == "verifying" else "failed"
+        target = "failed" if isinstance(exc, ConfirmedSubmissionFailure) else (
+            "unknown" if submitted or current["state"] == "verifying" else "failed"
+        )
         if target in ALLOWED_TRANSITIONS.get(current["state"], set()):
             store.transition(job_id, target, error=str(exc))
         raise

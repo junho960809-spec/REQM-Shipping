@@ -126,17 +126,23 @@ class ShipmentJobStore:
             raise ValueError("동일한 출고 작업이 동시에 생성되어 중복 실행을 차단했습니다.") from exc
         return self.get(job_id)
 
-    def list_recent(self, *, limit: int = 100, include_payload: bool = False) -> list[dict]:
+    def list_recent(
+        self, *, limit: int = 100, include_payload: bool = False,
+        states: tuple[str, ...] = ("completed", "unknown"),
+    ) -> list[dict]:
+        if not states:
+            return []
+        placeholders = ",".join("?" for _ in states)
         with self._session() as connection:
             rows = connection.execute(
-                """SELECT j.*, COALESCE(t.matched_count, 0) AS matched_count,
+                f"""SELECT j.*, COALESCE(t.matched_count, 0) AS matched_count,
                           COALESCE(t.total_count, 0) AS tracking_total_count,
                           COALESCE(t.exported_at, '') AS exported_at
                    FROM shipment_jobs j
                    LEFT JOIN shipment_tracking_snapshots t ON t.job_id = j.id
-                   WHERE j.provider = 'wekeep' AND j.state = 'completed'
+                   WHERE j.provider = 'wekeep' AND j.state IN ({placeholders})
                    ORDER BY j.updated_at DESC LIMIT ?""",
-                (max(1, int(limit)),),
+                (*states, max(1, int(limit))),
             ).fetchall()
         results = []
         for row in rows:

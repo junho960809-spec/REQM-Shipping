@@ -8,6 +8,7 @@ from unittest.mock import Mock, patch
 
 from shipment_job_store import ShipmentJobStore
 from wekeep_order_automation import (
+    ConfirmedSubmissionFailure,
     load_pending_payload,
     ensure_authenticated,
     open_registration_panel,
@@ -41,6 +42,9 @@ class FakeLocator:
     def inner_text(self) -> str:
         return self.page.body_text if self.name == "body" else ""
 
+    def all_inner_texts(self) -> list[str]:
+        return list(self.page.alert_messages) if "role='alert'" in self.name else []
+
     def get_by_role(self, role: str, **kwargs):
         self.calls.append(("scoped_role", self.name, role, kwargs))
         return FakeLocator(self.calls, f"{self.name}::{kwargs['name']}", self.page)
@@ -56,6 +60,7 @@ class FakePage:
     def __init__(self) -> None:
         self.calls: list = []
         self.body_text = "주식회사 리큐엠(B2C) 주식회사 리큐엠(사입형B2C) 주식회사 리큐엠(B2B)"
+        self.alert_messages: list[str] = []
         self.url = "https://fbw.wekeep.co.kr/fbw/login"
 
     def get_by_role(self, role: str, **kwargs) -> FakeLocator:
@@ -137,6 +142,13 @@ class WeKeepOrderAutomationTests(unittest.TestCase):
         page.body_text = "주식회사 리큐엠(사입형B2C) 주문 목록"
 
         self.assertEqual(submit_registration(page, "b2c_buying")["state"], "unknown")
+
+    def test_explicit_duplicate_alert_is_a_confirmed_failure(self) -> None:
+        page = FakePage()
+        page.body_text = "주식회사 리큐엠(B2C)"
+        page.alert_messages = ["이미 등록된 중복 주문입니다."]
+        with self.assertRaises(ConfirmedSubmissionFailure):
+            submit_registration(page, "b2c")
 
     def test_saved_credentials_can_log_in_without_showing_browser(self) -> None:
         page = FakePage()

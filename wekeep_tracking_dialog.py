@@ -59,14 +59,16 @@ class WeKeepTrackingDialog(QDialog):
         self.result_table.setHorizontalHeaderLabels(["상태", "주문번호", "수령인", "상품명", "송장번호", "확인 내용"])
         self.result_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers); self.result_table.verticalHeader().setVisible(False)
         self.fetch_button = QPushButton("선택 작업 송장 재조회"); self.fetch_button.setObjectName("primaryButton"); self.fetch_button.setEnabled(False)
+        self.retry_button = QPushButton("미등록 확인·재등록 허용"); self.retry_button.setEnabled(False)
         self.save_button = QPushButton("최종 Excel 저장"); self.save_button.setEnabled(False)
         self.close_button = QPushButton("닫기")
-        buttons = QHBoxLayout(); buttons.addStretch(1); buttons.addWidget(self.close_button); buttons.addWidget(self.save_button); buttons.addWidget(self.fetch_button)
+        buttons = QHBoxLayout(); buttons.addStretch(1); buttons.addWidget(self.close_button); buttons.addWidget(self.retry_button); buttons.addWidget(self.save_button); buttons.addWidget(self.fetch_button)
         layout = QVBoxLayout(self); layout.addWidget(title); layout.addWidget(guide); layout.addLayout(filters); layout.addWidget(self.job_table, 1)
         layout.addWidget(self.summary); layout.addWidget(self.result_table, 2); layout.addLayout(buttons)
         self.search_button.clicked.connect(self.load_jobs); self.search.returnPressed.connect(self.load_jobs)
         self.start_date.dateChanged.connect(self.load_jobs); self.end_date.dateChanged.connect(self.load_jobs)
         self.job_table.itemSelectionChanged.connect(self.select_job); self.fetch_button.clicked.connect(self.fetch_tracking)
+        self.retry_button.clicked.connect(self.allow_retry)
         self.save_button.clicked.connect(self.save_excel); self.close_button.clicked.connect(self.accept)
         self.load_jobs()
 
@@ -94,7 +96,7 @@ class WeKeepTrackingDialog(QDialog):
             rows, payload = self._payload_rows(job), job.get("payload") or {}
             order_count = len({str(row.get("order_number") or row_index) for row_index, row in enumerate(rows)})
             matched, total = int(job.get("matched_count") or 0), int(job.get("tracking_total_count") or order_count)
-            status = "확인 완료" if total and matched == total else (f"{max(total-matched, 0)}건 발급 대기" if matched else "조회 전")
+            status = "등록 확인 필요" if job.get("state") == "unknown" else ("확인 완료" if total and matched == total else (f"{max(total-matched, 0)}건 발급 대기" if matched else "조회 전"))
             values = ["○", self._job_date(job).isoformat(), payload.get("source_name") or f"작업 {job['id'][:8]}",
                       ORDER_KIND_LABELS.get(str(job.get("order_kind")), str(job.get("order_kind", ""))), f"{order_count}건", f"{matched} / {total}", status]
             for column, value in enumerate(values): self.job_table.setItem(index, column, QTableWidgetItem(str(value)))
@@ -103,13 +105,16 @@ class WeKeepTrackingDialog(QDialog):
         if self.visible_jobs: self.job_table.selectRow(select_index if select_index >= 0 else 0)
         else:
             self.selected_job = None; self.results = []; self.result_table.setRowCount(0)
-            self.summary.setText("조건에 맞는 완료된 위킵 출고 작업이 없습니다."); self.fetch_button.setEnabled(False); self.save_button.setEnabled(False)
+            self.summary.setText("조건에 맞는 위킵 출고 작업이 없습니다."); self.fetch_button.setEnabled(False); self.retry_button.setEnabled(False); self.save_button.setEnabled(False)
 
     def select_job(self) -> None:
         index = self.job_table.currentRow()
         if not 0 <= index < len(self.visible_jobs): return
         self.selected_job = self.visible_jobs[index]; self.results = self.store.load_tracking_results(self.selected_job["id"])
-        self.fetch_button.setEnabled(True); self.show_results()
+        uncertain = self.selected_job.get("state") == "unknown"
+        self.fetch_button.setText("위킵 등록 여부 확인" if uncertain else "선택 작업 송장 재조회")
+        not_found = bool(self.results) and any(row.get("tracking_match_state") not in {"matched", "pending"} for row in self.results)
+        self.fetch_button.setEnabled(True); self.retry_button.setEnabled(uncertain and not_found); self.show_results()
 
     def show_results(self) -> None:
         grouped = {}
@@ -144,11 +149,36 @@ class WeKeepTrackingDialog(QDialog):
         for index, row in enumerate(rows):
             if index < len(previous) and previous[index].get("tracking_match_state") == "matched" and row.get("tracking_match_state") != "matched": rows[index] = previous[index]
         self.results = rows; self.store.save_tracking_results(job_id, rows)
+        if self.selected_job and self.selected_job.get("state") == "unknown":
+            remote_found = bool(rows) and all(row.get("tracking_match_state") in {"matched", "pending"} for row in rows)
+            if remote_found:
+                self.store.transition(job_id, "completed", detail="위킵 주문 목록 재확인 완료")
+                self.selected_job["state"] = "completed"
+                self.retry_button.setEnabled(False)
+            else:
+                self.retry_button.setEnabled(True)
         self.fetch_button.setEnabled(True); self.close_button.setEnabled(True); self.show_results(); self.load_jobs()
 
     def on_failed(self, message: str) -> None:
         self.fetch_button.setEnabled(True); self.close_button.setEnabled(True); self.summary.setText("송장 조회 실패")
         QMessageBox.critical(self, "위킵 송장 조회 실패", message)
+
+    def allow_retry(self) -> None:
+        if not self.selected_job or self.selected_job.get("state") != "unknown":
+            return
+        answer = QMessageBox.question(
+            self, "재등록 허용",
+            "조회 결과 위킵에 등록되지 않은 주문임을 확인하셨습니까?\n\n"
+            "확인 후 재등록을 허용하면 같은 출고 작업을 다시 위킵에 전송할 수 있습니다. 위킵에 이미 존재하는 주문이면 중복 등록될 수 있습니다.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        self.store.transition(self.selected_job["id"], "failed", detail="작업자 확인: 위킵 미등록, 재등록 허용")
+        self.selected_job = None; self.results = []; self.retry_button.setEnabled(False)
+        self.load_jobs()
+        QMessageBox.information(self, "재등록 허용 완료", "해당 미확인 작업의 중복 차단을 해제했습니다. 원본 주문 파일을 다시 불러와 위킵 반영을 진행하세요.")
 
     def save_excel(self) -> None:
         if not self.selected_job or not self.results or any(row.get("tracking_match_state") != "matched" for row in self.results):

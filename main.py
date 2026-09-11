@@ -16,7 +16,7 @@ from urllib.parse import quote
 from pathlib import Path
 
 from PySide6.QtCore import QDate, QTime, Qt, QThread, Signal, QTimer
-from PySide6.QtGui import QAction, QColor, QFont, QIcon, QPainter, QPixmap, QTextCharFormat
+from PySide6.QtGui import QAction, QColor, QFont, QIcon, QKeySequence, QPainter, QPixmap, QTextCharFormat
 from PySide6.QtWidgets import (
     QApplication,
     QAbstractSpinBox,
@@ -120,7 +120,7 @@ DEFAULT_CONFIG = {
     },
 }
 ADMIN_USER_ID = "c7937d51-1a14-47aa-987e-6254c6c79014"
-APP_VERSION = "1.3.0"
+APP_VERSION = "1.3.1"
 TEST_MODE = os.getenv("REQM_TEST_MODE", "").strip().casefold() in {"1", "true", "yes"}
 UPDATE_BASE_URL = "https://jcslohuraqclhryeqxoc.supabase.co/storage/v1/object/public/reqm-updates"
 UPDATE_MANIFEST_URL = f"{UPDATE_BASE_URL}/manifest.json"
@@ -3075,6 +3075,8 @@ class MainWindow(QMainWindow):
         self.table.setColumnCount(len(headers))
         self.table.setHorizontalHeaderLabels(headers)
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.table.setSelectionMode(QTableWidget.SelectionMode.ExtendedSelection)
         self.table.setAlternatingRowColors(True)
         self.table.verticalHeader().setDefaultSectionSize(32)
         self.table.verticalHeader().setVisible(False)
@@ -3161,6 +3163,9 @@ class MainWindow(QMainWindow):
         analysis_header_row = QHBoxLayout()
         analysis_header_row.setSpacing(14)
         analysis_header_row.addWidget(analysis_title)
+        self.delete_order_button = QPushButton("선택 주문 삭제")
+        self.delete_order_button.setEnabled(False)
+        analysis_header_row.addWidget(self.delete_order_button)
         analysis_header_row.addStretch(1)
         analysis_header_row.addWidget(location_card, 0, Qt.AlignmentFlag.AlignRight)
         layout.addLayout(analysis_header_row)
@@ -3207,6 +3212,12 @@ class MainWindow(QMainWindow):
         self.location_apply_button.clicked.connect(self.apply_location)
         self.dashboard_button.clicked.connect(self.show_dashboard)
         self.table.cellDoubleClicked.connect(self.edit_match)
+        self.delete_order_button.clicked.connect(self.delete_selected_orders)
+        delete_action = QAction(self.table)
+        delete_action.setShortcut(QKeySequence(Qt.Key.Key_Delete))
+        delete_action.setShortcutContext(Qt.ShortcutContext.WidgetShortcut)
+        delete_action.triggered.connect(self.delete_selected_orders)
+        self.table.addAction(delete_action)
         self.refresh_location_combo()
         self.refresh_output_formats()
 
@@ -4234,6 +4245,7 @@ class MainWindow(QMainWindow):
         self.b2b_button.setEnabled(False)
         self.export_button.setEnabled(False)
         self.ecount_button.setEnabled(False)
+        self.delete_order_button.setEnabled(False)
         self.wekeep_tracking_button.setEnabled(False)
         self.header_row.removeWidget(self.login_button)
         self.login_row.addWidget(self.login_button)
@@ -4726,8 +4738,13 @@ class MainWindow(QMainWindow):
         except Exception:
             pass  # 마이그레이션 전에도 파일 내부 중복 검사는 동작한다.
         for row in orders:
+            if row.get("status") == "duplicate" and row.get("_pre_duplicate_status"):
+                row["status"] = row.pop("_pre_duplicate_status")
+                row["reason"] = row.pop("_pre_duplicate_reason", "")
             key = self.duplicate_key(row)
             if key and (key in seen or key in shipped):
+                row["_pre_duplicate_status"] = row.get("status", "")
+                row["_pre_duplicate_reason"] = row.get("reason", "")
                 row["status"] = "duplicate"
                 row["reason"] = "동일 주문·수령정보·상품 행이 현재 파일에서 반복됨" if key in seen else "동일 출고 행이 이전 출고 이력에 있음"
             if key: seen.add(key)
@@ -4763,6 +4780,31 @@ class MainWindow(QMainWindow):
                 item = QTableWidgetItem(value)
                 item.setBackground(colors.get(order.get("status", ""), QColor("white")))
                 self.table.setItem(row_index, col_index, item)
+        self.delete_order_button.setEnabled(bool(orders))
+
+    def delete_selected_orders(self) -> None:
+        rows = sorted({index.row() for index in self.table.selectionModel().selectedRows()})
+        if not rows:
+            QMessageBox.information(self, "삭제할 주문 선택", "삭제할 주문 행을 먼저 선택해 주세요.")
+            return
+        answer = QMessageBox.question(
+            self, "선택 주문 삭제",
+            f"선택한 {len(rows):,}개 주문 행을 현재 작업에서 제외하시겠습니까?\n원본 Excel과 상품 DB는 변경되지 않습니다.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        for row_index in reversed(rows):
+            if 0 <= row_index < len(self.current_orders):
+                del self.current_orders[row_index]
+        self.mark_duplicates(self.current_orders)
+        self.populate_table(self.current_orders)
+        has_orders = bool(self.current_orders)
+        self.export_button.setEnabled(has_orders)
+        self.ecount_button.setEnabled(has_orders and self.can_ecount_transfer)
+        self.location_apply_button.setEnabled(has_orders)
+        self.status.setText(f"선택 주문 {len(rows):,}개 제외 완료 · 남은 행 {len(self.current_orders):,}개")
 
     def edit_match(self, row_index: int, _column_index: int) -> None:
         if self.matcher is None or not (0 <= row_index < len(self.current_orders)):
@@ -4872,8 +4914,12 @@ class MainWindow(QMainWindow):
         )
         if answer == QMessageBox.StandardButton.Yes:
             if counts["review"]:
-                QMessageBox.information(self, "위킵 반영 검토", f"검토가 필요한 품목이 {counts['review']:,}개 있습니다.\n문제 행을 두 번 눌러 수정한 뒤 등록해 주세요.")
-                dialog.exec()
+                QMessageBox.information(
+                    self, "위킵 반영 전 수정 필요",
+                    f"검토가 필요한 품목이 {counts['review']:,}개 있어 위킵 전송을 시작하지 않았습니다.\n\n"
+                    "분석 결과에서 문제 행을 두 번 눌러 품목을 수정하거나, 중복 주문 행을 선택한 뒤 "
+                    "'선택 주문 삭제'를 눌러 제외하고 다시 출고 변환해 주세요.",
+                )
             else:
                 dialog.use_progress_mode(); dialog.start_submission(); dialog.exec()
             return
