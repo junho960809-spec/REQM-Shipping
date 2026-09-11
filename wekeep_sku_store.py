@@ -33,11 +33,19 @@ def load_wekeep_sku_mappings(
 ) -> list[dict]:
     """Merge bundled seed data with local overrides, keyed by internal item code."""
     merged: dict[str, dict] = {}
-    for path in (seed_path or bundled_mapping_path(), local_path or LOCAL_MAPPING_PATH):
+    paths = (seed_path or bundled_mapping_path(), local_path or LOCAL_MAPPING_PATH)
+    for path_index, path in enumerate(paths):
         for row in _read_rows(path):
             item_code = str(row.get("item_code") or "").strip()
             sku_no = str(row.get("sku_no") or "").strip()
-            if not item_code or not sku_no:
+            if not item_code:
+                continue
+            key = item_code.casefold()
+            # A blank/inactive local row is a tombstone that hides a bundled mapping.
+            if path_index == 1 and (not sku_no or not bool(row.get("is_active", True))):
+                merged.pop(key, None)
+                continue
+            if not sku_no:
                 continue
             clean = {
                 "item_code": item_code,
@@ -47,26 +55,29 @@ def load_wekeep_sku_mappings(
                 "customer_barcode": str(row.get("customer_barcode") or "").strip(),
                 "is_active": bool(row.get("is_active", True)),
             }
-            merged[item_code.casefold()] = clean
+            merged[key] = clean
     return sorted(merged.values(), key=lambda row: row["item_code"].casefold())
 
 
 def save_wekeep_sku_mapping(mapping: dict, local_path: Path | None = None) -> None:
     """Save or replace one local SKU override without modifying the bundled seed."""
     path = local_path or LOCAL_MAPPING_PATH
-    existing = load_wekeep_sku_mappings(seed_path=Path("__missing__"), local_path=path)
-    by_code = {str(row["item_code"]).casefold(): row for row in existing}
+    existing = _read_rows(path)
+    by_code = {
+        str(row.get("item_code") or "").strip().casefold(): row
+        for row in existing if str(row.get("item_code") or "").strip()
+    }
     item_code = str(mapping.get("item_code") or "").strip()
     sku_no = str(mapping.get("sku_no") or "").strip()
-    if not item_code or not sku_no:
-        raise ValueError("내부 품목코드와 위킵 SKU는 필수입니다.")
+    if not item_code:
+        raise ValueError("내부 품목코드는 필수입니다.")
     by_code[item_code.casefold()] = {
         "item_code": item_code,
         "wekeep_manage_code": str(mapping.get("wekeep_manage_code") or item_code).strip(),
         "product_name": str(mapping.get("product_name") or "").strip(),
         "sku_no": sku_no,
         "customer_barcode": str(mapping.get("customer_barcode") or "").strip(),
-        "is_active": bool(mapping.get("is_active", True)),
+        "is_active": bool(mapping.get("is_active", True)) and bool(sku_no),
     }
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(

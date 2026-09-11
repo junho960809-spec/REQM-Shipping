@@ -34,6 +34,18 @@ class WeKeepSkuStoreTests(unittest.TestCase):
             "sku_no": "2", "customer_barcode": "", "is_active": True,
         }])
 
+    def test_blank_local_override_hides_bundled_mapping(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            seed = root / "seed.json"
+            local = root / "local.json"
+            seed.write_text(json.dumps({"mappings": [{"item_code": "A", "sku_no": "1"}]}), encoding="utf-8")
+            store.save_wekeep_sku_mapping({"item_code": "A", "sku_no": ""}, local)
+
+            rows = store.load_wekeep_sku_mappings(seed, local)
+
+        self.assertEqual(rows, [])
+
     def test_prepare_expands_components_and_multiplies_quantity(self) -> None:
         rows = store.prepare_wekeep_orders([{
             "status": "manual", "components": "A×2 + B×1", "quantity": "3",

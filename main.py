@@ -43,6 +43,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QStackedWidget,
     QSpinBox,
+    QSplitter,
     QSystemTrayIcon,
     QTabWidget,
     QTableWidget,
@@ -89,7 +90,12 @@ from program_login_store import delete_program_login, load_program_login, save_p
 from wekeep_report_service import load_config as load_wekeep_report_config, save_config as save_wekeep_report_config, register_daily_task, remove_daily_task, open_login_window, run_report, TASK_NAME
 from wekeep_order_automation import open_order_registration
 from wekeep_transfer_dialog import WeKeepTransferDialog
-from wekeep_sku_store import readiness_counts
+from wekeep_sku_store import (
+    LOCAL_MAPPING_PATH,
+    load_wekeep_sku_mappings,
+    readiness_counts,
+    save_wekeep_sku_mapping,
+)
 from wekeep_tracking_dialog import WeKeepTrackingDialog
 from wisely_mail_service import download_today_order
 from ui.texts import text
@@ -114,7 +120,7 @@ DEFAULT_CONFIG = {
     },
 }
 ADMIN_USER_ID = "c7937d51-1a14-47aa-987e-6254c6c79014"
-APP_VERSION = "1.2.5"
+APP_VERSION = "1.2.6"
 TEST_MODE = os.getenv("REQM_TEST_MODE", "").strip().casefold() in {"1", "true", "yes"}
 UPDATE_BASE_URL = "https://jcslohuraqclhryeqxoc.supabase.co/storage/v1/object/public/reqm-updates"
 UPDATE_MANIFEST_URL = f"{UPDATE_BASE_URL}/manifest.json"
@@ -445,13 +451,18 @@ def write_work_audit(client: Client, user_id: str, user_email: str, event_type: 
 
 class ItemManagerDialog(QDialog):
     """관리자 전용 표준 품목 관리 화면."""
-    def __init__(self, client: Client, items: list[dict], barcodes: list[dict], parent=None, user_id: str = "", user_email: str = ""):
+    def __init__(
+        self, client: Client, items: list[dict], barcodes: list[dict], parent=None,
+        user_id: str = "", user_email: str = "", sku_path: Path | None = None,
+    ):
         super().__init__(parent)
         self.client, self.items, self.barcodes = client, items, barcodes
         self.user_id = user_id
         self.user_email = user_email
-        self.setWindowTitle("DB 품목 관리 · 관리자")
-        self.resize(1040, 640)
+        self.sku_path = sku_path
+        self.sku_mappings = self.load_sku_mappings()
+        self.setWindowTitle("REQM 품목 정보 관리")
+        self.resize(1320, 720)
         try:
             self.price_settings = fetch_price_settings(client)
             self.price_table_available = True
@@ -462,7 +473,9 @@ class ItemManagerDialog(QDialog):
         self.search.setPlaceholderText("품목코드 또는 품목명 검색")
         self.grid = QTableWidget(0, 6)
         self.grid.setHorizontalHeaderLabels(["품목코드", "표준 품목명", "모델", "색상", "형태", "사용"])
-        self.grid.horizontalHeader().setStretchLastSection(True)
+        self.grid.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        self.grid.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        self.grid.verticalHeader().setDefaultSectionSize(32)
         self.grid.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.grid.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         import_btn = QPushButton("엑셀 품목 가져오기")
@@ -470,12 +483,15 @@ class ItemManagerDialog(QDialog):
         add_btn, edit_btn, active_btn = QPushButton("신규 품목"), QPushButton("선택 수정"), QPushButton("사용/중지 전환")
         delete_btn = QPushButton("삭제")
         buttons = QHBoxLayout()
-        for button in (import_btn, add_btn, edit_btn, active_btn, delete_btn): buttons.addWidget(button)
+        for button in (import_btn, add_btn, edit_btn, active_btn, delete_btn):
+            self.fit_button(button); buttons.addWidget(button)
+        buttons.addStretch(1)
         item_tab = QWidget()
         item_layout = QVBoxLayout(item_tab)
         item_layout.addWidget(QLabel("표준 품목(items) 관리 — 변경 내용은 Supabase에 즉시 저장됩니다."))
         item_layout.addWidget(self.search); item_layout.addWidget(self.grid); item_layout.addLayout(buttons)
         self.tabs = QTabWidget()
+        self.tabs.addTab(self.build_shipping_info_tab(), "품목 정보")
         self.tabs.addTab(item_tab, "표준 품목 관리")
         self.tabs.addTab(self.build_price_tab(), "주간재고 단가 관리")
         layout = QVBoxLayout(self)
@@ -489,6 +505,322 @@ class ItemManagerDialog(QDialog):
     def audit(self, event_type: str, entity_key: str, details: dict | None = None) -> None:
         write_work_audit(self.client, self.user_id, self.user_email, event_type, "item", entity_key, details)
 
+    def load_sku_mappings(self) -> list[dict]:
+        if self.sku_path is None:
+            return load_wekeep_sku_mappings()
+        return load_wekeep_sku_mappings(local_path=self.sku_path)
+
+    @staticmethod
+    def fit_button(button: QPushButton, padding: int = 34) -> None:
+        button.setFixedWidth(button.fontMetrics().horizontalAdvance(button.text()) + padding)
+
+    def build_shipping_info_tab(self) -> QWidget:
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        toolbar = QHBoxLayout()
+        self.shipping_filter = QComboBox()
+        self.shipping_filter.addItem("전체", "all")
+        self.shipping_filter.addItem("SKU 미등록", "missing_sku")
+        self.shipping_filter.addItem("바코드 미등록", "missing_barcode")
+        self.shipping_filter.setFixedWidth(126)
+        self.shipping_search = QLineEdit()
+        self.shipping_search.setPlaceholderText("품목명 · 코드 · 바코드 · SKU 검색")
+        self.shipping_search.setMinimumWidth(330)
+        refresh_button = QPushButton("새로고침")
+        refresh_button.clicked.connect(self.refresh_shipping_info)
+        self.fit_button(refresh_button)
+        toolbar.addWidget(self.shipping_filter)
+        toolbar.addWidget(self.shipping_search, 1)
+        toolbar.addWidget(refresh_button)
+        layout.addLayout(toolbar)
+
+        self.shipping_summary = QLabel()
+        self.shipping_summary.setStyleSheet("font-weight:700;color:#36556f;padding:2px 0")
+        layout.addWidget(self.shipping_summary)
+
+        splitter = QSplitter(Qt.Orientation.Horizontal)
+        self.shipping_grid = QTableWidget(0, 5)
+        self.shipping_grid.setHorizontalHeaderLabels(["품목코드", "상품명", "제품 바코드", "위킵 SKU", "상태"])
+        self.shipping_grid.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.shipping_grid.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.shipping_grid.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.shipping_grid.setAlternatingRowColors(True)
+        self.shipping_grid.verticalHeader().setVisible(False)
+        self.shipping_grid.verticalHeader().setDefaultSectionSize(34)
+        shipping_header = self.shipping_grid.horizontalHeader()
+        shipping_header.setMinimumSectionSize(72)
+        shipping_header.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        shipping_header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        self.shipping_grid.setColumnWidth(0, 175)
+        self.shipping_grid.setColumnWidth(2, 155)
+        self.shipping_grid.setColumnWidth(3, 155)
+        self.shipping_grid.setColumnWidth(4, 92)
+        splitter.addWidget(self.shipping_grid)
+
+        editor = QFrame()
+        editor.setObjectName("itemShippingEditor")
+        editor.setMinimumWidth(390)
+        editor.setMaximumWidth(470)
+        editor_layout = QVBoxLayout(editor)
+        editor_title = QLabel("품목 정보 수정")
+        editor_title.setStyleSheet("font-size:18px;font-weight:800;color:#173a59")
+        editor_layout.addWidget(editor_title)
+        form = QFormLayout()
+        form.setLabelAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+        self.shipping_item_code = QLineEdit(); self.shipping_item_code.setReadOnly(True)
+        self.shipping_name = QLineEdit()
+        self.shipping_barcodes = QLineEdit(); self.shipping_barcodes.setPlaceholderText("여러 개는 쉼표로 구분")
+        self.shipping_sku = QLineEdit(); self.shipping_sku.setPlaceholderText("위킵에서 발급된 SKU 입력")
+        self.shipping_wekeep_name = QLineEdit(); self.shipping_wekeep_name.setPlaceholderText("위킵 등록 상품명")
+        self.shipping_active = QCheckBox("사용 중")
+        form.addRow("내부 품목코드", self.shipping_item_code)
+        form.addRow("상품명", self.shipping_name)
+        form.addRow("제품 바코드", self.shipping_barcodes)
+        form.addRow("위킵 SKU", self.shipping_sku)
+        form.addRow("위킵 상품명", self.shipping_wekeep_name)
+        form.addRow("", self.shipping_active)
+        editor_layout.addLayout(form)
+        note = QLabel("저장 시 다른 품목에 연결된 바코드와 위킵 SKU 중복을 확인합니다.")
+        note.setWordWrap(True)
+        note.setStyleSheet("color:#667085;font-size:11px")
+        editor_layout.addWidget(note)
+        editor_layout.addStretch(1)
+        save_button = QPushButton("저장 · 주문 재검증")
+        save_button.setObjectName("primaryButton")
+        self.fit_button(save_button, 44)
+        save_row = QHBoxLayout(); save_row.addStretch(1); save_row.addWidget(save_button)
+        editor_layout.addLayout(save_row)
+        splitter.addWidget(editor)
+        splitter.setStretchFactor(0, 7)
+        splitter.setStretchFactor(1, 3)
+        splitter.setSizes([850, 410])
+        layout.addWidget(splitter, 1)
+
+        self.shipping_search.textChanged.connect(self.refresh_shipping_info)
+        self.shipping_filter.currentIndexChanged.connect(self.refresh_shipping_info)
+        self.shipping_grid.itemSelectionChanged.connect(self.load_selected_shipping_info)
+        self.shipping_grid.cellDoubleClicked.connect(lambda *_: self.shipping_name.setFocus())
+        save_button.clicked.connect(self.save_shipping_info)
+        self.refresh_shipping_info()
+        return tab
+
+    def barcode_values(self, item_code: str) -> list[str]:
+        values = {
+            str(row.get("barcode") or "").strip()
+            for row in self.barcodes
+            if str(row.get("item_code") or "").strip().casefold() == item_code.casefold()
+            and row.get("is_active", True)
+            and str(row.get("barcode") or "").strip()
+        }
+        return sorted(values)
+
+    def sku_mapping(self, item_code: str) -> dict:
+        return next((
+            row for row in self.sku_mappings
+            if str(row.get("item_code") or "").strip().casefold() == item_code.casefold()
+        ), {})
+
+    def refresh_shipping_info(self) -> None:
+        selected_code = self.shipping_item_code.text().strip()
+        word = self.shipping_search.text().strip().casefold()
+        filter_key = str(self.shipping_filter.currentData() or "all")
+        rows: list[dict] = []
+        for item in self.items:
+            code = str(item.get("item_code") or "").strip()
+            name = str(item.get("standard_name") or "").strip()
+            barcodes = self.barcode_values(code)
+            mapping = self.sku_mapping(code)
+            sku = str(mapping.get("sku_no") or "").strip()
+            haystack = " ".join([code, name, *barcodes, sku, str(mapping.get("product_name") or "")]).casefold()
+            if word and word not in haystack:
+                continue
+            if filter_key == "missing_sku" and sku:
+                continue
+            if filter_key == "missing_barcode" and barcodes:
+                continue
+            rows.append({"item": item, "barcodes": barcodes, "mapping": mapping})
+        rows.sort(key=lambda value: str(value["item"].get("item_code") or "").casefold())
+        self.shipping_rows = rows
+        self.shipping_grid.setRowCount(len(rows))
+        selected_row = -1
+        for row_index, record in enumerate(rows):
+            item = record["item"]
+            mapping = record["mapping"]
+            code = str(item.get("item_code") or "")
+            barcodes = record["barcodes"]
+            sku = str(mapping.get("sku_no") or "")
+            missing = []
+            if not sku: missing.append("SKU")
+            if not barcodes: missing.append("바코드")
+            status = "연결 완료" if not missing else "·".join(missing) + " 미등록"
+            barcode_text = ", ".join(barcodes)
+            if len(barcodes) > 1:
+                barcode_text = f"{barcodes[0]} 외 {len(barcodes) - 1}개"
+            values = [code, item.get("standard_name", ""), barcode_text or "미등록", sku or "미등록", status]
+            for column, value in enumerate(values):
+                cell = QTableWidgetItem(str(value or ""))
+                cell.setToolTip(", ".join(barcodes) if column == 2 else str(value or ""))
+                if column in (2, 3, 4):
+                    cell.setForeground(QColor("#16845b" if not missing else "#d65a31"))
+                self.shipping_grid.setItem(row_index, column, cell)
+            if selected_code and code.casefold() == selected_code.casefold():
+                selected_row = row_index
+        active_count = sum(bool(row.get("is_active", True)) for row in self.items)
+        missing_sku = sum(not self.sku_mapping(str(row.get("item_code") or "")) for row in self.items if row.get("is_active", True))
+        missing_barcode = sum(not self.barcode_values(str(row.get("item_code") or "")) for row in self.items if row.get("is_active", True))
+        self.shipping_summary.setText(
+            f"활성 품목 {active_count:,}개 · SKU 미등록 {missing_sku:,}개 · 바코드 미등록 {missing_barcode:,}개 · 표시 {len(rows):,}개"
+        )
+        if selected_row >= 0:
+            self.shipping_grid.selectRow(selected_row)
+        elif rows:
+            self.shipping_grid.selectRow(0)
+        else:
+            self.clear_shipping_editor()
+
+    def clear_shipping_editor(self) -> None:
+        for field in (
+            self.shipping_item_code, self.shipping_name, self.shipping_barcodes,
+            self.shipping_sku, self.shipping_wekeep_name,
+        ):
+            field.clear()
+        self.shipping_active.setChecked(False)
+
+    def load_selected_shipping_info(self) -> None:
+        row_index = self.shipping_grid.currentRow()
+        if not (0 <= row_index < len(getattr(self, "shipping_rows", []))):
+            self.clear_shipping_editor()
+            return
+        record = self.shipping_rows[row_index]
+        item = record["item"]
+        mapping = record["mapping"]
+        self.shipping_item_code.setText(str(item.get("item_code") or ""))
+        self.shipping_name.setText(str(item.get("standard_name") or ""))
+        self.shipping_barcodes.setText(", ".join(record["barcodes"]))
+        self.shipping_sku.setText(str(mapping.get("sku_no") or ""))
+        self.shipping_wekeep_name.setText(str(mapping.get("product_name") or ""))
+        self.shipping_active.setChecked(bool(item.get("is_active", True)))
+
+    @staticmethod
+    def parse_barcode_text(value: str) -> list[str]:
+        values = [part.strip() for part in re.split(r"[,;\s]+", value) if part.strip()]
+        return list(dict.fromkeys(values))
+
+    def save_shipping_info(self) -> None:
+        code = self.shipping_item_code.text().strip()
+        source = next((
+            item for item in self.items
+            if str(item.get("item_code") or "").strip().casefold() == code.casefold()
+        ), None)
+        if source is None:
+            QMessageBox.information(self, "품목 선택", "수정할 품목을 선택하세요.")
+            return
+        name = self.shipping_name.text().strip()
+        barcodes = self.parse_barcode_text(self.shipping_barcodes.text())
+        sku = self.shipping_sku.text().strip()
+        wekeep_name = self.shipping_wekeep_name.text().strip()
+        if not name:
+            QMessageBox.warning(self, "필수값", "상품명을 입력하세요.")
+            return
+        invalid_barcodes = [value for value in barcodes if not value.isdigit()]
+        if invalid_barcodes:
+            QMessageBox.warning(self, "바코드 확인", "제품 바코드는 숫자만 입력하세요: " + ", ".join(invalid_barcodes))
+            return
+        if sku and not sku.isdigit():
+            QMessageBox.warning(self, "SKU 확인", "위킵 SKU는 숫자만 입력하세요.")
+            return
+        barcode_conflicts = {
+            str(row.get("barcode") or "").strip(): str(row.get("item_code") or "").strip()
+            for row in self.barcodes
+            if str(row.get("item_code") or "").strip().casefold() != code.casefold()
+            and str(row.get("barcode") or "").strip() in barcodes
+        }
+        if barcode_conflicts:
+            details = ", ".join(f"{barcode} → {item_code}" for barcode, item_code in barcode_conflicts.items())
+            QMessageBox.warning(self, "바코드 중복", "다른 품목에 이미 연결된 바코드입니다: " + details)
+            return
+        sku_conflict = next((
+            row for row in self.sku_mappings
+            if sku and str(row.get("sku_no") or "").strip() == sku
+            and str(row.get("item_code") or "").strip().casefold() != code.casefold()
+        ), None)
+        if sku_conflict:
+            QMessageBox.warning(
+                self, "SKU 중복",
+                f"위킵 SKU {sku}는 {sku_conflict.get('item_code', '')} 품목에 이미 연결되어 있습니다.",
+            )
+            return
+
+        existing_rows = [
+            row for row in self.barcodes
+            if str(row.get("item_code") or "").strip().casefold() == code.casefold()
+            and str(row.get("barcode") or "").strip()
+        ]
+        existing_barcodes = self.barcode_values(code)
+        known_barcodes = {str(row.get("barcode") or "").strip(): row for row in existing_rows}
+        removed = [value for value in existing_barcodes if value not in barcodes]
+        added = [value for value in barcodes if value not in existing_barcodes]
+        before = {
+            "standard_name": source.get("standard_name", ""),
+            "barcodes": existing_barcodes,
+            "sku_no": self.sku_mapping(code).get("sku_no", ""),
+            "wekeep_product_name": self.sku_mapping(code).get("product_name", ""),
+        }
+        try:
+            item_changes = {"standard_name": name, "is_active": self.shipping_active.isChecked()}
+            self.client.table("items").update(item_changes).eq("item_code", code).execute()
+            for barcode in removed:
+                self.client.table("item_barcodes").delete().eq("item_code", code).eq("barcode", barcode).execute()
+            reactivated = [value for value in added if value in known_barcodes]
+            new_barcodes = [value for value in added if value not in known_barcodes]
+            for barcode in reactivated:
+                self.client.table("item_barcodes").update({"is_active": True}).eq(
+                    "item_code", code
+                ).eq("barcode", barcode).execute()
+            if new_barcodes:
+                payload = [{"item_code": code, "barcode": value, "is_active": True} for value in new_barcodes]
+                self.client.table("item_barcodes").insert(payload).execute()
+            current_mapping = self.sku_mapping(code)
+            save_wekeep_sku_mapping({
+                "item_code": code,
+                "wekeep_manage_code": current_mapping.get("wekeep_manage_code") or code,
+                "product_name": wekeep_name,
+                "sku_no": sku,
+                "customer_barcode": barcodes[0] if barcodes else "",
+                "is_active": bool(sku),
+            }, local_path=self.sku_path or LOCAL_MAPPING_PATH)
+        except Exception as exc:
+            QMessageBox.critical(self, "품목 정보 저장 실패", str(exc))
+            return
+
+        source.update(item_changes)
+        if removed:
+            removed_set = set(removed)
+            self.barcodes[:] = [
+                row for row in self.barcodes
+                if not (
+                    str(row.get("item_code") or "").strip().casefold() == code.casefold()
+                    and str(row.get("barcode") or "").strip() in removed_set
+                )
+            ]
+        for value in added:
+            if value in known_barcodes:
+                known_barcodes[value]["is_active"] = True
+            else:
+                self.barcodes.append({"item_code": code, "barcode": value, "is_active": True})
+        self.sku_mappings = self.load_sku_mappings()
+        self.audit("item_shipping_info_updated", code, {
+            "before": before,
+            "after": {"standard_name": name, "barcodes": barcodes, "sku_no": sku, "wekeep_product_name": wekeep_name},
+        })
+        parent = self.parent()
+        if parent is not None and hasattr(parent, "apply_item_manager_changes"):
+            parent.apply_item_manager_changes()
+        self.refresh()
+        self.refresh_shipping_info()
+        QMessageBox.information(self, "저장 완료", "품목 정보를 저장하고 현재 주문 검증에 반영했습니다.")
+
     def build_price_tab(self) -> QWidget:
         tab = QWidget(); layout = QVBoxLayout(tab)
         guide = QLabel("주간재고 평가용 단가입니다. VAT 별도 단가를 저장하고 VAT 포함 단가는 10%를 자동 계산합니다. 판매전표 단가에는 영향을 주지 않습니다.")
@@ -496,13 +828,16 @@ class ItemManagerDialog(QDialog):
         self.price_search = QLineEdit(); self.price_search.setPlaceholderText("품목코드 또는 품목명 검색")
         self.price_grid = QTableWidget(0, 6)
         self.price_grid.setHorizontalHeaderLabels(["품목코드", "품목명", "VAT 별도 단가", "VAT 포함 단가", "주간재고", "최종 수정"])
-        self.price_grid.horizontalHeader().setStretchLastSection(True)
+        self.price_grid.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        self.price_grid.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        self.price_grid.verticalHeader().setDefaultSectionSize(32)
         self.price_grid.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.price_grid.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         add_btn, edit_btn, active_btn = QPushButton("단가 등록"), QPushButton("선택 단가 수정"), QPushButton("사용/중지 전환")
         edit_btn.setObjectName("primaryButton")
         buttons = QHBoxLayout()
-        for button in (add_btn, edit_btn, active_btn): buttons.addWidget(button)
+        for button in (add_btn, edit_btn, active_btn):
+            self.fit_button(button); buttons.addWidget(button)
         buttons.addStretch(1)
         if not self.price_table_available:
             warning = QLabel("단가 DB 준비가 필요합니다. Supabase 마이그레이션 적용 상태를 확인하세요.")
@@ -3946,6 +4281,25 @@ class MainWindow(QMainWindow):
             self.supabase_client, self.catalog["items"], self.catalog["barcodes"], self,
             user_id=str(self.catalog.get("auth_user_id", "")), user_email=str(self.catalog.get("auth_email", "")),
         ).exec()
+
+    def apply_item_manager_changes(self) -> None:
+        """Apply saved item/barcode/SKU information to the currently loaded work."""
+        self.matcher = ProductMatcher(
+            self.catalog["items"], self.catalog["products"],
+            self.catalog["components"], self.catalog["aliases"], self.catalog["barcodes"],
+        )
+        rematched = 0
+        if self.current_orders and self.current_mode == "parcel":
+            for order in self.current_orders:
+                if order.get("status") not in {"missing", "ambiguous", "barcode_error"}:
+                    continue
+                order.update(self.matcher.match(order))
+                rematched += 1
+            self.mark_duplicates(self.current_orders)
+            self.populate_table(self.current_orders)
+        self.status.setText(
+            f"품목 정보 저장 완료 · 현재 주문 {rematched:,}행 재검증 · 위킵 SKU 설정 반영"
+        )
 
     def open_user_management(self) -> None:
         if not self.is_admin:
