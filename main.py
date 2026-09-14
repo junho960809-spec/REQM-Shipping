@@ -120,7 +120,7 @@ DEFAULT_CONFIG = {
     },
 }
 ADMIN_USER_ID = "c7937d51-1a14-47aa-987e-6254c6c79014"
-APP_VERSION = "1.3.1"
+APP_VERSION = "1.3.2"
 TEST_MODE = os.getenv("REQM_TEST_MODE", "").strip().casefold() in {"1", "true", "yes"}
 UPDATE_BASE_URL = "https://jcslohuraqclhryeqxoc.supabase.co/storage/v1/object/public/reqm-updates"
 UPDATE_MANIFEST_URL = f"{UPDATE_BASE_URL}/manifest.json"
@@ -455,6 +455,7 @@ class ItemManagerDialog(QDialog):
         self, client: Client, items: list[dict], barcodes: list[dict], parent=None,
         user_id: str = "", user_email: str = "", sku_path: Path | None = None,
         sku_mappings: list[dict] | None = None, sku_shared_available: bool = False,
+        aliases: list[dict] | None = None,
     ):
         super().__init__(parent)
         self.client, self.items, self.barcodes = client, items, barcodes
@@ -463,6 +464,13 @@ class ItemManagerDialog(QDialog):
         self.sku_path = sku_path
         self.sku_shared_available = sku_shared_available
         self.sku_mappings = list(sku_mappings) if sku_mappings is not None else self.load_sku_mappings()
+        if aliases is not None:
+            self.aliases = aliases
+        else:
+            try:
+                self.aliases = fetch_all_rows(client, "item_aliases")
+            except Exception:
+                self.aliases = []
         self.setWindowTitle("REQM 품목 정보 관리")
         self.resize(1320, 720)
         try:
@@ -494,6 +502,7 @@ class ItemManagerDialog(QDialog):
         item_layout.addWidget(self.search); item_layout.addWidget(self.grid); item_layout.addLayout(buttons)
         self.tabs = QTabWidget()
         self.tabs.addTab(self.build_shipping_info_tab(), "품목 정보")
+        self.tabs.addTab(self.build_alias_tab(), "상품 별칭 관리")
         self.tabs.addTab(item_tab, "표준 품목 관리")
         self.tabs.addTab(self.build_price_tab(), "주간재고 단가 관리")
         layout = QVBoxLayout(self)
@@ -862,6 +871,199 @@ class ItemManagerDialog(QDialog):
         self.refresh()
         self.refresh_shipping_info()
         QMessageBox.information(self, "저장 완료", "품목 정보를 저장하고 현재 주문 검증에 반영했습니다.")
+
+    def build_alias_tab(self) -> QWidget:
+        tab = QWidget(); layout = QVBoxLayout(tab)
+        guide = QLabel("판매처의 원본 상품명·옵션을 내부 출고 품목에 연결합니다. 변경 내용은 Supabase item_aliases에 즉시 저장됩니다.")
+        guide.setWordWrap(True); layout.addWidget(guide)
+        toolbar = QHBoxLayout()
+        self.alias_search = QLineEdit(); self.alias_search.setPlaceholderText("판매처 · 원본 상품명 · 옵션 · 내부 품목코드 검색")
+        self.alias_channel_filter = QComboBox(); self.alias_channel_filter.addItem("전체 판매처", "")
+        channels = sorted({str(row.get("source_channel") or "").strip() for row in self.aliases if str(row.get("source_channel") or "").strip()})
+        for channel in channels: self.alias_channel_filter.addItem(channel, channel)
+        self.alias_status_filter = QComboBox(); self.alias_status_filter.addItem("전체 상태", "all"); self.alias_status_filter.addItem("사용 중", "active"); self.alias_status_filter.addItem("비활성", "inactive")
+        refresh = QPushButton("새로고침")
+        for widget in (self.alias_search, self.alias_channel_filter, self.alias_status_filter, refresh): toolbar.addWidget(widget)
+        toolbar.setStretch(0, 1); layout.addLayout(toolbar)
+        self.alias_summary = QLabel(); self.alias_summary.setStyleSheet("font-weight:700;color:#36556f;padding:2px 0"); layout.addWidget(self.alias_summary)
+
+        splitter = QSplitter(Qt.Orientation.Horizontal)
+        self.alias_grid = QTableWidget(0, 5)
+        self.alias_grid.setHorizontalHeaderLabels(["상태", "판매처", "원본 상품명", "원본 옵션", "변환 품목"])
+        self.alias_grid.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.alias_grid.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.alias_grid.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.alias_grid.setAlternatingRowColors(True); self.alias_grid.verticalHeader().setVisible(False)
+        self.alias_grid.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        self.alias_grid.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        splitter.addWidget(self.alias_grid)
+
+        editor = QFrame(); editor.setObjectName("itemShippingEditor"); editor.setMinimumWidth(420); editor.setMaximumWidth(520)
+        editor_layout = QVBoxLayout(editor)
+        title = QLabel("상품 별칭 수정"); title.setStyleSheet("font-size:18px;font-weight:800;color:#173a59"); editor_layout.addWidget(title)
+        form = QFormLayout(); form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+        self.alias_channel = QLineEdit(); self.alias_channel.setPlaceholderText("예: 카카오선물하기")
+        self.alias_product = QTextEdit(); self.alias_product.setMaximumHeight(82)
+        self.alias_options = QTextEdit(); self.alias_options.setMaximumHeight(68)
+        self.alias_active = QCheckBox("사용 중"); self.alias_active.setChecked(True)
+        form.addRow("판매처", self.alias_channel); form.addRow("원본 상품명", self.alias_product); form.addRow("원본 옵션", self.alias_options); form.addRow("", self.alias_active)
+        editor_layout.addLayout(form)
+        editor_layout.addWidget(QLabel("변환 품목 · 구성품별 출고 수량"))
+        self.alias_components = QTableWidget(0, 3); self.alias_components.setHorizontalHeaderLabels(["내부 품목코드", "품목명", "수량"])
+        self.alias_components.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        self.alias_components.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        self.alias_components.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        self.alias_components.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        editor_layout.addWidget(self.alias_components, 1)
+        component_buttons = QHBoxLayout(); add_component = QPushButton("변환 품목 추가"); remove_component = QPushButton("선택 품목 삭제")
+        component_buttons.addWidget(add_component); component_buttons.addWidget(remove_component); editor_layout.addLayout(component_buttons)
+        action_row = QHBoxLayout(); new_alias = QPushButton("새 별칭"); save_alias = QPushButton("저장"); save_alias.setObjectName("primaryButton"); toggle_alias = QPushButton("비활성화/재활성화")
+        action_row.addWidget(new_alias); action_row.addStretch(1); action_row.addWidget(toggle_alias); action_row.addWidget(save_alias); editor_layout.addLayout(action_row)
+        splitter.addWidget(editor); splitter.setStretchFactor(0, 7); splitter.setStretchFactor(1, 3); splitter.setSizes([820, 450]); layout.addWidget(splitter, 1)
+
+        self.alias_edit_key: tuple[str, str] | None = None
+        self.alias_search.textChanged.connect(self.refresh_aliases); self.alias_channel_filter.currentIndexChanged.connect(self.refresh_aliases); self.alias_status_filter.currentIndexChanged.connect(self.refresh_aliases)
+        refresh.clicked.connect(self.reload_aliases); self.alias_grid.itemSelectionChanged.connect(self.load_selected_alias)
+        new_alias.clicked.connect(self.new_alias); add_component.clicked.connect(self.add_alias_component); remove_component.clicked.connect(self.remove_alias_components)
+        save_alias.clicked.connect(self.save_alias); toggle_alias.clicked.connect(self.toggle_alias_active)
+        self.refresh_aliases()
+        return tab
+
+    def alias_component_text(self, alias: dict) -> str:
+        return " / ".join(
+            f"{next((item.get('standard_name') for item in self.items if str(item.get('item_code') or '').casefold() == str(row.get('item_code') or '').casefold()), None) or row.get('standard_name') or row.get('item_code', '')} × {row.get('quantity', 1)}"
+            for row in (alias.get("components") or [])
+        )
+
+    def refresh_alias_channel_filter(self) -> None:
+        selected = str(self.alias_channel_filter.currentData() or "")
+        channels = sorted({str(row.get("source_channel") or "").strip() for row in self.aliases if str(row.get("source_channel") or "").strip()})
+        self.alias_channel_filter.blockSignals(True); self.alias_channel_filter.clear(); self.alias_channel_filter.addItem("전체 판매처", "")
+        for channel in channels: self.alias_channel_filter.addItem(channel, channel)
+        index = self.alias_channel_filter.findData(selected); self.alias_channel_filter.setCurrentIndex(max(index, 0)); self.alias_channel_filter.blockSignals(False)
+
+    def refresh_aliases(self) -> None:
+        word = self.alias_search.text().strip().casefold(); channel = str(self.alias_channel_filter.currentData() or ""); status = str(self.alias_status_filter.currentData() or "all")
+        rows = []
+        for alias in self.aliases:
+            active = bool(alias.get("is_active", True))
+            if channel and str(alias.get("source_channel") or "") != channel: continue
+            if status == "active" and not active: continue
+            if status == "inactive" and active: continue
+            haystack = " ".join([str(alias.get("source_channel") or ""), str(alias.get("source_product_name") or ""), str(alias.get("source_options") or ""), self.alias_component_text(alias)]).casefold()
+            if word and word not in haystack: continue
+            rows.append(alias)
+        rows.sort(key=lambda row: (str(row.get("source_channel") or "").casefold(), str(row.get("source_product_name") or "").casefold(), str(row.get("source_options") or "").casefold()))
+        self.alias_rows = rows; self.alias_grid.setRowCount(len(rows))
+        for i, alias in enumerate(rows):
+            active = bool(alias.get("is_active", True)); values = ["사용 중" if active else "비활성", alias.get("source_channel", ""), alias.get("source_product_name", ""), alias.get("source_options", ""), self.alias_component_text(alias)]
+            for j, value in enumerate(values):
+                item = QTableWidgetItem(str(value or "")); item.setToolTip(str(value or ""))
+                if j == 0: item.setForeground(QColor("#16845b" if active else "#9b1c1c"))
+                self.alias_grid.setItem(i, j, item)
+        self.alias_summary.setText(f"전체 별칭 {len(self.aliases):,}개 · 사용 중 {sum(bool(row.get('is_active', True)) for row in self.aliases):,}개 · 표시 {len(rows):,}개")
+        if rows and self.alias_grid.currentRow() < 0: self.alias_grid.selectRow(0)
+
+    def reload_aliases(self) -> None:
+        try:
+            latest = fetch_all_rows(self.client, "item_aliases"); self.aliases[:] = latest
+            self.refresh_alias_channel_filter(); self.refresh_aliases()
+        except Exception as exc: QMessageBox.critical(self, "별칭 조회 실패", str(exc))
+
+    def new_alias(self) -> None:
+        self.alias_edit_key = None; self.alias_grid.clearSelection(); self.alias_channel.clear(); self.alias_product.clear(); self.alias_options.clear(); self.alias_active.setChecked(True); self.alias_components.setRowCount(0); self.alias_channel.setFocus()
+
+    def selected_alias(self) -> dict | None:
+        row = self.alias_grid.currentRow(); return self.alias_rows[row] if 0 <= row < len(getattr(self, "alias_rows", [])) else None
+
+    def load_selected_alias(self) -> None:
+        alias = self.selected_alias()
+        if not alias: return
+        channel = str(alias.get("source_channel") or ""); key = str(alias.get("normalized_source") or "")
+        self.alias_edit_key = (channel, key); self.alias_channel.setText(channel); self.alias_product.setPlainText(str(alias.get("source_product_name") or "")); self.alias_options.setPlainText(str(alias.get("source_options") or "")); self.alias_active.setChecked(bool(alias.get("is_active", True)))
+        components = list(alias.get("components") or []); self.alias_components.setRowCount(len(components))
+        for i, component in enumerate(components):
+            code = str(component.get("item_code") or ""); item = next((row for row in self.items if str(row.get("item_code") or "").casefold() == code.casefold()), {})
+            name = str(item.get("standard_name") or component.get("standard_name") or "")
+            for j, value in enumerate((code, name, str(component.get("quantity", 1)))):
+                cell = QTableWidgetItem(value)
+                if j < 2: cell.setFlags(cell.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                self.alias_components.setItem(i, j, cell)
+
+    def add_alias_component(self) -> None:
+        active_items = sorted((row for row in self.items if row.get("is_active", True)), key=lambda row: str(row.get("item_code") or "").casefold())
+        labels = [f"{row.get('item_code', '')} | {row.get('standard_name', '')}" for row in active_items]
+        selected, ok = QInputDialog.getItem(self, "변환 품목 추가", "내부 품목", labels, 0, False)
+        if not ok: return
+        code = selected.split(" | ", 1)[0].strip(); item = next((row for row in active_items if str(row.get("item_code") or "") == code), None)
+        if item is None: return
+        row = self.alias_components.rowCount(); self.alias_components.insertRow(row)
+        for j, value in enumerate((code, str(item.get("standard_name") or ""), "1")):
+            cell = QTableWidgetItem(value)
+            if j < 2: cell.setFlags(cell.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            self.alias_components.setItem(row, j, cell)
+
+    def remove_alias_components(self) -> None:
+        rows = sorted({index.row() for index in self.alias_components.selectionModel().selectedRows()}, reverse=True)
+        for row in rows: self.alias_components.removeRow(row)
+
+    def alias_form_payload(self) -> dict | None:
+        channel = self.alias_channel.text().strip(); product = self.alias_product.toPlainText().strip(); options = self.alias_options.toPlainText().strip()
+        if not channel or not product:
+            QMessageBox.warning(self, "필수값", "판매처와 원본 상품명은 필수입니다."); return None
+        components = []
+        for row in range(self.alias_components.rowCount()):
+            code = self.alias_components.item(row, 0).text().strip(); name = self.alias_components.item(row, 1).text().strip()
+            try: quantity = int(self.alias_components.item(row, 2).text().strip())
+            except (ValueError, AttributeError): quantity = 0
+            if quantity <= 0:
+                QMessageBox.warning(self, "수량 확인", f"변환 품목 {row + 1}행의 수량은 1 이상의 정수여야 합니다."); return None
+            if not any(str(item.get("item_code") or "").casefold() == code.casefold() and item.get("is_active", True) for item in self.items):
+                QMessageBox.warning(self, "품목 확인", f"사용 중인 내부 품목을 찾지 못했습니다: {code}"); return None
+            components.append({"item_code": code, "standard_name": name, "quantity": quantity})
+        if not components:
+            QMessageBox.warning(self, "변환 품목", "변환할 내부 품목을 한 개 이상 추가하세요."); return None
+        normalized = compact(f"{product} {options}")
+        duplicate = next((row for row in self.aliases if str(row.get("source_channel") or "") == channel and str(row.get("normalized_source") or "") == normalized and (channel, normalized) != self.alias_edit_key), None)
+        if duplicate:
+            QMessageBox.warning(self, "중복 별칭", "같은 판매처·상품명·옵션의 별칭이 이미 등록되어 있습니다."); return None
+        return {"source_channel": channel, "source_product_name": product, "source_options": options, "normalized_source": normalized, "components": components, "is_active": self.alias_active.isChecked()}
+
+    def save_alias(self) -> None:
+        payload = self.alias_form_payload()
+        if payload is None: return
+        before = dict(self.selected_alias() or {}) if self.alias_edit_key else {}
+        try:
+            if self.alias_edit_key:
+                old_channel, old_key = self.alias_edit_key
+                response = self.client.table("item_aliases").update(payload).eq("source_channel", old_channel).eq("normalized_source", old_key).execute()
+                saved = next(iter(response.data or []), payload)
+                index = next((i for i, row in enumerate(self.aliases) if str(row.get("source_channel") or "") == old_channel and str(row.get("normalized_source") or "") == old_key), -1)
+                if index >= 0: self.aliases[index] = saved
+            else:
+                response = self.client.table("item_aliases").insert(payload).execute(); saved = next(iter(response.data or []), payload); self.aliases.append(saved)
+            self.alias_edit_key = (payload["source_channel"], payload["normalized_source"])
+            self.audit("item_alias_updated" if before else "item_alias_created", payload["normalized_source"], {"before": before, "after": payload})
+            self.refresh_alias_channel_filter(); self.refresh_aliases(); self.apply_alias_changes_to_parent()
+            QMessageBox.information(self, "별칭 저장 완료", "상품 별칭을 Supabase에 저장하고 현재 주문 매칭에 반영했습니다.")
+        except Exception as exc: QMessageBox.critical(self, "별칭 저장 실패", str(exc))
+
+    def toggle_alias_active(self) -> None:
+        alias = self.selected_alias()
+        if not alias:
+            QMessageBox.information(self, "별칭 선택", "상태를 변경할 별칭을 선택하세요."); return
+        value = not bool(alias.get("is_active", True)); channel = str(alias.get("source_channel") or ""); key = str(alias.get("normalized_source") or "")
+        try:
+            self.client.table("item_aliases").update({"is_active": value}).eq("source_channel", channel).eq("normalized_source", key).execute(); alias["is_active"] = value
+            self.audit("item_alias_active_changed", key, {"source_channel": channel, "is_active": value}); self.refresh_aliases(); self.apply_alias_changes_to_parent()
+        except Exception as exc: QMessageBox.critical(self, "별칭 상태 변경 실패", str(exc))
+
+    def apply_alias_changes_to_parent(self) -> None:
+        parent = self.parent()
+        if parent is not None and getattr(parent, "catalog", None) is not None:
+            parent.catalog["aliases"] = self.aliases
+        if parent is not None and hasattr(parent, "apply_alias_manager_changes"):
+            parent.apply_alias_manager_changes()
 
     def build_price_tab(self) -> QWidget:
         tab = QWidget(); layout = QVBoxLayout(tab)
@@ -4381,6 +4583,7 @@ class MainWindow(QMainWindow):
             user_id=str(self.catalog.get("auth_user_id", "")), user_email=str(self.catalog.get("auth_email", "")),
             sku_mappings=self.catalog.get("wekeep_sku_mappings", []),
             sku_shared_available=bool(self.catalog.get("sku_shared_available", False)),
+            aliases=self.catalog.get("aliases", []),
         ).exec()
 
     def apply_item_manager_changes(self) -> None:
@@ -4401,6 +4604,21 @@ class MainWindow(QMainWindow):
         self.status.setText(
             f"품목 정보 저장 완료 · 현재 주문 {rematched:,}행 재검증 · 위킵 SKU 설정 반영"
         )
+
+    def apply_alias_manager_changes(self) -> None:
+        """Reload alias decisions immediately while preserving explicit manual corrections."""
+        self.matcher = ProductMatcher(
+            self.catalog["items"], self.catalog["products"],
+            self.catalog["components"], self.catalog["aliases"], self.catalog["barcodes"],
+        )
+        rematched = 0
+        if self.current_orders and self.current_mode == "parcel":
+            for order in self.current_orders:
+                if order.get("status") == "manual":
+                    continue
+                order.update(self.matcher.match(order)); rematched += 1
+            self.mark_duplicates(self.current_orders); self.populate_table(self.current_orders)
+        self.status.setText(f"상품 별칭 변경 완료 · 현재 주문 {rematched:,}행 다시 매칭")
 
     def open_user_management(self) -> None:
         if not self.is_admin:

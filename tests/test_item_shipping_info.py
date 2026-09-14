@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtWidgets import QApplication, QMessageBox
+from PySide6.QtWidgets import QApplication, QMessageBox, QTableWidgetItem
 
 from main import ItemManagerDialog
 from wekeep_sku_store import load_wekeep_sku_mappings
@@ -101,6 +101,35 @@ class ItemShippingInfoTests(unittest.TestCase):
             operation[0] == "wekeep_sku_mappings" and operation[1] == "upsert"
             for operation in client.operations
         ))
+
+    def test_adds_and_edits_product_alias_components(self) -> None:
+        client = FakeClient()
+        items = [
+            {"item_code": "MAIN-WH", "standard_name": "본품 화이트", "is_active": True},
+            {"item_code": "CASE-PK", "standard_name": "케이스 핑크", "is_active": True},
+        ]
+        aliases = []
+        dialog = ItemManagerDialog(client, items, [], aliases=aliases)
+        dialog.new_alias()
+        dialog.alias_channel.setText("카카오선물하기")
+        dialog.alias_product.setPlainText("세트 상품")
+        dialog.alias_options.setPlainText("화이트 / 핑크")
+        for row, item in enumerate(items):
+            dialog.alias_components.insertRow(row)
+            dialog.alias_components.setItem(row, 0, QTableWidgetItem(item["item_code"]))
+            dialog.alias_components.setItem(row, 1, QTableWidgetItem(item["standard_name"]))
+            dialog.alias_components.setItem(row, 2, QTableWidgetItem("1"))
+        with patch.object(QMessageBox, "information"), patch.object(QMessageBox, "warning"), patch.object(QMessageBox, "critical") as critical:
+            dialog.save_alias()
+            dialog.alias_components.item(0, 2).setText("2")
+            dialog.save_alias()
+        dialog.close()
+
+        self.assertFalse(critical.called)
+        self.assertEqual(len(aliases), 1)
+        self.assertEqual(aliases[0]["components"][0]["quantity"], 2)
+        self.assertTrue(any(operation[0] == "item_aliases" and operation[1] == "insert" for operation in client.operations))
+        self.assertTrue(any(operation[0] == "item_aliases" and operation[1] == "update" for operation in client.operations))
 
 
 if __name__ == "__main__":
