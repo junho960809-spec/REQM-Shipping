@@ -6,7 +6,7 @@ from pathlib import Path
 
 from openpyxl import load_workbook
 
-from wekeep_tracking_service import export_tracking_workbook, reconcile_tracking_numbers
+from wekeep_tracking_service import apply_manual_tracking_number, export_tracking_workbook, reconcile_tracking_numbers
 
 
 class WeKeepTrackingServiceTests(unittest.TestCase):
@@ -40,6 +40,59 @@ class WeKeepTrackingServiceTests(unittest.TestCase):
                   "address": "부산시 다른로 2", "tracking_number": "540983332747"}
         result = reconcile_tracking_numbers(self._orders()[:1], [remote])[0]
         self.assertEqual(result["tracking_match_state"], "review")
+
+    def test_combined_shipping_copies_one_invoice_to_distinct_identical_deliveries(self) -> None:
+        orders = self._orders()[:1] + [{**self._orders()[0], "order_number": "O-2", "product_name": "다른 주문"}]
+        rows = reconcile_tracking_numbers(orders, [
+            {"order_number": "O-1", "recipient": "홍길동", "tracking_number": "540983332747"},
+            {"order_number": "O-2", "recipient": "홍길동", "tracking_number": "-"},
+        ])
+        self.assertEqual([row["tracking_number"] for row in rows], ["540983332747"] * 2)
+        self.assertEqual(rows[1]["tracking_match_state"], "matched")
+        self.assertIn("합포장", rows[1]["tracking_match_reason"])
+
+    def test_combined_shipping_requires_all_four_delivery_fields_to_match(self) -> None:
+        base = self._orders()[0]
+        for field, changed in (("recipient", "김길동"), ("phone", "010-9999-9999"),
+                               ("zipcode", "99999"), ("address", "서울시 다른로 2")):
+            with self.subTest(field=field):
+                second = {**base, "order_number": "O-2", field: changed}
+                rows = reconcile_tracking_numbers([base, second], [
+                    {"order_number": "O-1", "recipient": "홍길동", "tracking_number": "540983332747"},
+                    {"order_number": "O-2", "recipient": second["recipient"], "tracking_number": "-"},
+                ])
+                self.assertEqual(rows[1]["tracking_match_state"], "pending")
+                self.assertEqual(rows[1]["tracking_number"], "")
+
+    def test_combined_shipping_does_not_choose_between_multiple_invoices(self) -> None:
+        base = self._orders()[0]
+        orders = [base, {**base, "order_number": "O-2"}, {**base, "order_number": "O-3"}]
+        rows = reconcile_tracking_numbers(orders, [
+            {"order_number": "O-1", "recipient": "홍길동", "tracking_number": "11111111"},
+            {"order_number": "O-2", "recipient": "홍길동", "tracking_number": "22222222"},
+            {"order_number": "O-3", "recipient": "홍길동", "tracking_number": "-"},
+        ])
+        self.assertEqual(rows[2]["tracking_match_state"], "pending")
+
+    def test_manual_invoice_applies_to_the_exact_delivery_group(self) -> None:
+        base = self._orders()[0]
+        rows = [
+            {**base, "tracking_match_state": "pending", "tracking_number": ""},
+            {**base, "order_number": "O-2", "tracking_match_state": "pending", "tracking_number": ""},
+            {**base, "order_number": "O-3", "address": "서울시 다른로 2", "tracking_match_state": "pending", "tracking_number": ""},
+        ]
+        updated = apply_manual_tracking_number(rows, 0, "5409-8333-2747")
+        self.assertEqual([row["tracking_number"] for row in updated], ["540983332747", "540983332747", ""])
+        self.assertTrue(all("수동 입력" in updated[index]["tracking_match_reason"] for index in (0, 1)))
+
+    def test_manual_invoice_does_not_require_delivery_fields(self) -> None:
+        rows = [
+            {"order_number": "O-1", "product_name": "본품", "tracking_match_state": "pending"},
+            {"order_number": "O-1", "product_name": "옵션", "tracking_match_state": "pending"},
+            {"order_number": "O-2", "product_name": "별도 주문", "tracking_match_state": "pending"},
+        ]
+        updated = apply_manual_tracking_number(rows, 0, "540983332747")
+        self.assertEqual([row.get("tracking_number", "") for row in updated], ["540983332747", "540983332747", ""])
 
     def test_pending_missing_and_multiple_invoices_stay_blank(self) -> None:
         for remote, expected in [

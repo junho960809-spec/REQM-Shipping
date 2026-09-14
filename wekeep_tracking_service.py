@@ -34,6 +34,76 @@ def _tracking_numbers(value: object) -> tuple[str, ...]:
     return tuple(dict.fromkeys(re.findall(r"[0-9]{8,20}", str(value or "").replace("-", ""))))
 
 
+def _delivery_key(row: dict) -> tuple[str, str, str, str] | None:
+    """Return an exact local delivery identity only when every safety field exists."""
+    key = (
+        _compact(row.get("recipient")),
+        _phone(row.get("phone")),
+        _compact(row.get("zipcode")),
+        _compact(row.get("address")),
+    )
+    return key if all(key) else None
+
+
+def _apply_combined_shipping_matches(rows: list[dict]) -> list[dict]:
+    """Copy one confirmed invoice across distinct orders with identical delivery data."""
+    groups: dict[tuple[str, str, str, str], list[int]] = defaultdict(list)
+    for index, row in enumerate(rows):
+        key = _delivery_key(row)
+        if key:
+            groups[key].append(index)
+
+    for indexes in groups.values():
+        order_numbers = {_compact(rows[index].get("order_number")) for index in indexes}
+        order_numbers.discard("")
+        if len(order_numbers) < 2:
+            continue
+        invoices = {
+            number
+            for index in indexes
+            if rows[index].get("tracking_match_state") == "matched"
+            for number in _tracking_numbers(rows[index].get("tracking_number"))
+        }
+        if len(invoices) != 1:
+            continue
+        invoice = next(iter(invoices))
+        for index in indexes:
+            if rows[index].get("tracking_match_state") not in {"pending", "not_found"}:
+                continue
+            rows[index] = {
+                **rows[index],
+                "tracking_match_state": "matched",
+                "tracking_match_reason": "수령인·전화번호·우편번호·주소 일치 합포장 송장",
+                "tracking_number": invoice,
+            }
+    return rows
+
+
+def apply_manual_tracking_number(rows: list[dict], selected_index: int, value: object) -> list[dict]:
+    """Apply a worker-confirmed invoice without requiring delivery data."""
+    if not 0 <= selected_index < len(rows):
+        raise ValueError("송장을 입력할 주문을 선택해 주세요.")
+    invoices = _tracking_numbers(value)
+    if len(invoices) != 1 or str(value or "").strip().replace("-", "").replace(" ", "") != invoices[0]:
+        raise ValueError("송장번호는 하이픈을 제외한 8~20자리 숫자로 입력해 주세요.")
+    invoice = invoices[0]
+    selected = rows[selected_index]
+    key = _delivery_key(selected)
+    order_number = _compact(selected.get("order_number"))
+    updated = [dict(row) for row in rows]
+    for index, row in enumerate(updated):
+        same_order = bool(order_number) and _compact(row.get("order_number")) == order_number
+        same_delivery = key is not None and _delivery_key(row) == key
+        if index == selected_index or same_order or same_delivery:
+            updated[index] = {
+                **row,
+                "tracking_match_state": "matched",
+                "tracking_match_reason": "작업자 확인 송장 수동 입력",
+                "tracking_number": invoice,
+            }
+    return updated
+
+
 def collect_tracking_rows(page, registered_date: date, sale_channel: tuple[str, str]) -> list[dict]:
     """Search one WeKeep sales channel/date and return every visible result page."""
     page.goto(ORDER_SEARCH_URL, wait_until="domcontentloaded", timeout=60_000)
@@ -145,7 +215,7 @@ def reconcile_tracking_numbers(orders: list[dict], remote_rows: list[dict]) -> l
             results.append({**order, "tracking_match_state": "review", "tracking_match_reason": "한 주문에 여러 송장이 확인됐습니다: " + ", ".join(tracking), "tracking_number": ""})
         else:
             results.append({**order, "tracking_match_state": "matched", "tracking_match_reason": "주문번호·수령인 대조 완료", "tracking_number": tracking[0]})
-    return results
+    return _apply_combined_shipping_matches(results)
 
 
 def export_tracking_workbook(

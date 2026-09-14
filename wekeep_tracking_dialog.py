@@ -7,11 +7,12 @@ from pathlib import Path
 
 from PySide6.QtCore import QDate, QThread, Signal
 from PySide6.QtGui import QColor
-from PySide6.QtWidgets import (QDateEdit, QDialog, QFileDialog, QHBoxLayout, QLabel, QLineEdit,
+from PySide6.QtWidgets import (QDateEdit, QDialog, QFileDialog, QHBoxLayout, QLabel, QInputDialog, QLineEdit,
                                QMessageBox, QPushButton, QTableWidget, QTableWidgetItem, QVBoxLayout)
 
 from shipment_job_store import ShipmentJobStore
-from wekeep_tracking_service import export_tracking_workbook, fetch_wekeep_tracking_rows, reconcile_tracking_numbers
+from wekeep_tracking_service import (apply_manual_tracking_number, export_tracking_workbook,
+                                     fetch_wekeep_tracking_rows, reconcile_tracking_numbers)
 from wekeep_upload_file import ORDER_KIND_LABELS
 
 
@@ -60,15 +61,18 @@ class WeKeepTrackingDialog(QDialog):
         self.result_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers); self.result_table.verticalHeader().setVisible(False)
         self.fetch_button = QPushButton("선택 작업 송장 재조회"); self.fetch_button.setObjectName("primaryButton"); self.fetch_button.setEnabled(False)
         self.retry_button = QPushButton("미등록 확인·재등록 허용"); self.retry_button.setEnabled(False)
+        self.manual_button = QPushButton("선택 주문 송장 직접 입력"); self.manual_button.setEnabled(False)
         self.save_button = QPushButton("최종 Excel 저장"); self.save_button.setEnabled(False)
         self.close_button = QPushButton("닫기")
-        buttons = QHBoxLayout(); buttons.addStretch(1); buttons.addWidget(self.close_button); buttons.addWidget(self.retry_button); buttons.addWidget(self.save_button); buttons.addWidget(self.fetch_button)
+        buttons = QHBoxLayout(); buttons.addStretch(1); buttons.addWidget(self.close_button); buttons.addWidget(self.retry_button); buttons.addWidget(self.manual_button); buttons.addWidget(self.save_button); buttons.addWidget(self.fetch_button)
         layout = QVBoxLayout(self); layout.addWidget(title); layout.addWidget(guide); layout.addLayout(filters); layout.addWidget(self.job_table, 1)
         layout.addWidget(self.summary); layout.addWidget(self.result_table, 2); layout.addLayout(buttons)
         self.search_button.clicked.connect(self.load_jobs); self.search.returnPressed.connect(self.load_jobs)
         self.start_date.dateChanged.connect(self.load_jobs); self.end_date.dateChanged.connect(self.load_jobs)
         self.job_table.itemSelectionChanged.connect(self.select_job); self.fetch_button.clicked.connect(self.fetch_tracking)
+        self.result_table.itemSelectionChanged.connect(self.update_manual_button)
         self.retry_button.clicked.connect(self.allow_retry)
+        self.manual_button.clicked.connect(self.enter_tracking_manually)
         self.save_button.clicked.connect(self.save_excel); self.close_button.clicked.connect(self.accept)
         self.load_jobs()
 
@@ -105,7 +109,7 @@ class WeKeepTrackingDialog(QDialog):
         if self.visible_jobs: self.job_table.selectRow(select_index if select_index >= 0 else 0)
         else:
             self.selected_job = None; self.results = []; self.result_table.setRowCount(0)
-            self.summary.setText("조건에 맞는 위킵 출고 작업이 없습니다."); self.fetch_button.setEnabled(False); self.retry_button.setEnabled(False); self.save_button.setEnabled(False)
+            self.summary.setText("조건에 맞는 위킵 출고 작업이 없습니다."); self.fetch_button.setEnabled(False); self.retry_button.setEnabled(False); self.manual_button.setEnabled(False); self.save_button.setEnabled(False)
 
     def select_job(self) -> None:
         index = self.job_table.currentRow()
@@ -115,6 +119,9 @@ class WeKeepTrackingDialog(QDialog):
         self.fetch_button.setText("위킵 등록 여부 확인" if uncertain else "선택 작업 송장 재조회")
         not_found = bool(self.results) and any(row.get("tracking_match_state") not in {"matched", "pending"} for row in self.results)
         self.fetch_button.setEnabled(True); self.retry_button.setEnabled(uncertain and not_found); self.show_results()
+
+    def update_manual_button(self) -> None:
+        self.manual_button.setEnabled(bool(self.selected_job and 0 <= self.result_table.currentRow() < len(self.results)))
 
     def show_results(self) -> None:
         grouped = {}
@@ -136,6 +143,25 @@ class WeKeepTrackingDialog(QDialog):
             for column, value in enumerate(values):
                 item = QTableWidgetItem(str(value)); item.setBackground(QColor(colors.get(state, "#fce5cd"))); self.result_table.setItem(row_index, column, item)
         self.result_table.resizeColumnsToContents()
+        self.update_manual_button()
+
+    def enter_tracking_manually(self) -> None:
+        row_index = self.result_table.currentRow()
+        if not self.selected_job or not 0 <= row_index < len(self.results):
+            return
+        order = self.results[row_index]
+        value, accepted = QInputDialog.getText(
+            self, "송장번호 직접 입력",
+            f"{order.get('recipient', '')} · 주문번호 {order.get('order_number', '')}\n송장번호를 입력하세요.\n\n배송정보가 없어도 선택 주문에 입력되며, 배송정보가 모두 같은 합포장 주문에는 함께 적용됩니다.",
+        )
+        if not accepted:
+            return
+        try:
+            self.results = apply_manual_tracking_number(self.results, row_index, value)
+            self.store.save_tracking_results(self.selected_job["id"], self.results)
+        except ValueError as exc:
+            QMessageBox.warning(self, "송장번호 입력 확인", str(exc)); return
+        self.show_results(); self.load_jobs()
 
     def fetch_tracking(self) -> None:
         if not self.selected_job: return
