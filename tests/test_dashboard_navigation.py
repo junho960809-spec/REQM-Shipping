@@ -188,6 +188,25 @@ class DashboardNavigationTests(unittest.TestCase):
         self.window.dashboard_cards[0].click()
         self.assertIs(self.window.page_stack.currentWidget(), self.window.work_page)
 
+    def test_shipping_analysis_table_reads_from_order_to_conversion(self) -> None:
+        headers = [self.window.table.horizontalHeaderItem(index).text() for index in range(self.window.table.columnCount())]
+        self.assertEqual(headers[:11], [
+            "수령인", "주문번호", "판매처", "원본 상품명", "원본 옵션", "주문수량", "→",
+            "변환 상품명", "출고 품목코드·수량", "상태", "판정 이유",
+        ])
+        self.window.populate_table([{
+            "recipient": "홍길동", "order_number": "O-1", "channel": "테스트몰",
+            "product_name": "원본 세트", "options": "화이트", "quantity": "1",
+            "matched_product": "본품 / 케이스", "components": "MAIN×1 + CASE×1",
+            "status": "exact", "reason": "정확 일치",
+        }])
+        self.assertEqual(self.window.table.item(0, 0).text(), "홍길동")
+        self.assertEqual(self.window.table.item(0, 3).text(), "원본 세트")
+        self.assertEqual(self.window.table.item(0, 6).text(), "→")
+        self.assertEqual(self.window.table.item(0, 7).text(), "본품\n케이스")
+        self.assertEqual(self.window.table.item(0, 8).text(), "MAIN×1\nCASE×1")
+        self.assertEqual(self.window.table.item(0, 9).text(), "정확")
+
     def test_inventory_card_opens_preview_dialog(self) -> None:
         with patch.object(InventoryPreviewDialog, "exec", return_value=0) as opened:
             self.window.dashboard_cards[1].click()

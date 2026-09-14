@@ -79,7 +79,24 @@ def _apply_combined_shipping_matches(rows: list[dict]) -> list[dict]:
     return rows
 
 
-def apply_manual_tracking_number(rows: list[dict], selected_index: int, value: object) -> list[dict]:
+def manual_tracking_candidate_indexes(rows: list[dict], selected_index: int) -> list[int]:
+    """Return the selected order rows and any exact combined-shipping peers."""
+    if not 0 <= selected_index < len(rows):
+        return []
+    selected = rows[selected_index]
+    key = _delivery_key(selected)
+    order_number = _compact(selected.get("order_number"))
+    return [
+        index for index, row in enumerate(rows)
+        if index == selected_index
+        or (bool(order_number) and _compact(row.get("order_number")) == order_number)
+        or (key is not None and _delivery_key(row) == key)
+    ]
+
+
+def apply_manual_tracking_number(
+    rows: list[dict], selected_index: int, value: object, target_indexes: list[int] | None = None,
+) -> list[dict]:
     """Apply a worker-confirmed invoice without requiring delivery data."""
     if not 0 <= selected_index < len(rows):
         raise ValueError("송장을 입력할 주문을 선택해 주세요.")
@@ -87,14 +104,13 @@ def apply_manual_tracking_number(rows: list[dict], selected_index: int, value: o
     if len(invoices) != 1 or str(value or "").strip().replace("-", "").replace(" ", "") != invoices[0]:
         raise ValueError("송장번호는 하이픈을 제외한 8~20자리 숫자로 입력해 주세요.")
     invoice = invoices[0]
-    selected = rows[selected_index]
-    key = _delivery_key(selected)
-    order_number = _compact(selected.get("order_number"))
+    indexes = set(manual_tracking_candidate_indexes(rows, selected_index) if target_indexes is None else target_indexes)
+    indexes = {index for index in indexes if 0 <= index < len(rows)}
+    if not indexes:
+        raise ValueError("송장번호를 적용할 주문을 한 건 이상 선택해 주세요.")
     updated = [dict(row) for row in rows]
     for index, row in enumerate(updated):
-        same_order = bool(order_number) and _compact(row.get("order_number")) == order_number
-        same_delivery = key is not None and _delivery_key(row) == key
-        if index == selected_index or same_order or same_delivery:
+        if index in indexes:
             updated[index] = {
                 **row,
                 "tracking_match_state": "matched",

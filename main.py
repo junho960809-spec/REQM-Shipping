@@ -120,7 +120,7 @@ DEFAULT_CONFIG = {
     },
 }
 ADMIN_USER_ID = "c7937d51-1a14-47aa-987e-6254c6c79014"
-APP_VERSION = "1.3.3"
+APP_VERSION = "1.3.4"
 TEST_MODE = os.getenv("REQM_TEST_MODE", "").strip().casefold() in {"1", "true", "yes"}
 UPDATE_BASE_URL = "https://jcslohuraqclhryeqxoc.supabase.co/storage/v1/object/public/reqm-updates"
 UPDATE_MANIFEST_URL = f"{UPDATE_BASE_URL}/manifest.json"
@@ -3271,8 +3271,9 @@ class MainWindow(QMainWindow):
 
         self.table = QTableWidget()
         headers = [
-            "상태", "DB 대조 상품", "출고 품목코드", "판정 이유", "원본행", "원본 품목코드", "주문번호",
-            "판매처", "상품명", "옵션", "수량", "수령인", "연락처", "우편번호", "주소", "재고매칭",
+            "수령인", "주문번호", "판매처", "원본 상품명", "원본 옵션", "주문수량", "→",
+            "변환 상품명", "출고 품목코드·수량", "상태", "판정 이유", "연락처", "우편번호", "주소",
+            "원본행", "원본 품목코드", "재고매칭",
         ]
         self.table.setColumnCount(len(headers))
         self.table.setHorizontalHeaderLabels(headers)
@@ -4976,9 +4977,9 @@ class MainWindow(QMainWindow):
 
     def populate_table(self, orders: list[dict[str, str]]) -> None:
         keys = [
-            "status", "matched_product", "components", "reason", "source_row", "source_item_code", "order_number",
-            "channel", "product_name", "options", "quantity", "recipient", "phone", "zipcode",
-            "address", "matched_name",
+            "recipient", "order_number", "channel", "product_name", "options", "quantity", "conversion_arrow",
+            "matched_product", "components", "status", "reason", "phone", "zipcode", "address",
+            "source_row", "source_item_code", "matched_name",
         ]
         labels = {"exact": "정확", "similar": "유사", "ambiguous": "확인필요", "missing": "미등록", "barcode_error": "바코드오류", "manual": "수동확정", "alias": "별칭적용", "duplicate": "중복출고"}
         colors = {
@@ -4994,10 +4995,24 @@ class MainWindow(QMainWindow):
         self.table.setRowCount(len(orders))
         for row_index, order in enumerate(orders):
             for col_index, key in enumerate(keys):
-                value = labels.get(order.get(key, ""), order.get(key, "")) if key == "status" else order.get(key, "")
-                item = QTableWidgetItem(value)
+                if key == "status":
+                    value = labels.get(order.get(key, ""), order.get(key, ""))
+                elif key == "conversion_arrow":
+                    value = "→"
+                else:
+                    value = order.get(key, "")
+                if key in {"matched_product", "components"}:
+                    value = str(value or "").replace(" / ", "\n").replace(" + ", "\n")
+                item = QTableWidgetItem(str(value or "")); item.setToolTip(str(value or ""))
                 item.setBackground(colors.get(order.get("status", ""), QColor("white")))
+                if key == "conversion_arrow":
+                    item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
                 self.table.setItem(row_index, col_index, item)
+            line_count = max(
+                str(order.get("matched_product") or "").count(" / ") + 1,
+                str(order.get("components") or "").count(" + ") + 1,
+            )
+            self.table.setRowHeight(row_index, max(32, min(92, 22 * line_count + 10)))
         self.delete_order_button.setEnabled(bool(orders))
 
     def delete_selected_orders(self) -> None:

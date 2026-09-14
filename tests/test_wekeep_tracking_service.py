@@ -6,7 +6,8 @@ from pathlib import Path
 
 from openpyxl import load_workbook
 
-from wekeep_tracking_service import apply_manual_tracking_number, export_tracking_workbook, reconcile_tracking_numbers
+from wekeep_tracking_service import (apply_manual_tracking_number, export_tracking_workbook,
+                                     manual_tracking_candidate_indexes, reconcile_tracking_numbers)
 
 
 class WeKeepTrackingServiceTests(unittest.TestCase):
@@ -93,6 +94,14 @@ class WeKeepTrackingServiceTests(unittest.TestCase):
         ]
         updated = apply_manual_tracking_number(rows, 0, "540983332747")
         self.assertEqual([row.get("tracking_number", "") for row in updated], ["540983332747", "540983332747", ""])
+
+    def test_manual_targets_can_be_limited_after_worker_review(self) -> None:
+        base = self._orders()[0]
+        rows = [base, {**base, "order_number": "O-2"}]
+        self.assertEqual(manual_tracking_candidate_indexes(rows, 0), [0, 1])
+        updated = apply_manual_tracking_number(rows, 0, "540983332747", [0])
+        self.assertEqual(updated[0]["tracking_number"], "540983332747")
+        self.assertEqual(updated[1].get("tracking_number", ""), "")
 
     def test_pending_missing_and_multiple_invoices_stay_blank(self) -> None:
         for remote, expected in [
