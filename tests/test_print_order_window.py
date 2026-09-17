@@ -57,6 +57,8 @@ class PrintOrderWindowTests(unittest.TestCase):
         try:
             window.ai_file.set_file(__file__)
             window.preview_file.set_file(__file__)
+            window.packaging.setCurrentText("선물포장")
+            window.device.setCurrentText("UV")
             self.assertTrue(window.web_submit_button.isEnabled())
             with patch("print_order_window.print_board_credentials", return_value={"user_id": "", "password": ""}):
                 with patch("print_order_window.QMessageBox.information") as notice:
@@ -90,11 +92,11 @@ class PrintOrderWindowTests(unittest.TestCase):
         items = [{"item_code": "A530734", "standard_name": "소문 듀얼 도킹형 보조배터리 5000mAh", "is_active": True}]
         window = PrintOrderWindow(catalog_items=items)
         try:
-            self.assertEqual(window.note.toPlainText(), "인쇄 X  포장 O")
+            self.assertEqual(window.note.toPlainText(), "인쇄 X  포장 X")
             window.ai_file.set_file(__file__)
-            self.assertEqual(window.note.toPlainText(), "인쇄 O  포장 O")
-            window.packaging.setCurrentText("기본패키지")
             self.assertEqual(window.note.toPlainText(), "인쇄 O  포장 X")
+            window.packaging.setCurrentText("선물포장")
+            self.assertEqual(window.note.toPlainText(), "인쇄 O  포장 O")
             self.assertEqual(window.database_product_name("OCR 품명", "A530734"), items[0]["standard_name"])
             self.assertLessEqual(window.order_source.maximumHeight(), 145)
             self.assertLessEqual(window.ai_file.maximumHeight(), 125)
@@ -122,7 +124,7 @@ class PrintOrderWindowTests(unittest.TestCase):
             window.product.setText("Q1500")
             window.quantity.setText("300")
             window.printing.setText("전면 인쇄")
-            window.device.setText("Q1500")
+            window.device.setCurrentText("UV")
             window.address.setText("서울")
             window.contact.setText("홍길동")
             window.order_source.set_file(__file__)
@@ -133,15 +135,16 @@ class PrintOrderWindowTests(unittest.TestCase):
             with patch("print_order_window.QMessageBox.information"):
                 window.on_web_succeeded("http://example.test/order/1")
 
-            for widget in (window.customer, window.product, window.quantity, window.printing, window.device, window.address, window.contact):
+            for widget in (window.customer, window.product, window.quantity, window.printing, window.address, window.contact):
                 self.assertEqual(widget.text(), "")
+            self.assertEqual(window.device.currentText(), "미선택")
             self.assertEqual(window.order_source.path, "")
             self.assertEqual(window.ai_file.path, "")
             self.assertEqual(window.preview_file.path, "")
             self.assertEqual(window.menu.currentRow(), 0)
-            self.assertEqual(window.packaging.currentText(), "선물포장")
+            self.assertEqual(window.packaging.currentText(), "미선택")
             self.assertEqual(window.delivery.currentText(), "택배")
-            self.assertEqual(window.note.toPlainText(), "인쇄 X  포장 O")
+            self.assertEqual(window.note.toPlainText(), "인쇄 X  포장 X")
         finally:
             window.close()
 

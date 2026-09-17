@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 import re
 import subprocess
@@ -32,6 +32,7 @@ class AnalysisResult:
     fields: dict[str, str]
     confidence: dict[str, int]
     raw_text: str
+    issues: list[str] = field(default_factory=list)
 
 
 def _ocr_script_path() -> Path:
@@ -93,26 +94,121 @@ def _recipient_near_delivery(text: str) -> str:
     ignored = {
         "담당자", "디자이너", "발주담당", "서울", "부산", "대구", "인천", "광주", "대전",
         "울산", "세종", "경기", "강원", "충북", "충남", "전북", "전남", "경북", "경남", "제주",
-        "배송지", "배송주소", "수취인", "연락처", "휴대폰", "전화번호", "받는사람", "받는",
+        "배송지", "배송주소", "수취인", "연락처", "휴대폰", "전화번호", "받는사람", "받는", "번호",
     }
-    for index, line in enumerate(lines):
+    # 배송지의 명시적인 이름 표지만 인정한다. 주소에 섞인 업체명이나 지점명을
+    # 사람 이름으로 추정하면 자동 등록 단계에서 더 위험한 오류가 된다.
+    for line in lines:
         if "담당자" in line or "디자이너" in line:
             continue
-        delivery_context = any(word in line for word in ("배송", "수취", "받는", "주소"))
-        if not delivery_context:
+        match = re.search(r"(?:수령인|받는\s*사람|수취인|성명)\s*[:：]?\s*([가-힣]{2,4})", line)
+        if match and match.group(1) not in ignored:
+            return match.group(1)
+        address_name = re.search(
+            r"(?:배송주소|배송지|받는\s*곳)\s*[:：]?\s*([가-힣]{2,4})\s+(?=서울|부산|대구|인천|광주|대전|울산|세종|경기|강원|충북|충남|전북|전남|경북|경남|제주)",
+            line,
+        )
+        if address_name and address_name.group(1) not in ignored:
+            return address_name.group(1)
+    return ""
+
+
+def _first_code(text: str) -> str:
+    """DB 대조가 가능한 영문+숫자 품목코드를 우선 보존한다."""
+    match = re.search(r"(?<![A-Za-z0-9])([A-Z]\d{6})(?!\d)", text, re.IGNORECASE)
+    return match.group(1).upper() if match else ""
+
+
+def _printing_phrase(text: str) -> str:
+    """인쇄 방식이 아닌 실제 인쇄 문구만 반환한다."""
+    for label in ("인쇄문구", "인쇄 문구", "문구", "인쇄내용", "인쇄 내용"):
+        match = re.search(rf"{re.escape(label)}\s*[:：]\s*([^\n|]{{1,80}})", text, re.IGNORECASE)
+        if not match:
             continue
-        province = re.search(r"서울|부산|대구|인천|광주|대전|울산|세종|경기|강원|충북|충남|전북|전남|경북|경남|제주", line)
-        name_area = line[:province.start()] if province else line
-        candidates = [name for name in name_pattern.findall(name_area) if name not in ignored]
-        if candidates:
-            return candidates[0]
-        # 표 형식 OCR에서는 '성명' 행이 주소/수취인 행 바로 옆 줄로 풀릴 수 있다.
-        for neighbor in lines[max(0, index - 1):index + 2]:
-            if "담당자" in neighbor or "디자이너" in neighbor or "성명" not in neighbor:
-                continue
-            candidates = [name for name in name_pattern.findall(neighbor.replace("성명", "")) if name not in ignored]
-            if candidates:
-                return candidates[0]
+        value = _clean(match.group(1))
+        if re.search(r"(?:없음|없슴|무인쇄|인쇄\s*안함)", value):
+            return ""
+        return value
+    return ""
+
+
+def _printing_device(text: str) -> str:
+    compact = re.sub(r"\s+", "", text).casefold()
+    no_print = any(term in compact for term in ("인쇄없음", "무인쇄", "인쇄안함", "인쇄하지않음"))
+    if no_print:
+        return ""
+    has_uv = "uv인쇄" in compact or "uv프린" in compact
+    has_laser = any(term in compact for term in ("레이저인쇄", "레이저각인", "레이져인쇄", "레이져각인"))
+    if has_uv and not has_laser:
+        return "UV"
+    if has_laser and not has_uv:
+        return "레이저"
+    return ""
+
+
+def _packaging_value(text: str) -> str:
+    compact = re.sub(r"\s+", "", text)
+    if re.search(r"(?:선물)?포장(?:없음|안함|제외)", compact):
+        return ""
+    if "선물포장" in compact or re.search(r"선\s*포\s*장\s*무", text):
+        return "선물포장"
+    if "기본패키지" in compact:
+        return "기본패키지"
+    if "OEM포장" in compact.casefold().replace("oem", "OEM"):
+        return "OEM포장"
+    if "벌크" in compact:
+        return "벌크"
+    return ""
+
+
+def _quantity_values(text: str) -> tuple[str, list[int]]:
+    """총수량/수량 문맥과 상품표 수량을 비교해 충돌 시 자동 입력하지 않는다."""
+    candidates: list[int] = []
+    for match in re.finditer(r"(?:총\s*수량|주문\s*수량|발주\s*수량|수량)\s*[:：]?\s*([1-9]\d{0,2}(?:[,.]\d{3})*)\s*(?:개|EA|ea)?", text):
+        candidates.append(int(re.sub(r"\D", "", match.group(1))))
+
+    # 고려기프트 표는 보통 '수량 단가' 순서다. 소수점처럼 OCR 된 천 단위
+    # 금액 바로 앞의 정수를 상품표 수량 후보로 취급한다.
+    for match in re.finditer(r"(?<![\d.,])([1-9]\d{0,4})\s+([1-9]\d{0,2}[,.]\d{3})(?!\d)", text):
+        quantity = int(match.group(1))
+        price = int(re.sub(r"\D", "", match.group(2)))
+        if quantity <= 10000 and price >= 1000:
+            candidates.append(quantity)
+
+    unique = list(dict.fromkeys(value for value in candidates if value > 0))
+    if len(unique) == 1:
+        return f"{unique[0]}개", unique
+    return "", unique
+
+
+def _request_date(text: str) -> str:
+    """주소 번지(305-1)를 날짜로 오인하지 않고 납기/출고 문맥을 우선한다."""
+    patterns = (
+        r"(?:납\s*기|출고(?:요청)?일?|발송일?)\D{0,20}(?:(20\d{2})\s*년?\s*)?(\d{1,2})\s*월\s*(\d{1,2})\s*일?",
+        r"(?:(20\d{2})\s*년\s*)?(\d{1,2})\s*월\s*(\d{1,2})\s*일",
+    )
+    matches = []
+    for pattern in patterns:
+        matches = list(re.finditer(pattern, text, re.IGNORECASE))
+        if matches:
+            break
+    if not matches:
+        return ""
+    year, month, day = matches[-1].groups()
+    if not (1 <= int(month) <= 12 and 1 <= int(day) <= 31):
+        return ""
+    return f"{year + '-' if year else ''}{int(month):02d}-{int(day):02d}"
+
+
+def _shipping_address(text: str) -> str:
+    # Windows OCR에서 반복적으로 확인된 광주/울산 오독만 제한적으로 교정한다.
+    searchable = text.replace("팡주", "광주").replace("팡산구", "광산구").replace("물산 북구", "울산 북구")
+    match = re.search(
+        r"주소\s*[:：]?\s*((?:\d{3}[- ]?\d{2}\s*)?(?:서울|부산|대구|인천|광주|대전|울산|세종|경기|강원|충북|충남|전북|전남|경북|경남|제주).{8,120}?)(?=\s*(?:보내는|고려기프트|고켴기프|TEL|전화\s*[:：]|$))",
+        searchable, re.IGNORECASE,
+    )
+    if match:
+        return _clean(match.group(1))
     return ""
 
 
@@ -120,6 +216,8 @@ def analyze_text(text: str, source_type: str = "텍스트") -> AnalysisResult:
     normalized = text.replace("\r", "\n")
     vendor = "고려기프트" if "고려기프트" in normalized or "고켴기프" in normalized else "신규 업체"
     fields = {key: _after_alias(normalized, aliases) for key, aliases in FIELD_ALIASES.items()}
+    issues: list[str] = []
+    fields["item_code"] = _first_code(normalized) or fields["item_code"]
     if fields["recipient"] and (re.search(r"\d", fields["recipient"]) or fields["recipient"].startswith("번호")):
         fields["recipient"] = ""
     if not fields["recipient"]:
@@ -131,21 +229,10 @@ def analyze_text(text: str, source_type: str = "텍스트") -> AnalysisResult:
         fields["contact"] = mobile_phones[-1]
     elif not fields["contact"] and phones:
         fields["contact"] = phones[-1]
-    valid_dates = []
-    for match in re.finditer(r"(?:(20\d{2})\s*(?:년|[-./]))?\s*(\d{1,2})\s*(?:월|[-./])\s*(\d{1,2})\s*(?:일)?", normalized):
-        year, month, day = match.groups()
-        if 1 <= int(month) <= 12 and 1 <= int(day) <= 31:
-            valid_dates.append(f"{year + '-' if year else ''}{int(month):02d}-{int(day):02d}")
-    if valid_dates:
-        fields["request_date"] = valid_dates[-1]
-    quantities = [int(value.replace(",", "")) for value in re.findall(r"(?<!\d)(\d{1,3}(?:,\d{3})*)\s*(?:개|EA|ea)", normalized)]
-    if not fields["quantity"] and quantities:
-        fields["quantity"] = str(max(quantities))
-    if not fields["quantity"] and vendor == "고려기프트":
-        candidates = [int(value.replace(",", "")) for value in re.findall(r"(?<![-\d])([1-9]\d{1,4})(?![-\d])", normalized)]
-        repeated = [value for value in candidates if 1 <= value <= 10000 and candidates.count(value) >= 2]
-        if repeated:
-            fields["quantity"] = str(max(set(repeated), key=repeated.count))
+    fields["request_date"] = _request_date(normalized)
+    fields["quantity"], quantity_candidates = _quantity_values(normalized)
+    if len(quantity_candidates) > 1:
+        issues.append("수량 충돌: " + ", ".join(f"{value:,}개" for value in quantity_candidates))
     if not fields["product"]:
         product_match = re.search(r"([가-힣A-Za-z0-9+*() ]{8,}(?:배터리|충전기)[가-힣A-Za-z0-9+*() ]*)", normalized)
         if product_match:
@@ -154,20 +241,25 @@ def analyze_text(text: str, source_type: str = "텍스트") -> AnalysisResult:
         product_match = re.search(r"([가-힣A-Za-z0-9+*() ]{0,35}보조.{0,8}(?:터리|Ei리).{0,35})", normalized)
         if product_match:
             fields["product"] = _clean(product_match.group(1))[:100]
-    address_match = re.search(r"((?:서울|부산|대구|인천|광주|대전|울산|세종|경기|강원|충북|충남|전북|전남|경북|경남|제주)[^\n]{8,100})", normalized)
-    if not fields["address"] and address_match:
-        fields["address"] = _clean(address_match.group(1))
-    if vendor == "고려기프트":
-        if "선물포장" in normalized:
-            fields["packaging"] = "선물포장"
-        if "선불택" in normalized:
-            fields["delivery"] = "택배"
-        printing_terms = [term for term in ("컬러인쇄", "스티커", "선물포장") if term in normalized]
-        if printing_terms:
-            fields["printing"] = " + ".join(printing_terms)
+    fields["address"] = _shipping_address(normalized)
+    fields["printing"] = _printing_phrase(normalized)
+    fields["device"] = _printing_device(normalized)
+    fields["packaging"] = _packaging_value(normalized)
+    compact = re.sub(r"\s+", "", normalized).casefold()
+    no_print = any(term in compact for term in ("인쇄없음", "무인쇄", "인쇄안함", "인쇄하지않음"))
+    has_uv = "uv인쇄" in compact or "uv프린" in compact
+    has_laser = any(term in compact for term in ("레이저인쇄", "레이저각인", "레이져인쇄", "레이져각인"))
+    if has_uv and has_laser:
+        issues.append("기기 충돌: UV와 레이저가 함께 기재됨")
+    elif not no_print and not fields["device"] and any(
+        term in compact for term in ("컬러인쇄", "실크인쇄", "전사인쇄", "인쇄작업", "인쇄요청")
+    ):
+        issues.append("기기 확인 필요: UV 또는 레이저를 선택하세요")
+    if vendor == "고려기프트" and "선불택" in normalized:
+        fields["delivery"] = "택배"
 
     confidence = {key: (90 if value and source_type != "이미지 OCR" else 70 if value else 0) for key, value in fields.items()}
-    return AnalysisResult(source_type, vendor, fields, confidence, normalized.strip())
+    return AnalysisResult(source_type, vendor, fields, confidence, normalized.strip(), issues)
 
 
 def analyze_order_document(path: str | Path) -> AnalysisResult:

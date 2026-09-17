@@ -378,7 +378,8 @@ class PrintOrderWindow(QMainWindow):
         self.customer = QLineEdit(); self.customer.setPlaceholderText("발주처를 직접 입력하세요")
         self.product = QLineEdit(); self.product.setPlaceholderText("품명을 직접 입력하세요")
         self.quantity = QLineEdit(); self.printing = QLineEdit()
-        self.device = QLineEdit(); self.packaging = QComboBox(); self.packaging.addItems(["선물포장","기본패키지","벌크","OEM포장"])
+        self.device = QComboBox(); self.device.addItems(["미선택", "UV", "레이저"])
+        self.packaging = QComboBox(); self.packaging.addItems(["미선택", "선물포장","기본패키지","벌크","OEM포장"])
         self.address = QLineEdit()
         self.delivery = QComboBox(); self.delivery.addItems(["택배","퀵 선불","퀵 착불","기타"])
         self.contact = QLineEdit()
@@ -479,6 +480,9 @@ class PrintOrderWindow(QMainWindow):
                 self.quantity.setText(numeric)
         if fields.get("printing"):
             self.printing.setText(fields["printing"])
+        else:
+            self.printing.clear()
+        self.device.setCurrentText(fields.get("device", "") if fields.get("device") in ("UV", "레이저") else "미선택")
         recipient_contact = " / ".join(value for value in (fields.get("recipient", ""), fields.get("contact", "")) if value)
         if recipient_contact:
             self.contact.setText(recipient_contact)
@@ -488,6 +492,8 @@ class PrintOrderWindow(QMainWindow):
             if option in fields.get("packaging", ""):
                 self.packaging.setCurrentText(option)
                 break
+        else:
+            self.packaging.setCurrentText("미선택")
         for option in ["퀵 선불", "퀵 착불", "택배", "기타"]:
             if option.replace(" ", "") in fields.get("delivery", "").replace(" ", ""):
                 self.delivery.setCurrentText(option)
@@ -501,9 +507,10 @@ class PrintOrderWindow(QMainWindow):
                 self.request_date.setDate(parsed)
         confidence_values = [value for value in result.confidence.values() if value]
         average = round(sum(confidence_values) / len(confidence_values)) if confidence_values else 0
+        issue_text = ("\n확인 필요: " + " / ".join(result.issues)) if result.issues else ""
         self.analysis_status.setText(
             f"{result.vendor} · {result.source_type} 분석 완료 · 평균 신뢰도 {average}%\n"
-            "자동 입력값을 원본과 비교하고 노란색 항목을 확인하세요."
+            f"자동 입력값을 원본과 비교하고 노란색 항목을 확인하세요.{issue_text}"
         )
         widget_map = {
             "product": self.product, "quantity": self.quantity, "printing": self.printing,
@@ -538,11 +545,11 @@ class PrintOrderWindow(QMainWindow):
 
     def apply_sample(self):
         self.customer.setCurrentText("고려기프트"); self.product.setCurrentText("일체형 듀얼"); self.quantity.setText("300")
-        self.printing.setText("전면 / 고려기프트 로고 1도"); self.device.setText("일체형 듀얼"); self.validation.setText("발주서 분석 완료 · 첨부파일을 연결하세요")
+        self.printing.setText("고려기프트"); self.device.setCurrentText("레이저"); self.validation.setText("발주서 분석 완료 · 첨부파일을 연결하세요")
 
     def validate_order(self):
         missing=[]
-        for label,widget in [("발주처",self.customer),("품명",self.product),("수량",self.quantity),("인쇄내용",self.printing),("주소",self.address),("담당자",self.contact)]:
+        for label,widget in [("발주처",self.customer),("품명",self.product),("수량",self.quantity),("주소",self.address),("담당자",self.contact)]:
             value=widget.currentText() if isinstance(widget,QComboBox) else widget.text()
             if not value.strip(): missing.append(label)
         if not self.ai_file.path: missing.append("AI 파일")
@@ -554,7 +561,7 @@ class PrintOrderWindow(QMainWindow):
         self.preview_title.setText(f"{self.customer.text()} · {self.product.text()} · {self.quantity.text()}개")
         self.preview_text.setText(
             f"포장: {self.packaging.currentText()}\n\n"
-            f"인쇄내용: {self.printing.text()}    |    기기명: {self.device.text()}\n\n"
+            f"인쇄내용: {self.printing.text() or '-'}    |    기기명: {self.device.currentText()}\n\n"
             f"주소: {self.address.text()}\n배송: {self.delivery.currentText()}    |    출고요청일: {self.request_date.date().toString('yyyy-MM-dd')}\n\n"
             f"담당자: {self.contact.text()}\n비고: {self.note.toPlainText()}\n\n"
             f"AI 파일: {Path(self.ai_file.path).name if self.ai_file.path else '미연결'}\n시안 이미지: {Path(self.preview_file.path).name if self.preview_file.path else '미연결'}"
@@ -570,7 +577,7 @@ class PrintOrderWindow(QMainWindow):
             "quantity": self.quantity.text().strip(),
             "packaging": self.packaging.currentText(),
             "printing": self.printing.text().strip(),
-            "device": self.device.text().strip(),
+            "device": "" if self.device.currentText() == "미선택" else self.device.currentText(),
             "address": self.address.text().strip(),
             "delivery": self.delivery.currentText(),
             "contact": self.contact.text().strip(),
@@ -584,6 +591,12 @@ class PrintOrderWindow(QMainWindow):
         self.validate_order()
         if not self.ai_file.path or not self.preview_file.path:
             QMessageBox.warning(self, "첨부 확인", "AI 파일과 시안 이미지를 모두 연결하세요.")
+            return
+        if self.packaging.currentText() == "미선택":
+            QMessageBox.warning(self, "포장 확인", "발주서의 포장 지시를 확인하고 포장 방식을 선택하세요.")
+            return
+        if self.device.currentText() == "미선택":
+            QMessageBox.warning(self, "기기 확인", "인쇄 작업 기기를 UV 또는 레이저로 선택하세요.")
             return
         credentials = print_board_credentials()
         if not credentials["user_id"] or not credentials["password"]:
@@ -614,9 +627,10 @@ class PrintOrderWindow(QMainWindow):
     def reset_order_form(self):
         for widget in (
             self.customer, self.product, self.quantity, self.printing,
-            self.device, self.address, self.contact,
+            self.address, self.contact,
         ):
             widget.clear()
+        self.device.setCurrentIndex(0)
         self.packaging.setCurrentIndex(0)
         self.delivery.setCurrentIndex(0)
         self.request_date.setDate(QDate.currentDate().addDays(7))
