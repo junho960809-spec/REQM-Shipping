@@ -24,6 +24,7 @@ from main import (
     repair_shortcuts_on_startup,
     update_shortcuts_powershell,
 )
+from cs_dialog import CsManagementDialog
 
 
 class DashboardNavigationTests(unittest.TestCase):
@@ -43,7 +44,7 @@ class DashboardNavigationTests(unittest.TestCase):
     def test_dashboard_has_shipping_and_inventory_cards(self) -> None:
         self.assertEqual(
             [button.text() for button in self.window.dashboard_cards],
-            ["📦  출고 파일 변환", "▤  재고 조회", "🛠  AS 일일 현황", "▦  주간 재고조사", "▣  인쇄 발주 관리"],
+            ["📦  출고 파일 변환", "▤  재고 조회", "🛠  AS 일일 현황", "▦  주간 재고조사", "▣  인쇄 발주 관리", "▣  CS 관리"],
         )
 
     def test_wisely_order_button_uses_short_label(self) -> None:
@@ -227,6 +228,22 @@ class DashboardNavigationTests(unittest.TestCase):
         print_window.show.assert_called_once()
         print_window.raise_.assert_called_once()
         print_window.activateWindow.assert_called_once()
+
+    def test_cs_card_opens_shared_draft_workspace(self) -> None:
+        with patch("main.CsManagementDialog") as dialog_class:
+            dialog = dialog_class.return_value
+            self.window.dashboard_cards[5].click()
+        dialog_class.assert_called_once_with(self.window, supabase_client=self.window.supabase_client)
+        dialog.show.assert_called_once()
+        dialog.raise_.assert_called_once()
+        dialog.activateWindow.assert_called_once()
+
+    def test_cs_dialog_keeps_naver_actions_disabled_before_api_connection(self) -> None:
+        dialog = CsManagementDialog()
+        self.assertFalse(dialog.sync_button.isEnabled())
+        self.assertTrue(dialog.convert_button.isEnabled())
+        self.assertFalse(dialog.send_button.isEnabled())
+        dialog.close()
 
     def test_dashboard_integration_account_button_opens_dialog(self) -> None:
         with patch("main.IntegrationAccountDialog") as dialog_class:

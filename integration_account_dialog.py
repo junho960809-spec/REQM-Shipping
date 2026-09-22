@@ -12,6 +12,11 @@ from integration_credential_store import (
     load_integration_credentials,
     save_integration_credentials,
 )
+from naver_credential_store import (
+    delete_naver_credentials,
+    load_naver_credentials,
+    save_naver_credentials,
+)
 from ui.texts import text
 from ui.theme import load_theme
 
@@ -70,6 +75,13 @@ class IntegrationAccountDialog(QDialog):
             ("위킵 비밀번호", self.wekeep_password),
         )))
 
+        self.naver_client_id = QLineEdit()
+        self.naver_client_secret = self.secret_field("네이버 커머스 API 애플리케이션 시크릿")
+        layout.addWidget(self.card("네이버 커머스 API", (
+            ("애플리케이션 ID", self.naver_client_id),
+            ("애플리케이션 시크릿", self.naver_client_secret),
+        )))
+
         security = QLabel(text("accounts.security"))
         security.setObjectName("dialogGuide"); security.setWordWrap(True); layout.addWidget(security)
         actions = QHBoxLayout()
@@ -115,12 +127,17 @@ class IntegrationAccountDialog(QDialog):
         values = load_integration_credentials()
         for field, value in values.items():
             getattr(self, field).setText(value)
+        naver = load_naver_credentials()
+        self.naver_client_id.setText(naver["client_id"])
+        self.naver_client_secret.setText(naver["client_secret"])
 
     def save(self) -> None:
         try:
             values = self.values()
             save_integration_credentials(values)
             save_api_key(values["ecount_user_id"], values["ecount_api_key"])
+            if self.naver_client_id.text().strip() or self.naver_client_secret.text().strip():
+                save_naver_credentials(self.naver_client_id.text(), self.naver_client_secret.text())
         except Exception as exc:
             QMessageBox.warning(self, "연동 계정 저장 실패", str(exc)); return
         QMessageBox.information(self, "연동 계정 저장", "연동 계정을 안전하게 저장했습니다.")
@@ -131,6 +148,7 @@ class IntegrationAccountDialog(QDialog):
             return
         ecount_user_id = self.ecount_user_id.text().strip()
         delete_integration_credentials()
+        delete_naver_credentials()
         if ecount_user_id:
             delete_api_key(ecount_user_id)
         for field in (
@@ -138,6 +156,7 @@ class IntegrationAccountDialog(QDialog):
             self.print_board_user_id, self.print_board_password,
             self.webmail_user_id, self.webmail_password,
             self.wekeep_user_id, self.wekeep_password,
+            self.naver_client_id, self.naver_client_secret,
         ):
             field.clear()
         QMessageBox.information(self, "저장정보 삭제", "저장된 연동 계정을 삭제했습니다.")

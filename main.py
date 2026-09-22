@@ -80,6 +80,7 @@ from ecount_user_store import load_ecount_users
 from inventory_display_filter import filter_inventory_display_rows
 from inventory_safety_store import load_safety_stocks, save_safety_stock
 from as_daily_dialog import AsDailyDialog
+from cs_dialog import CsManagementDialog
 from inventory_module import InventoryDialog
 from weekly_inventory_prices import fetch_price_settings, save_price_setting
 from print_order_window import PrintOrderWindow, PrintOrderStatusWorker
@@ -3101,6 +3102,7 @@ class MainWindow(QMainWindow):
         self.mini_widget = None
         self.mini_widgets: dict[str, BaseMiniWidget] = {}
         self.print_order_window = None
+        self.cs_management_dialog = None
         self.matcher = None
         self.supabase_client = None
         self.catalog: dict = {}
@@ -3568,14 +3570,20 @@ class MainWindow(QMainWindow):
             "발주 정보 입력 · AI/시안 연결 · 등록 미리보기 및 웹 등록",
         )
         print_order.clicked.connect(self.open_print_order)
+        cs_management = self.dashboard_card(
+            "▣  CS 관리",
+            "네이버 문의 확인 · 공용 초안 작성 · 승인 후 답변",
+        )
+        cs_management.clicked.connect(self.open_cs_management)
         card_alignment = Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop
         cards.addWidget(shipment, 0, 0, card_alignment)
         cards.addWidget(inventory, 0, 1, card_alignment)
         cards.addWidget(as_daily, 0, 2, card_alignment)
         cards.addWidget(weekly_inventory, 0, 3, card_alignment)
         cards.addWidget(print_order, 0, 4, card_alignment)
+        cards.addWidget(cs_management, 1, 0, card_alignment)
         cards.setColumnStretch(5, 1)
-        self.dashboard_cards = [shipment, inventory, as_daily, weekly_inventory, print_order]
+        self.dashboard_cards = [shipment, inventory, as_daily, weekly_inventory, print_order, cs_management]
         layout.addLayout(cards)
 
         self.calendar_widget = CalendarDropWidget()
@@ -3677,6 +3685,16 @@ class MainWindow(QMainWindow):
         self.print_order_window.show()
         self.print_order_window.raise_()
         self.print_order_window.activateWindow()
+
+    def open_cs_management(self) -> None:
+        if self.cs_management_dialog is None:
+            self.cs_management_dialog = CsManagementDialog(
+                self,
+                supabase_client=self.supabase_client,
+            )
+        self.cs_management_dialog.show()
+        self.cs_management_dialog.raise_()
+        self.cs_management_dialog.activateWindow()
 
     def open_integration_accounts(self) -> None:
         IntegrationAccountDialog(self).exec()
