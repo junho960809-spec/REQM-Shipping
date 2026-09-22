@@ -55,6 +55,8 @@ class CsManagementDialog(QDialog):
         self.sync_button = QPushButton("문의 동기화")
         self.sync_button.setEnabled(False)
         self.sync_button.setToolTip("Supabase와 네이버 커머스 API 인증정보가 필요합니다.")
+        self.sample_button = QPushButton("샘플 문의 불러오기")
+        header.addWidget(self.sample_button)
         header.addWidget(self.sync_button)
         layout.addLayout(header)
 
@@ -66,6 +68,7 @@ class CsManagementDialog(QDialog):
         layout.addWidget(splitter, 1)
         self.convert_button.clicked.connect(self.convert_note)
         self.save_button.clicked.connect(self.save_shared_draft)
+        self.sample_button.clicked.connect(self.load_sample_cases)
         self.inquiry_list.currentRowChanged.connect(self.select_case)
         self.convert_button.setEnabled(True)
         if self.supabase_client is not None:
@@ -148,6 +151,51 @@ class CsManagementDialog(QDialog):
         else:
             self.inquiry_list.addItem("현재 미답변 문의가 없습니다.")
 
+    def load_sample_cases(self) -> None:
+        samples = [
+            {
+                "_sample": True,
+                "id": "sample-swelling",
+                "channel": "order_inquiry",
+                "question": "배터리가 부풀었어요. 어떻게 해야 하나요?",
+                "product_order_id": "샘플 주문 001",
+                "product_model": "QP1000C",
+                "operator_note": "즉시 사용 중단 / 충전 금지 / 주문번호와 사진 요청 / 새상품 교환",
+            },
+            {
+                "_sample": True,
+                "id": "sample-heat",
+                "channel": "product_qna",
+                "question": "충전할 때 보조배터리가 너무 뜨거워요. 불량인가요?",
+                "product_order_id": "공개 상품 Q&A",
+                "product_model": "QPD330",
+                "operator_note": "전자기기 열 발생 안내 / 휴대전화 온도 경고와 충전 중단 여부 확인",
+            },
+            {
+                "_sample": True,
+                "id": "sample-discontinued",
+                "channel": "order_inquiry",
+                "question": "QP1000A가 고장 났는데 수리할 수 있나요?",
+                "product_order_id": "과거 주문 확인 필요",
+                "product_model": "QP1000A",
+                "operator_note": "단종 모델 / QP1000C 보상판매 안내",
+            },
+            {
+                "_sample": True,
+                "id": "sample-repair",
+                "channel": "order_inquiry",
+                "question": "QP2000C 충전이 안 됩니다. 수리 접수하고 싶어요.",
+                "product_order_id": "샘플 주문 002",
+                "product_model": "QP2000C",
+                "operator_note": "수리 미운영 / 구매 정보와 증상 확인 / 새상품 교환 조건 안내",
+            },
+        ]
+        self.inquiry_list.clear()
+        for case in samples:
+            self.inquiry_list.addItem(f"{case['question']} · {case['product_model']}")
+            self.inquiry_list.item(self.inquiry_list.count() - 1).setData(Qt.ItemDataRole.UserRole, case)
+        self.inquiry_list.setCurrentRow(0)
+
     @staticmethod
     def _model_from_product_name(product_name: str) -> str:
         upper = product_name.upper()
@@ -200,11 +248,13 @@ class CsManagementDialog(QDialog):
             f"제품 모델: {case.get('product_model') or '미확인'}\n"
             f"채널: {case.get('channel') or '미확인'}"
         )
-        latest = self.repository.latest_draft(str(case.get("id") or ""))
+        latest = None if case.get("_sample") else self.repository.latest_draft(str(case.get("id") or ""))
         self.current_draft_version = int(latest.get("version") or 0) if latest else 0
-        self.operator_note.setPlainText(str(latest.get("operator_note") or "") if latest else "")
+        self.operator_note.setPlainText(
+            str(latest.get("operator_note") or "") if latest else str(case.get("operator_note") or "")
+        )
         self.draft.setPlainText(str(latest.get("final_answer") or "") if latest else "")
-        self.save_button.setEnabled(True)
+        self.save_button.setEnabled(not bool(case.get("_sample")))
 
     def convert_note(self) -> None:
         try:
@@ -220,7 +270,7 @@ class CsManagementDialog(QDialog):
         self.current_policy_refs = list(result.policy_refs)
 
     def save_shared_draft(self) -> None:
-        if not self.current_case:
+        if not self.current_case or self.current_case.get("_sample"):
             return
         try:
             saved = self.repository.save_draft(

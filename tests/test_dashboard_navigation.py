@@ -245,6 +245,15 @@ class DashboardNavigationTests(unittest.TestCase):
         self.assertFalse(dialog.send_button.isEnabled())
         dialog.close()
 
+    def test_cs_dialog_sample_can_be_converted_without_naver_credentials(self) -> None:
+        dialog = CsManagementDialog()
+        dialog.load_sample_cases()
+        self.assertEqual(dialog.current_case["product_model"], "QP1000C")
+        dialog.convert_note()
+        self.assertIn("사용과 충전을 즉시 중단", dialog.draft.toPlainText())
+        self.assertFalse(dialog.save_button.isEnabled())
+        dialog.close()
+
     def test_dashboard_integration_account_button_opens_dialog(self) -> None:
         with patch("main.IntegrationAccountDialog") as dialog_class:
             self.window.dashboard_accounts_button.click()
