@@ -17,6 +17,7 @@ from naver_credential_store import (
     load_naver_credentials,
     save_naver_credentials,
 )
+from naver_commerce_client import NaverCommerceClient, NaverCommerceError
 from ui.texts import text
 from ui.theme import load_theme
 
@@ -81,6 +82,9 @@ class IntegrationAccountDialog(QDialog):
             ("애플리케이션 ID", self.naver_client_id),
             ("애플리케이션 시크릿", self.naver_client_secret),
         )))
+        self.naver_test_button = QPushButton("네이버 연결 테스트")
+        self.naver_test_button.clicked.connect(self.test_naver_connection)
+        layout.addWidget(self.naver_test_button, 0, Qt.AlignmentFlag.AlignRight)
 
         security = QLabel(text("accounts.security"))
         security.setObjectName("dialogGuide"); security.setWordWrap(True); layout.addWidget(security)
@@ -142,6 +146,35 @@ class IntegrationAccountDialog(QDialog):
             QMessageBox.warning(self, "연동 계정 저장 실패", str(exc)); return
         QMessageBox.information(self, "연동 계정 저장", "연동 계정을 안전하게 저장했습니다.")
         self.accept()
+
+    def test_naver_connection(self) -> None:
+        client_id = self.naver_client_id.text().strip()
+        client_secret = self.naver_client_secret.text().strip()
+        if not client_id or not client_secret:
+            QMessageBox.information(
+                self,
+                "네이버 연결 테스트",
+                "애플리케이션 ID와 시크릿을 모두 입력하세요.",
+            )
+            return
+        self.naver_test_button.setEnabled(False)
+        try:
+            client = NaverCommerceClient(client_id, client_secret)
+            rows = client.product_qnas(answered=False, page=1, size=10)
+        except NaverCommerceError as exc:
+            trace = f"\nTrace ID: {exc.trace_id}" if exc.trace_id else ""
+            QMessageBox.warning(self, "네이버 연결 실패", f"{exc}{trace}")
+            return
+        except Exception as exc:
+            QMessageBox.warning(self, "네이버 연결 실패", str(exc))
+            return
+        finally:
+            self.naver_test_button.setEnabled(True)
+        QMessageBox.information(
+            self,
+            "네이버 연결 성공",
+            f"인증과 상품 Q&A 조회 권한을 확인했습니다. 현재 미답변 조회 결과는 {len(rows)}건입니다.",
+        )
 
     def delete_saved(self) -> None:
         if QMessageBox.question(self, "저장정보 삭제", "저장된 연동 계정을 모두 삭제할까요?") != QMessageBox.StandardButton.Yes:

@@ -8,7 +8,7 @@ from unittest.mock import Mock, patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtWidgets import QApplication, QDialog, QFrame
+from PySide6.QtWidgets import QApplication, QDialog, QFrame, QMessageBox
 
 from main import (
     InventoryPreviewDialog,
@@ -25,6 +25,7 @@ from main import (
     update_shortcuts_powershell,
 )
 from cs_dialog import CsManagementDialog
+from integration_account_dialog import IntegrationAccountDialog
 
 
 class DashboardNavigationTests(unittest.TestCase):
@@ -252,6 +253,40 @@ class DashboardNavigationTests(unittest.TestCase):
         dialog.convert_note()
         self.assertIn("사용과 충전을 즉시 중단", dialog.draft.toPlainText())
         self.assertFalse(dialog.save_button.isEnabled())
+        dialog.close()
+
+    def test_naver_connection_test_requires_both_credentials(self) -> None:
+        with patch("integration_account_dialog.load_integration_credentials", return_value={
+            "ecount_user_id": "", "ecount_password": "", "ecount_api_key": "",
+            "print_board_user_id": "", "print_board_password": "",
+            "webmail_user_id": "", "webmail_password": "",
+            "wekeep_user_id": "", "wekeep_password": "",
+        }), patch("integration_account_dialog.load_naver_credentials", return_value={
+            "client_id": "", "client_secret": "",
+        }), patch.object(QMessageBox, "information") as message:
+            dialog = IntegrationAccountDialog()
+            dialog.test_naver_connection()
+        message.assert_called_once()
+        self.assertIn("모두 입력", message.call_args.args[2])
+        dialog.close()
+
+    def test_naver_connection_test_queries_unanswered_qna(self) -> None:
+        with patch("integration_account_dialog.load_integration_credentials", return_value={
+            "ecount_user_id": "", "ecount_password": "", "ecount_api_key": "",
+            "print_board_user_id": "", "print_board_password": "",
+            "webmail_user_id": "", "webmail_password": "",
+            "wekeep_user_id": "", "wekeep_password": "",
+        }), patch("integration_account_dialog.load_naver_credentials", return_value={
+            "client_id": "", "client_secret": "",
+        }), patch("integration_account_dialog.NaverCommerceClient") as client_class, \
+                patch.object(QMessageBox, "information") as message:
+            client_class.return_value.product_qnas.return_value = [{"questionId": 1}]
+            dialog = IntegrationAccountDialog()
+            dialog.naver_client_id.setText("client")
+            dialog.naver_client_secret.setText("secret")
+            dialog.test_naver_connection()
+        client_class.return_value.product_qnas.assert_called_once_with(answered=False, page=1, size=10)
+        self.assertIn("1건", message.call_args.args[2])
         dialog.close()
 
     def test_dashboard_integration_account_button_opens_dialog(self) -> None:
