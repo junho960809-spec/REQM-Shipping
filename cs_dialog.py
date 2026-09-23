@@ -202,7 +202,7 @@ class CsManagementDialog(QDialog):
     @staticmethod
     def _model_from_product_name(product_name: str) -> str:
         upper = product_name.upper()
-        models = ("QP1000A", "QP2000A", "QPD250", "QPD365", "QP1000C", "QP2000C", "QPD330", "QPD365-N")
+        models = ("QP1000A", "QP2000A", "QPD250", "QPD365", "QP1000C", "QP2000C", "QPD330", "QPD365-N", "Q1500", "ACONE", "QM4100", "QMP5")
         return next((model for model in models if model in upper), "")
 
     def sync_naver_qnas(self) -> None:
@@ -220,7 +220,9 @@ class CsManagementDialog(QDialog):
                     "question": str(row.get("question") or ""),
                     "product_no": str(row.get("productId") or ""),
                     "product_model": self._model_from_product_name(product_name),
-                    "category": "",
+                    # The current shared schema has no product_name column yet; this
+                    # otherwise-unused field preserves Naver's product name for drafting.
+                    "category": product_name,
                     "risk_level": "normal",
                     "status": "unanswered",
                     "source_created_at": row.get("createDate"),
@@ -249,6 +251,7 @@ class CsManagementDialog(QDialog):
         self.order_context.setPlainText(
             f"주문번호: {case.get('product_order_id') or '미확인'}\n"
             f"제품 모델: {case.get('product_model') or '미확인'}\n"
+            f"상품명: {case.get('category') or '미확인'}\n"
             f"채널: {case.get('channel') or '미확인'}"
         )
         latest = None if case.get("_sample") else self.repository.latest_draft(str(case.get("id") or ""))
@@ -276,6 +279,7 @@ class CsManagementDialog(QDialog):
                 question=self.question.toPlainText(),
                 operator_note=self.operator_note.toPlainText(),
                 product_model=str((self.current_case or {}).get("product_model") or ""),
+                product_name=str((self.current_case or {}).get("category") or ""),
             )
         except ValueError as exc:
             if show_error:
