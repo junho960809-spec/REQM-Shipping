@@ -42,6 +42,26 @@ class CsDraftTransformerTests(unittest.TestCase):
         )
         self.assertIn("온도 경고나 충전 중단 문구", result.text)
 
+    def test_question_creates_swelling_draft_without_operator_note(self) -> None:
+        result = transform_operator_note(
+            question="배터리가 부풀었어요. 어떻게 하죠?",
+            product_model="QP1000C",
+        )
+        self.assertIn("사용과 충전을 즉시 중단", result.text)
+        self.assertEqual(result.category, "안전_팽창")
+
+    def test_charging_failure_creates_replacement_draft_without_operator_note(self) -> None:
+        result = transform_operator_note(
+            question="QP2000C가 충전이 안 돼요.",
+            product_model="QP2000C",
+        )
+        self.assertIn("새상품 교환", result.text)
+
+    def test_unknown_question_requests_only_required_context(self) -> None:
+        result = transform_operator_note(question="사용 방법을 알려주세요.")
+        self.assertIn("제품 모델과 구매 정보", result.text)
+        self.assertNotIn("관련 내용을 확인", result.text)
+
 
 if __name__ == "__main__":
     unittest.main()

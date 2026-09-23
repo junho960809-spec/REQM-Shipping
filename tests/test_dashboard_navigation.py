@@ -255,6 +255,12 @@ class DashboardNavigationTests(unittest.TestCase):
         self.assertFalse(dialog.save_button.isEnabled())
         dialog.close()
 
+    def test_cs_dialog_automatically_generates_draft_from_question(self) -> None:
+        dialog = CsManagementDialog()
+        dialog.load_sample_cases()
+        self.assertIn("사용과 충전을 즉시 중단", dialog.draft.toPlainText())
+        dialog.close()
+
     def test_cs_dialog_sends_saved_product_qna_and_marks_it_complete(self) -> None:
         dialog = CsManagementDialog()
         dialog.naver_client = Mock()

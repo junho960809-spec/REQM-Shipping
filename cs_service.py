@@ -32,12 +32,15 @@ def _detected_model(text: str, product_model: str) -> str:
 def transform_operator_note(
     *,
     question: str,
-    operator_note: str,
+    operator_note: str = "",
     product_model: str = "",
 ) -> DraftResult:
-    """Turn a short operator memo into a policy-bound customer response."""
-    if not operator_note.strip():
-        raise ValueError("작업자 메모를 입력하세요.")
+    """Analyze an inquiry and create a policy-bound customer response.
+
+    An operator note is optional and is treated as additional context when supplied.
+    """
+    if not question.strip() and not operator_note.strip():
+        raise ValueError("분석할 고객 문의가 없습니다.")
 
     source = _combined_text(question, operator_note)
     model = _detected_model(source, product_model)
@@ -89,7 +92,10 @@ def transform_operator_note(
             policy_refs=(f"{model} → {replacement}", "단종 모델 보상판매"),
         )
 
-    if any(word in source for word in ("수리", "고장", "AS", "교환")):
+    if any(word in source for word in (
+        "수리", "고장", "AS", "교환", "불량", "충전이 안", "충전 안", "작동 안",
+        "인식 안", "켜지지", "전원이 안", "접촉 불량",
+    )):
         model_text = f" {model}" if model else ""
         return DraftResult(
             text=(
@@ -105,7 +111,7 @@ def transform_operator_note(
     return DraftResult(
         text=(
             "안녕하세요 고객님. 문의해 주신 내용을 확인했습니다. "
-            f"{operator_note.strip().rstrip('.')} 관련 내용을 확인한 후 정확한 안내를 드리겠습니다."
+            "정확한 확인을 위해 사용 중인 제품 모델과 구매 정보를 남겨주시면 문의 내용에 맞춰 안내해 드리겠습니다."
         ),
         category="일반",
         risk_level="normal",

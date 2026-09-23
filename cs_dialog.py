@@ -47,7 +47,7 @@ class CsManagementDialog(QDialog):
         title_box = QVBoxLayout()
         title = QLabel("CS 관리")
         title.setObjectName("sectionTitle")
-        guide = QLabel("네이버 문의를 확인하고 작업자 메모를 고객용 답변 초안으로 정리합니다.")
+        guide = QLabel("네이버 문의를 자동 분석해 답변 초안을 만들고, 검토·수정 후 전송합니다.")
         guide.setObjectName("appSubtitle")
         title_box.addWidget(title)
         title_box.addWidget(guide)
@@ -116,11 +116,11 @@ class CsManagementDialog(QDialog):
     def _build_draft_panel(self) -> QWidget:
         panel = QWidget()
         layout = QVBoxLayout(panel)
-        layout.addWidget(QLabel("작업자 메모"))
+        layout.addWidget(QLabel("추가 작업자 메모 (선택)"))
         self.operator_note = QTextEdit()
-        self.operator_note.setPlaceholderText("예: 팽창 / 즉시 사용 중단 / 주문번호와 사진 요청 / 새상품 교환")
+        self.operator_note.setPlaceholderText("자동 분석에 추가할 내용이 있을 때만 입력하세요.")
         layout.addWidget(self.operator_note)
-        self.convert_button = QPushButton("고객용 초안으로 변환")
+        self.convert_button = QPushButton("문의 분석 및 답변 초안 생성")
         layout.addWidget(self.convert_button)
         layout.addWidget(QLabel("공용 답변 초안"))
         self.draft = QTextEdit()
@@ -260,12 +260,17 @@ class CsManagementDialog(QDialog):
         self.draft.setPlainText(str(latest.get("final_answer") or "") if latest else "")
         self.save_button.setEnabled(not bool(case.get("_sample")))
         self.send_button.setEnabled(bool(self.current_draft_id) and self.naver_client is not None)
+        if latest is None:
+            self._generate_draft(show_error=False)
 
     def _draft_changed(self) -> None:
         if hasattr(self, "send_button"):
             self.send_button.setEnabled(False)
 
     def convert_note(self) -> None:
+        self._generate_draft(show_error=True)
+
+    def _generate_draft(self, *, show_error: bool) -> None:
         try:
             result = transform_operator_note(
                 question=self.question.toPlainText(),
@@ -273,7 +278,8 @@ class CsManagementDialog(QDialog):
                 product_model=str((self.current_case or {}).get("product_model") or ""),
             )
         except ValueError as exc:
-            QMessageBox.information(self, "작업자 메모 확인", str(exc))
+            if show_error:
+                QMessageBox.information(self, "문의 분석", str(exc))
             return
         self.draft.setPlainText(result.text)
         self.current_policy_refs = list(result.policy_refs)
