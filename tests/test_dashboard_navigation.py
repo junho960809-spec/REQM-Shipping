@@ -261,6 +261,14 @@ class DashboardNavigationTests(unittest.TestCase):
         self.assertIn("사용과 충전을 즉시 중단", dialog.draft.toPlainText())
         dialog.close()
 
+    def test_cs_dialog_applies_worker_edited_answer_for_matching_case(self) -> None:
+        dialog = CsManagementDialog()
+        dialog.repository.find_reusable_answer = Mock(return_value={"final_answer": "검수된 공용 답변"})
+        dialog.load_sample_cases()
+        self.assertEqual(dialog.draft.toPlainText(), "검수된 공용 답변")
+        self.assertIn("작업자가 수정한 답변", dialog.draft_source.text())
+        dialog.close()
+
     def test_cs_dialog_sends_saved_product_qna_and_marks_it_complete(self) -> None:
         dialog = CsManagementDialog()
         dialog.naver_client = Mock()

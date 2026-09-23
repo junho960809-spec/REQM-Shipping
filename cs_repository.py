@@ -55,6 +55,7 @@ class CsRepository:
         generated_draft: str,
         knowledge_refs: list[str],
         expected_version: int,
+        final_answer: str | None = None,
     ) -> dict:
         latest = self.latest_draft(case_id)
         server_version = int(latest.get("version") or 0) if latest else 0
@@ -64,7 +65,7 @@ class CsRepository:
             "case_id": case_id,
             "operator_note": operator_note.strip(),
             "generated_draft": generated_draft.strip(),
-            "final_answer": generated_draft.strip(),
+            "final_answer": (final_answer if final_answer is not None else generated_draft).strip(),
             "knowledge_refs": knowledge_refs,
             "version": server_version + 1,
             "status": "draft",
@@ -81,6 +82,40 @@ class CsRepository:
             "details": {"version": saved.get("version")},
         }).execute()
         return saved
+
+    def find_reusable_answer(self, *, product_model: str, knowledge_refs: list[str]) -> dict | None:
+        """Find a worker-edited answer for the same product and policy type."""
+        if self.client is None or not product_model.strip() or not knowledge_refs:
+            return None
+        case_response = (
+            self.client.table("cs_cases")
+            .select("id")
+            .eq("product_model", product_model.strip().upper())
+            .execute()
+        )
+        case_ids = [str(row.get("id") or "") for row in (case_response.data or []) if row.get("id")]
+        if not case_ids:
+            return None
+        draft_response = (
+            self.client.table("cs_drafts")
+            .select("id,case_id,generated_draft,final_answer,knowledge_refs,status,updated_at")
+            .in_("case_id", case_ids)
+            .order("updated_at", desc=True)
+            .limit(50)
+            .execute()
+        )
+        requested = {str(value).strip() for value in knowledge_refs if str(value).strip()}
+        best: tuple[int, dict] | None = None
+        for row in draft_response.data or []:
+            generated = str(row.get("generated_draft") or "").strip()
+            final = str(row.get("final_answer") or "").strip()
+            if not final or final == generated:
+                continue
+            refs = {str(value).strip() for value in (row.get("knowledge_refs") or []) if str(value).strip()}
+            score = len(requested & refs)
+            if score and (best is None or score > best[0]):
+                best = (score, row)
+        return best[1] if best else None
 
     def mark_sent(self, *, case_id: str, draft_id: str, external_id: str) -> None:
         if self.client is None:

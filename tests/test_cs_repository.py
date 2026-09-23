@@ -55,10 +55,13 @@ class CsRepositoryTests(unittest.TestCase):
             generated_draft="사진을 보내주세요.",
             knowledge_refs=["새상품 교환"],
             expected_version=1,
+            final_answer="사진과 구매일을 보내주세요.",
         )
 
         self.assertEqual(saved["version"], 2)
         self.assertEqual(draft_query.insert.call_args.args[0]["version"], 2)
+        self.assertEqual(draft_query.insert.call_args.args[0]["generated_draft"], "사진을 보내주세요.")
+        self.assertEqual(draft_query.insert.call_args.args[0]["final_answer"], "사진과 구매일을 보내주세요.")
         self.assertEqual(audit_query.insert.call_args.args[0]["action"], "draft_saved")
 
     def test_mark_sent_completes_case_and_writes_audit_log(self) -> None:
@@ -79,6 +82,40 @@ class CsRepositoryTests(unittest.TestCase):
         audit = queries["cs_audit_logs"].insert.call_args.args[0]
         self.assertEqual(audit["action"], "answer_sent")
         self.assertEqual(audit["details"]["external_id"], "42")
+
+    def test_reuses_only_worker_edited_answer_for_same_model_and_policy(self) -> None:
+        client = Mock()
+        case_query = Mock()
+        draft_query = Mock()
+        case_query.select.return_value = case_query
+        case_query.eq.return_value = case_query
+        case_query.execute.return_value = SimpleNamespace(data=[{"id": "case-1"}])
+        draft_query.select.return_value = draft_query
+        draft_query.in_.return_value = draft_query
+        draft_query.order.return_value = draft_query
+        draft_query.limit.return_value = draft_query
+        draft_query.execute.return_value = SimpleNamespace(data=[
+            {
+                "generated_draft": "자동 초안",
+                "final_answer": "작업자가 고친 답변",
+                "knowledge_refs": ["QPD330 최대 30W", "기기 권장 출력 확인"],
+            },
+            {
+                "generated_draft": "수정 없는 답변",
+                "final_answer": "수정 없는 답변",
+                "knowledge_refs": ["QPD330 최대 30W"],
+            },
+        ])
+        client.table.side_effect = lambda name: case_query if name == "cs_cases" else draft_query
+        repository = CsRepository(client)
+
+        result = repository.find_reusable_answer(
+            product_model="QPD330",
+            knowledge_refs=["QPD330 최대 30W", "기기 권장 출력 확인"],
+        )
+
+        self.assertEqual(result["final_answer"], "작업자가 고친 답변")
+        case_query.eq.assert_called_once_with("product_model", "QPD330")
 
 
 if __name__ == "__main__":

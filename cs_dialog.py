@@ -38,6 +38,7 @@ class CsManagementDialog(QDialog):
         self.current_case: dict | None = None
         self.current_draft_version = 0
         self.current_draft_id = ""
+        self.current_generated_draft = ""
         self.current_policy_refs: list[str] = []
         self.setWindowTitle("CS 관리")
         self.resize(1180, 720)
@@ -123,6 +124,9 @@ class CsManagementDialog(QDialog):
         self.convert_button = QPushButton("문의 분석 및 답변 초안 생성")
         layout.addWidget(self.convert_button)
         layout.addWidget(QLabel("공용 답변 초안"))
+        self.draft_source = QLabel("문의 분석 결과")
+        self.draft_source.setObjectName("appSubtitle")
+        layout.addWidget(self.draft_source)
         self.draft = QTextEdit()
         self.draft.setPlaceholderText("변환된 초안은 Supabase에 저장되어 다른 작업자와 공유됩니다.")
         layout.addWidget(self.draft, 1)
@@ -257,10 +261,12 @@ class CsManagementDialog(QDialog):
         latest = None if case.get("_sample") else self.repository.latest_draft(str(case.get("id") or ""))
         self.current_draft_version = int(latest.get("version") or 0) if latest else 0
         self.current_draft_id = str(latest.get("id") or "") if latest else ""
+        self.current_generated_draft = str(latest.get("generated_draft") or "") if latest else ""
         self.operator_note.setPlainText(
             str(latest.get("operator_note") or "") if latest else str(case.get("operator_note") or "")
         )
         self.draft.setPlainText(str(latest.get("final_answer") or "") if latest else "")
+        self.draft_source.setText("저장된 공용 최종 답변" if latest else "문의 분석 결과")
         self.save_button.setEnabled(not bool(case.get("_sample")))
         self.send_button.setEnabled(bool(self.current_draft_id) and self.naver_client is not None)
         if latest is None:
@@ -285,8 +291,18 @@ class CsManagementDialog(QDialog):
             if show_error:
                 QMessageBox.information(self, "문의 분석", str(exc))
             return
-        self.draft.setPlainText(result.text)
+        self.current_generated_draft = result.text
         self.current_policy_refs = list(result.policy_refs)
+        learned = self.repository.find_reusable_answer(
+            product_model=str((self.current_case or {}).get("product_model") or ""),
+            knowledge_refs=self.current_policy_refs,
+        )
+        if learned:
+            self.draft.setPlainText(str(learned.get("final_answer") or result.text))
+            self.draft_source.setText("같은 제품·문의 유형에서 작업자가 수정한 답변 반영")
+        else:
+            self.draft.setPlainText(result.text)
+            self.draft_source.setText("상품 정보와 CS 정책으로 자동 생성")
 
     def save_shared_draft(self) -> None:
         if not self.current_case or self.current_case.get("_sample"):
@@ -295,9 +311,10 @@ class CsManagementDialog(QDialog):
             saved = self.repository.save_draft(
                 case_id=str(self.current_case["id"]),
                 operator_note=self.operator_note.toPlainText(),
-                generated_draft=self.draft.toPlainText(),
+                generated_draft=self.current_generated_draft or self.draft.toPlainText(),
                 knowledge_refs=self.current_policy_refs,
                 expected_version=self.current_draft_version,
+                final_answer=self.draft.toPlainText(),
             )
         except DraftConflictError as exc:
             QMessageBox.warning(self, "초안 수정 충돌", str(exc))
