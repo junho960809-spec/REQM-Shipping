@@ -161,6 +161,7 @@ class IntegrationAccountDialog(QDialog):
         try:
             client = NaverCommerceClient(client_id, client_secret)
             rows = client.product_qnas(answered=False, page=1, size=10)
+            save_naver_credentials(client_id, client_secret)
         except NaverCommerceError as exc:
             trace = f"\nTrace ID: {exc.trace_id}" if exc.trace_id else ""
             QMessageBox.warning(self, "네이버 연결 실패", f"{exc}{trace}")
@@ -173,7 +174,8 @@ class IntegrationAccountDialog(QDialog):
         QMessageBox.information(
             self,
             "네이버 연결 성공",
-            f"인증과 상품 Q&A 조회 권한을 확인했습니다. 현재 미답변 조회 결과는 {len(rows)}건입니다.",
+            f"인증과 상품 Q&A 조회 권한을 확인하고 연동 정보를 저장했습니다. "
+            f"현재 미답변 조회 결과는 {len(rows)}건입니다.",
         )
 
     def delete_saved(self) -> None:

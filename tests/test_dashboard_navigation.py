@@ -298,6 +298,7 @@ class DashboardNavigationTests(unittest.TestCase):
         }), patch("integration_account_dialog.load_naver_credentials", return_value={
             "client_id": "", "client_secret": "",
         }), patch("integration_account_dialog.NaverCommerceClient") as client_class, \
+                patch("integration_account_dialog.save_naver_credentials") as save_naver, \
                 patch.object(QMessageBox, "information") as message:
             client_class.return_value.product_qnas.return_value = [{"questionId": 1}]
             dialog = IntegrationAccountDialog()
@@ -305,6 +306,7 @@ class DashboardNavigationTests(unittest.TestCase):
             dialog.naver_client_secret.setText("secret")
             dialog.test_naver_connection()
         client_class.return_value.product_qnas.assert_called_once_with(answered=False, page=1, size=10)
+        save_naver.assert_called_once_with("client", "secret")
         self.assertIn("1건", message.call_args.args[2])
         dialog.close()
 
