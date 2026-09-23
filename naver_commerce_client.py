@@ -6,6 +6,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from datetime import datetime, timedelta, timezone
 
 
 class NaverCommerceError(RuntimeError):
@@ -95,8 +96,26 @@ class NaverCommerceClient:
             message = str(error.get("message") or raw or f"HTTP {exc.code}")
             raise NaverCommerceError(message, status=exc.code, trace_id=trace_id) from exc
 
-    def product_qnas(self, *, answered: bool = False, page: int = 1, size: int = 100) -> list[dict]:
+    @staticmethod
+    def qna_search_period(days: int = 30) -> tuple[str, str]:
+        kst = timezone(timedelta(hours=9))
+        now = datetime.now(kst)
+        start = (now - timedelta(days=days)).replace(hour=0, minute=0, second=0, microsecond=0)
+        return start.isoformat(timespec="milliseconds"), now.isoformat(timespec="milliseconds")
+
+    def product_qnas(
+        self,
+        *,
+        answered: bool = False,
+        page: int = 1,
+        size: int = 100,
+        from_date: str | None = None,
+        to_date: str | None = None,
+    ) -> list[dict]:
+        default_from, default_to = self.qna_search_period()
         payload = self._request_json("GET", "/v1/contents/qnas", query={
+            "fromDate": from_date or default_from,
+            "toDate": to_date or default_to,
             "answered": answered,
             "page": page,
             "size": size,

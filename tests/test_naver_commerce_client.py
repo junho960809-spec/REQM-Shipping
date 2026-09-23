@@ -18,6 +18,20 @@ class NaverCommerceClientTests(unittest.TestCase):
         args, kwargs = self.client._request_json.call_args
         self.assertEqual(args[:2], ("GET", "/v1/contents/qnas"))
         self.assertFalse(kwargs["query"]["answered"])
+        self.assertIn("fromDate", kwargs["query"])
+        self.assertIn("toDate", kwargs["query"])
+        self.assertTrue(kwargs["query"]["fromDate"].endswith("+09:00"))
+        self.assertTrue(kwargs["query"]["toDate"].endswith("+09:00"))
+
+    def test_product_qna_accepts_explicit_search_period(self) -> None:
+        self.client._request_json.return_value = {"contents": []}
+        self.client.product_qnas(
+            from_date="2026-09-01T00:00:00.000+09:00",
+            to_date="2026-09-23T23:59:59.999+09:00",
+        )
+        query = self.client._request_json.call_args.kwargs["query"]
+        self.assertEqual(query["fromDate"], "2026-09-01T00:00:00.000+09:00")
+        self.assertEqual(query["toDate"], "2026-09-23T23:59:59.999+09:00")
 
     def test_customer_inquiry_uses_required_date_range(self) -> None:
         self.client._request_json.return_value = {"content": [{"inquiryNo": "1"}]}
