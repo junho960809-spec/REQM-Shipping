@@ -255,6 +255,25 @@ class DashboardNavigationTests(unittest.TestCase):
         self.assertFalse(dialog.save_button.isEnabled())
         dialog.close()
 
+    def test_cs_dialog_sends_saved_product_qna_and_marks_it_complete(self) -> None:
+        dialog = CsManagementDialog()
+        dialog.naver_client = Mock()
+        dialog.repository = Mock()
+        dialog.repository.list_cases.return_value = []
+        dialog.current_case = {
+            "id": "case-1", "external_id": "42", "channel": "product_qna",
+        }
+        dialog.current_draft_id = "draft-1"
+        dialog.draft.setPlainText("고객 안내 답변")
+        with patch.object(QMessageBox, "question", return_value=QMessageBox.StandardButton.Yes), \
+                patch.object(QMessageBox, "information"), patch.object(QMessageBox, "warning"):
+            dialog.send_to_naver()
+        dialog.naver_client.answer_product_qna.assert_called_once_with("42", "고객 안내 답변")
+        dialog.repository.mark_sent.assert_called_once_with(
+            case_id="case-1", draft_id="draft-1", external_id="42",
+        )
+        dialog.close()
+
     def test_naver_connection_test_requires_both_credentials(self) -> None:
         with patch("integration_account_dialog.load_integration_credentials", return_value={
             "ecount_user_id": "", "ecount_password": "", "ecount_api_key": "",

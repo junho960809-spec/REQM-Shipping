@@ -37,6 +37,7 @@ class CsManagementDialog(QDialog):
         )
         self.current_case: dict | None = None
         self.current_draft_version = 0
+        self.current_draft_id = ""
         self.current_policy_refs: list[str] = []
         self.setWindowTitle("CS 관리")
         self.resize(1180, 720)
@@ -68,8 +69,10 @@ class CsManagementDialog(QDialog):
         layout.addWidget(splitter, 1)
         self.convert_button.clicked.connect(self.convert_note)
         self.save_button.clicked.connect(self.save_shared_draft)
+        self.send_button.clicked.connect(self.send_to_naver)
         self.sample_button.clicked.connect(self.load_sample_cases)
         self.inquiry_list.currentRowChanged.connect(self.select_case)
+        self.draft.textChanged.connect(self._draft_changed)
         self.convert_button.setEnabled(True)
         if self.supabase_client is not None:
             self.load_cases()
@@ -250,11 +253,17 @@ class CsManagementDialog(QDialog):
         )
         latest = None if case.get("_sample") else self.repository.latest_draft(str(case.get("id") or ""))
         self.current_draft_version = int(latest.get("version") or 0) if latest else 0
+        self.current_draft_id = str(latest.get("id") or "") if latest else ""
         self.operator_note.setPlainText(
             str(latest.get("operator_note") or "") if latest else str(case.get("operator_note") or "")
         )
         self.draft.setPlainText(str(latest.get("final_answer") or "") if latest else "")
         self.save_button.setEnabled(not bool(case.get("_sample")))
+        self.send_button.setEnabled(bool(self.current_draft_id) and self.naver_client is not None)
+
+    def _draft_changed(self) -> None:
+        if hasattr(self, "send_button"):
+            self.send_button.setEnabled(False)
 
     def convert_note(self) -> None:
         try:
@@ -288,4 +297,43 @@ class CsManagementDialog(QDialog):
             QMessageBox.warning(self, "초안 저장 실패", str(exc))
             return
         self.current_draft_version = int(saved.get("version") or self.current_draft_version + 1)
+        self.current_draft_id = str(saved.get("id") or "")
+        self.send_button.setEnabled(bool(self.current_draft_id) and self.naver_client is not None)
         QMessageBox.information(self, "초안 저장", "공용 초안을 저장했습니다.")
+
+    def send_to_naver(self) -> None:
+        if not self.current_case or not self.naver_client or not self.current_draft_id:
+            return
+        answer = self.draft.toPlainText().strip()
+        if not answer:
+            QMessageBox.information(self, "답변 확인", "전송할 답변을 입력해 주세요.")
+            return
+        if self.current_case.get("channel") != "product_qna":
+            QMessageBox.information(self, "전송 불가", "현재는 네이버 상품 Q&A만 전송할 수 있습니다.")
+            return
+        confirmed = QMessageBox.question(
+            self,
+            "네이버 답변 전송",
+            "저장된 공용 초안을 네이버 상품 Q&A에 답변으로 등록할까요?\n전송 후 해당 문의는 완료로 이동합니다.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if confirmed != QMessageBox.StandardButton.Yes:
+            return
+        self.send_button.setEnabled(False)
+        try:
+            external_id = str(self.current_case.get("external_id") or "")
+            self.naver_client.answer_product_qna(external_id, answer)
+            self.repository.mark_sent(
+                case_id=str(self.current_case["id"]),
+                draft_id=self.current_draft_id,
+                external_id=external_id,
+            )
+            QMessageBox.information(self, "답변 전송 완료", "네이버 상품 Q&A에 답변을 등록했습니다.")
+            self.load_cases()
+        except NaverCommerceError as exc:
+            trace = f"\nTrace ID: {exc.trace_id}" if exc.trace_id else ""
+            QMessageBox.warning(self, "네이버 답변 전송 실패", f"{exc}{trace}")
+            self.send_button.setEnabled(True)
+        except Exception as exc:
+            QMessageBox.warning(self, "답변 전송 결과 저장 실패", f"네이버 전송 후 내부 상태 저장 중 오류가 발생했습니다.\n{exc}")

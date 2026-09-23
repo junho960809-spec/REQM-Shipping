@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 
 class DraftConflictError(RuntimeError):
     pass
@@ -79,3 +81,18 @@ class CsRepository:
             "details": {"version": saved.get("version")},
         }).execute()
         return saved
+
+    def mark_sent(self, *, case_id: str, draft_id: str, external_id: str) -> None:
+        if self.client is None:
+            raise RuntimeError("CS 공용 저장소에 연결되어 있지 않습니다.")
+        self.client.table("cs_drafts").update({
+            "status": "sent",
+            "sent_at": datetime.now(timezone.utc).isoformat(),
+        }).eq("id", draft_id).execute()
+        self.client.table("cs_cases").update({"status": "completed"}).eq("id", case_id).execute()
+        self.client.table("cs_audit_logs").insert({
+            "case_id": case_id,
+            "draft_id": draft_id,
+            "action": "answer_sent",
+            "details": {"external_id": external_id},
+        }).execute()

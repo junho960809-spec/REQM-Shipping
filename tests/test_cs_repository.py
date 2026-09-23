@@ -61,6 +61,25 @@ class CsRepositoryTests(unittest.TestCase):
         self.assertEqual(draft_query.insert.call_args.args[0]["version"], 2)
         self.assertEqual(audit_query.insert.call_args.args[0]["action"], "draft_saved")
 
+    def test_mark_sent_completes_case_and_writes_audit_log(self) -> None:
+        client = Mock()
+        queries = {name: Mock() for name in ("cs_drafts", "cs_cases", "cs_audit_logs")}
+        for query in queries.values():
+            query.update.return_value = query
+            query.eq.return_value = query
+            query.insert.return_value = query
+            query.execute.return_value = SimpleNamespace(data=[])
+        client.table.side_effect = lambda name: queries[name]
+        repository = CsRepository(client)
+
+        repository.mark_sent(case_id="case-1", draft_id="draft-1", external_id="42")
+
+        queries["cs_drafts"].update.assert_called_once()
+        queries["cs_cases"].update.assert_called_once_with({"status": "completed"})
+        audit = queries["cs_audit_logs"].insert.call_args.args[0]
+        self.assertEqual(audit["action"], "answer_sent")
+        self.assertEqual(audit["details"]["external_id"], "42")
+
 
 if __name__ == "__main__":
     unittest.main()
