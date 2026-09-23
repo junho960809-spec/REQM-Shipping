@@ -1,9 +1,11 @@
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QSize, Qt
 from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
+    QDialogButtonBox,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -20,6 +22,49 @@ from cs_repository import CsRepository, DraftConflictError
 from cs_service import transform_operator_note
 from naver_commerce_client import NaverCommerceClient, NaverCommerceError
 from naver_credential_store import load_naver_credentials
+
+
+MARKETPLACES = (
+    ("naver", "네이버 스마트스토어", "상품 Q&A · 주문 고객 문의", True),
+    ("reqm", "리큐엠 자사몰", "상품 문의 · AS 접수", False),
+    ("coupang", "쿠팡", "상품 문의 · 판매자 문의", False),
+    ("11st", "11번가", "상품 Q&A · 주문 문의", False),
+    ("all", "전체 판매처", "연결된 판매처 문의 통합 보기", True),
+)
+
+
+class MarketplaceSelectionDialog(QDialog):
+    def __init__(self, current: str = "naver", parent=None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("판매처 선택")
+        self.setMinimumWidth(480)
+        layout = QVBoxLayout(self)
+        title = QLabel("판매처 선택")
+        title.setObjectName("sectionTitle")
+        guide = QLabel("확인할 문의의 판매처를 선택하세요. 미연동 판매처는 구조만 준비되어 있습니다.")
+        guide.setWordWrap(True)
+        guide.setObjectName("appSubtitle")
+        layout.addWidget(title)
+        layout.addWidget(guide)
+        self.market_list = QListWidget()
+        for key, name, description, connected in MARKETPLACES:
+            state = "연결됨" if connected and key != "all" else "통합 보기" if key == "all" else "연결 필요"
+            self.market_list.addItem(f"{name}\n{description}  ·  {state}")
+            item = self.market_list.item(self.market_list.count() - 1)
+            item.setData(Qt.ItemDataRole.UserRole, key)
+            item.setSizeHint(item.sizeHint().expandedTo(QSize(0, 54)))
+            if key == current:
+                self.market_list.setCurrentItem(item)
+        layout.addWidget(self.market_list)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Cancel | QDialogButtonBox.StandardButton.Ok)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        self.market_list.itemDoubleClicked.connect(lambda _item: self.accept())
+        layout.addWidget(buttons)
+
+    def selected_marketplace(self) -> str:
+        item = self.market_list.currentItem()
+        return str(item.data(Qt.ItemDataRole.UserRole) or "naver") if item else "naver"
 
 
 class CsManagementDialog(QDialog):
@@ -40,24 +85,38 @@ class CsManagementDialog(QDialog):
         self.current_draft_id = ""
         self.current_generated_draft = ""
         self.current_policy_refs: list[str] = []
+        self.current_marketplace = "naver"
+        self._loaded_cases: list[dict] = []
         self.setWindowTitle("CS 관리")
         self.resize(1180, 720)
+        self.setStyleSheet("""
+            QFrame#csPanel { background: palette(base); border: 1px solid palette(midlight); border-radius: 10px; }
+            QFrame#csPanel QLabel, QFrame#csPanel QLineEdit, QFrame#csPanel QComboBox,
+            QFrame#csPanel QListWidget, QFrame#csPanel QTextEdit, QFrame#csPanel QPushButton {
+                border-color: palette(midlight);
+            }
+            QLabel#csPanelTitle { border: 0; font-size: 17px; font-weight: 700; padding: 2px 0 4px 0; }
+        """)
 
         layout = QVBoxLayout(self)
         header = QHBoxLayout()
         title_box = QVBoxLayout()
         title = QLabel("CS 관리")
         title.setObjectName("sectionTitle")
-        guide = QLabel("네이버 문의를 자동 분석해 답변 초안을 만들고, 검토·수정 후 전송합니다.")
+        guide = QLabel("판매처별 문의를 확인하고 자동 생성된 답변을 검토·수정한 뒤 전송합니다.")
         guide.setObjectName("appSubtitle")
         title_box.addWidget(title)
         title_box.addWidget(guide)
         header.addLayout(title_box)
         header.addStretch(1)
+        self.marketplace_button = QPushButton("판매처  ·  네이버 스마트스토어  ▾")
+        self.marketplace_button.setMinimumWidth(235)
+        self.marketplace_button.clicked.connect(self.choose_marketplace)
         self.sync_button = QPushButton("문의 동기화")
         self.sync_button.setEnabled(False)
         self.sync_button.setToolTip("Supabase와 네이버 커머스 API 인증정보가 필요합니다.")
         self.sample_button = QPushButton("샘플 문의 불러오기")
+        header.addWidget(self.marketplace_button)
         header.addWidget(self.sample_button)
         header.addWidget(self.sync_button)
         layout.addLayout(header)
@@ -67,12 +126,15 @@ class CsManagementDialog(QDialog):
         splitter.addWidget(self._build_inquiry_detail())
         splitter.addWidget(self._build_draft_panel())
         splitter.setSizes([270, 420, 390])
+        splitter.setHandleWidth(8)
         layout.addWidget(splitter, 1)
         self.convert_button.clicked.connect(self.convert_note)
         self.save_button.clicked.connect(self.save_shared_draft)
         self.send_button.clicked.connect(self.send_to_naver)
         self.sample_button.clicked.connect(self.load_sample_cases)
         self.inquiry_list.currentRowChanged.connect(self.select_case)
+        self.search.textChanged.connect(self.apply_case_filters)
+        self.status_filter.currentIndexChanged.connect(self.load_cases)
         self.draft.textChanged.connect(self._draft_changed)
         self.convert_button.setEnabled(True)
         if self.supabase_client is not None:
@@ -82,8 +144,15 @@ class CsManagementDialog(QDialog):
             self.sync_button.clicked.connect(self.sync_naver_qnas)
 
     def _build_inquiry_list(self) -> QWidget:
-        panel = QWidget()
+        panel = QFrame()
+        panel.setObjectName("csPanel")
         layout = QVBoxLayout(panel)
+        heading = QLabel("문의 목록")
+        heading.setObjectName("csPanelTitle")
+        description = QLabel("선택한 판매처의 문의와 처리 상태")
+        description.setObjectName("appSubtitle")
+        layout.addWidget(heading)
+        layout.addWidget(description)
         filters = QHBoxLayout()
         self.search = QLineEdit()
         self.search.setPlaceholderText("주문번호·제품 검색")
@@ -100,14 +169,18 @@ class CsManagementDialog(QDialog):
         return panel
 
     def _build_inquiry_detail(self) -> QWidget:
-        panel = QWidget()
+        panel = QFrame()
+        panel.setObjectName("csPanel")
         layout = QVBoxLayout(panel)
-        layout.addWidget(QLabel("고객 문의"))
+        heading = QLabel("문의 상세")
+        heading.setObjectName("csPanelTitle")
+        layout.addWidget(heading)
+        layout.addWidget(QLabel("고객이 남긴 원문"))
         self.question = QTextEdit()
         self.question.setReadOnly(True)
         self.question.setPlainText("제품 문의를 동기화하면 고객 질문과 주문 정보가 표시됩니다.")
         layout.addWidget(self.question, 1)
-        layout.addWidget(QLabel("연결된 주문·상품 정보"))
+        layout.addWidget(QLabel("상품 및 문의 정보"))
         self.order_context = QTextEdit()
         self.order_context.setReadOnly(True)
         self.order_context.setPlainText("주문번호\n제품 모델\n배송 상태")
@@ -115,8 +188,12 @@ class CsManagementDialog(QDialog):
         return panel
 
     def _build_draft_panel(self) -> QWidget:
-        panel = QWidget()
+        panel = QFrame()
+        panel.setObjectName("csPanel")
         layout = QVBoxLayout(panel)
+        heading = QLabel("답변 검토 및 전송")
+        heading.setObjectName("csPanelTitle")
+        layout.addWidget(heading)
         layout.addWidget(QLabel("추가 작업자 메모 (선택)"))
         self.operator_note = QTextEdit()
         self.operator_note.setPlaceholderText("자동 분석에 추가할 내용이 있을 때만 입력하세요.")
@@ -142,21 +219,57 @@ class CsManagementDialog(QDialog):
         layout.addLayout(actions)
         return panel
 
+    @staticmethod
+    def _marketplace_name(key: str) -> str:
+        return next((name for value, name, _description, _connected in MARKETPLACES if value == key), key)
+
+    def choose_marketplace(self) -> None:
+        dialog = MarketplaceSelectionDialog(self.current_marketplace, self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        self.current_marketplace = dialog.selected_marketplace()
+        self.marketplace_button.setText(f"판매처  ·  {self._marketplace_name(self.current_marketplace)}  ▾")
+        self.sync_button.setEnabled(
+            self.current_marketplace in {"naver", "all"}
+            and self.supabase_client is not None
+            and self.naver_client is not None
+        )
+        self.load_cases()
+
+    def apply_case_filters(self) -> None:
+        term = self.search.text().strip().casefold()
+        if self.current_marketplace in {"naver", "all"}:
+            cases = self._loaded_cases
+        else:
+            cases = []
+        if term:
+            cases = [case for case in cases if term in " ".join(
+                str(case.get(field) or "") for field in ("question", "product_model", "category", "product_order_id")
+            ).casefold()]
+        self.inquiry_list.clear()
+        for case in cases:
+            channel = "상품 Q&A" if case.get("channel") == "product_qna" else "주문 고객 문의"
+            question = str(case.get("question") or "문의 내용 없음").replace("\n", " ")
+            label = f"[{channel}] {question}\n{case.get('product_model') or '모델 미확인'}"
+            self.inquiry_list.addItem(label)
+            item = self.inquiry_list.item(self.inquiry_list.count() - 1)
+            item.setData(Qt.ItemDataRole.UserRole, case)
+            item.setSizeHint(item.sizeHint().expandedTo(QSize(0, 58)))
+        if cases:
+            self.inquiry_list.setCurrentRow(0)
+        elif self.current_marketplace not in {"naver", "all"}:
+            self.inquiry_list.addItem(f"{self._marketplace_name(self.current_marketplace)}는 아직 연동 전입니다.")
+        else:
+            self.inquiry_list.addItem("현재 조건에 맞는 문의가 없습니다.")
+
     def load_cases(self) -> None:
         try:
             cases = self.repository.list_cases(self.status_filter.currentData() or "unanswered")
         except Exception as exc:
             QMessageBox.warning(self, "문의 불러오기 실패", str(exc))
             return
-        self.inquiry_list.clear()
-        for case in cases:
-            label = f"{case.get('question') or '문의 내용 없음'} · {case.get('product_model') or '모델 미확인'}"
-            self.inquiry_list.addItem(label)
-            self.inquiry_list.item(self.inquiry_list.count() - 1).setData(Qt.ItemDataRole.UserRole, case)
-        if cases:
-            self.inquiry_list.setCurrentRow(0)
-        else:
-            self.inquiry_list.addItem("현재 미답변 문의가 없습니다.")
+        self._loaded_cases = cases
+        self.apply_case_filters()
 
     def load_sample_cases(self) -> None:
         samples = [
@@ -254,6 +367,7 @@ class CsManagementDialog(QDialog):
         self.question.setPlainText(str(case.get("question") or ""))
         self.order_context.setPlainText(
             f"주문번호: {case.get('product_order_id') or '미확인'}\n"
+            f"판매처: {self._marketplace_name(self.current_marketplace)}\n"
             f"제품 모델: {case.get('product_model') or '미확인'}\n"
             f"상품명: {case.get('category') or '미확인'}\n"
             f"채널: {case.get('channel') or '미확인'}"

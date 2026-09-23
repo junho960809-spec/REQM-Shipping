@@ -24,7 +24,7 @@ from main import (
     repair_shortcuts_on_startup,
     update_shortcuts_powershell,
 )
-from cs_dialog import CsManagementDialog
+from cs_dialog import CsManagementDialog, MarketplaceSelectionDialog
 from integration_account_dialog import IntegrationAccountDialog
 
 
@@ -69,6 +69,13 @@ class DashboardNavigationTests(unittest.TestCase):
             self.assertEqual(button.height(), 68)
             self.assertEqual(button.width(), expected_width)
             self.assertLess(button.width(), 300)
+
+    def test_cs_and_as_daily_cards_are_adjacent_on_second_row(self) -> None:
+        layout = self.window.dashboard_cards_layout
+        cs_index = layout.indexOf(self.window.dashboard_cards[5])
+        as_index = layout.indexOf(self.window.dashboard_cards[2])
+        self.assertEqual(layout.getItemPosition(cs_index)[:2], (1, 0))
+        self.assertEqual(layout.getItemPosition(as_index)[:2], (1, 1))
 
     def test_release_spec_includes_all_runtime_assets(self) -> None:
         root = Path(__file__).resolve().parents[1]
@@ -244,6 +251,15 @@ class DashboardNavigationTests(unittest.TestCase):
         self.assertFalse(dialog.sync_button.isEnabled())
         self.assertTrue(dialog.convert_button.isEnabled())
         self.assertFalse(dialog.send_button.isEnabled())
+        dialog.close()
+
+    def test_marketplace_popup_lists_current_and_future_sales_channels(self) -> None:
+        dialog = MarketplaceSelectionDialog("naver")
+        labels = [dialog.market_list.item(index).text() for index in range(dialog.market_list.count())]
+        self.assertTrue(any("네이버 스마트스토어" in label for label in labels))
+        self.assertTrue(any("쿠팡" in label for label in labels))
+        self.assertTrue(any("11번가" in label for label in labels))
+        self.assertTrue(any("전체 판매처" in label for label in labels))
         dialog.close()
 
     def test_cs_dialog_sample_can_be_converted_without_naver_credentials(self) -> None:

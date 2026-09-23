@@ -121,7 +121,7 @@ DEFAULT_CONFIG = {
     },
 }
 ADMIN_USER_ID = "c7937d51-1a14-47aa-987e-6254c6c79014"
-APP_VERSION = "1.4.7"
+APP_VERSION = "1.4.8"
 TEST_MODE = os.getenv("REQM_TEST_MODE", "").strip().casefold() in {"1", "true", "yes"}
 UPDATE_BASE_URL = "https://jcslohuraqclhryeqxoc.supabase.co/storage/v1/object/public/reqm-updates"
 UPDATE_MANIFEST_URL = f"{UPDATE_BASE_URL}/manifest.json"
@@ -3578,11 +3578,12 @@ class MainWindow(QMainWindow):
         card_alignment = Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop
         cards.addWidget(shipment, 0, 0, card_alignment)
         cards.addWidget(inventory, 0, 1, card_alignment)
-        cards.addWidget(as_daily, 0, 2, card_alignment)
-        cards.addWidget(weekly_inventory, 0, 3, card_alignment)
-        cards.addWidget(print_order, 0, 4, card_alignment)
+        cards.addWidget(weekly_inventory, 0, 2, card_alignment)
+        cards.addWidget(print_order, 0, 3, card_alignment)
         cards.addWidget(cs_management, 1, 0, card_alignment)
+        cards.addWidget(as_daily, 1, 1, card_alignment)
         cards.setColumnStretch(5, 1)
+        self.dashboard_cards_layout = cards
         self.dashboard_cards = [shipment, inventory, as_daily, weekly_inventory, print_order, cs_management]
         layout.addLayout(cards)
 
