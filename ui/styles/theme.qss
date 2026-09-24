@@ -118,6 +118,29 @@ QFrame#dashboardStatusCard[tone="warning"] { border-left: 4px solid #d88920; }
 QLabel#dashboardStatusName { color: #667482; font-size: 11px; font-weight: 700; }
 QLabel#dashboardStatusValue { color: #172431; font-size: 21px; font-weight: 900; }
 QLabel#dashboardStatusDetail { color: #88949f; font-size: 10px; }
+QFrame#closedMallCard {
+    background: #ffffff;
+    border: 1px solid #dbe3e8;
+    border-radius: 12px;
+}
+QFrame#closedMallCard:hover { border: 1px solid #72aaa1; background: #fbfefd; }
+QLabel#closedMallName { color: #172431; font-size: 15px; font-weight: 900; }
+QLabel#closedMallAuth {
+    color: #52616d;
+    background: #edf1f4;
+    border-radius: 8px;
+    padding: 4px 7px;
+    font-size: 10px;
+    font-weight: 800;
+}
+QLabel#closedMallAuth[phone="true"] { color: #a65c00; background: #fff0d8; }
+QLabel#closedMallStatus { color: #74818c; font-size: 11px; padding: 2px 0; }
+QPushButton#closedMallAuthDone {
+    color: #1769c2;
+    background: #e6f2ff;
+    border-color: #bed9f5;
+    padding: 6px 9px;
+}
 
 QTableWidget {
     background: #ffffff;

@@ -42,11 +42,20 @@ class DashboardNavigationTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.window.close()
 
-    def test_dashboard_has_shipping_and_inventory_cards(self) -> None:
+    def test_dashboard_replaces_work_cards_with_closed_mall_launcher(self) -> None:
+        self.assertEqual(self.window.dashboard_cards, [])
+        self.assertEqual(self.window.dashboard_status_cards, [])
         self.assertEqual(
-            [button.text() for button in self.window.dashboard_cards],
-            ["📦  출고 파일 변환", "▤  재고 조회", "🛠  AS 일일 현황", "▦  주간 재고조사", "▣  인쇄 발주 관리", "▣  CS 관리"],
+            [button.text() for button in self.window.dashboard_nav_buttons],
+            ["▦  폐쇄몰 접속", "▣  출고 관리", "▤  송장 관리", "▥  재고 관리", "▦  주간 재고조사", "▣  인쇄 발주", "▣  CS 관리", "🛠  AS 관리"],
         )
+
+    def test_phone_authenticated_closed_malls_are_registered(self) -> None:
+        phone_sites = {
+            site["name"] for site in self.window.closed_mall_launcher.sites
+            if site["auth_type"] == "phone"
+        }
+        self.assertEqual(phone_sites, {"이알아이", "삼성쇼핑몰", "한섬", "SSF", "마켓컬리", "핫트랙스(교보문고)"})
 
     def test_wisely_order_button_uses_short_label(self) -> None:
         self.assertEqual(self.window.wisely_mail_button.text(), "와이즐리 주문")
@@ -70,12 +79,11 @@ class DashboardNavigationTests(unittest.TestCase):
             self.assertEqual(button.width(), expected_width)
             self.assertLess(button.width(), 300)
 
-    def test_cs_and_as_daily_cards_are_adjacent_on_second_row(self) -> None:
+    def test_closed_mall_launcher_shows_four_sites_per_row(self) -> None:
         layout = self.window.dashboard_cards_layout
-        cs_index = layout.indexOf(self.window.dashboard_cards[5])
-        as_index = layout.indexOf(self.window.dashboard_cards[2])
-        self.assertEqual(layout.getItemPosition(cs_index)[:2], (1, 0))
-        self.assertEqual(layout.getItemPosition(as_index)[:2], (1, 1))
+        self.assertEqual(layout.getItemPosition(0)[:2], (0, 0))
+        self.assertEqual(layout.getItemPosition(3)[:2], (0, 3))
+        self.assertEqual(layout.getItemPosition(4)[:2], (1, 0))
 
     def test_release_spec_includes_all_runtime_assets(self) -> None:
         root = Path(__file__).resolve().parents[1]
@@ -194,7 +202,7 @@ class DashboardNavigationTests(unittest.TestCase):
         self.assertFalse(self.window.windowIcon().isNull())
 
     def test_shipping_card_opens_shipping_workspace(self) -> None:
-        self.window.dashboard_cards[0].click()
+        self.window.dashboard_nav_buttons[1].click()
         self.assertIs(self.window.page_stack.currentWidget(), self.window.work_page)
 
     def test_shipping_analysis_table_reads_from_order_to_conversion(self) -> None:
@@ -218,20 +226,20 @@ class DashboardNavigationTests(unittest.TestCase):
 
     def test_inventory_card_opens_preview_dialog(self) -> None:
         with patch.object(InventoryPreviewDialog, "exec", return_value=0) as opened:
-            self.window.dashboard_cards[1].click()
+            self.window.dashboard_nav_buttons[3].click()
         opened.assert_called_once()
 
     def test_weekly_inventory_card_opens_dialog(self) -> None:
         with patch("main.InventoryDialog") as dialog_class:
             dialog_class.return_value.exec.return_value = 0
-            self.window.dashboard_cards[3].click()
+            self.window.dashboard_nav_buttons[4].click()
         dialog_class.assert_called_once()
         dialog_class.return_value.exec.assert_called_once()
 
     def test_print_order_card_opens_management_window(self) -> None:
         with patch("main.PrintOrderWindow") as window_class:
             print_window = window_class.return_value
-            self.window.dashboard_cards[4].click()
+            self.window.dashboard_nav_buttons[5].click()
         window_class.assert_called_once_with(self.window, catalog_items=[])
         print_window.show.assert_called_once()
         print_window.raise_.assert_called_once()
@@ -240,7 +248,7 @@ class DashboardNavigationTests(unittest.TestCase):
     def test_cs_card_opens_shared_draft_workspace(self) -> None:
         with patch("main.CsManagementDialog") as dialog_class:
             dialog = dialog_class.return_value
-            self.window.dashboard_cards[5].click()
+            self.window.dashboard_nav_buttons[6].click()
         dialog_class.assert_called_once_with(self.window, supabase_client=self.window.supabase_client)
         dialog.show.assert_called_once()
         dialog.raise_.assert_called_once()

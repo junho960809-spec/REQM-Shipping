@@ -15,8 +15,8 @@ from datetime import datetime
 from urllib.parse import quote
 from pathlib import Path
 
-from PySide6.QtCore import QDate, QTime, Qt, QThread, Signal, QTimer
-from PySide6.QtGui import QAction, QColor, QFont, QIcon, QKeySequence, QPainter, QPixmap, QTextCharFormat
+from PySide6.QtCore import QDate, QTime, QUrl, Qt, QThread, Signal, QTimer
+from PySide6.QtGui import QAction, QColor, QDesktopServices, QFont, QIcon, QKeySequence, QPainter, QPixmap, QTextCharFormat
 from PySide6.QtWidgets import (
     QApplication,
     QAbstractSpinBox,
@@ -121,15 +121,188 @@ DEFAULT_CONFIG = {
     },
 }
 ADMIN_USER_ID = "c7937d51-1a14-47aa-987e-6254c6c79014"
-APP_VERSION = "1.5.0"
+APP_VERSION = "1.5.1"
 TEST_MODE = os.getenv("REQM_TEST_MODE", "").strip().casefold() in {"1", "true", "yes"}
 UPDATE_BASE_URL = "https://jcslohuraqclhryeqxoc.supabase.co/storage/v1/object/public/reqm-updates"
 UPDATE_MANIFEST_URL = f"{UPDATE_BASE_URL}/manifest.json"
 RECENT_WORK_PATH = Path(os.getenv("LOCALAPPDATA", str(Path.home()))) / "REQM" / "recent_work.json"
 CALENDAR_EVENT_PATH = Path(os.getenv("LOCALAPPDATA", str(Path.home()))) / "REQM" / "calendar_events.json"
 WIDGET_SETTINGS_PATH = Path(os.getenv("LOCALAPPDATA", str(Path.home()))) / "REQM" / "widget_settings.json"
+CLOSED_MALL_SETTINGS_PATH = Path(os.getenv("LOCALAPPDATA", str(Path.home()))) / "REQM" / "closed_malls.json"
 CALENDAR_ATTACHMENT_BUCKET = "calendar-attachments"
 MAX_CALENDAR_ATTACHMENT_SIZE = 20 * 1024 * 1024
+
+CLOSED_MALL_DEFAULTS = (
+    ("이알아이", "phone"),
+    ("삼성쇼핑몰", "phone"),
+    ("한섬", "phone"),
+    ("SSF", "phone"),
+    ("마켓컬리", "phone"),
+    ("핫트랙스(교보문고)", "phone"),
+    ("29CM", "manual"),
+    ("무신사", "manual"),
+    ("현대홈쇼핑", "manual"),
+    ("이지웰", "manual"),
+    ("이제너두", "manual"),
+    ("삼성복지몰", "manual"),
+)
+
+
+def load_closed_malls() -> list[dict]:
+    saved: dict[str, dict] = {}
+    try:
+        rows = json.loads(CLOSED_MALL_SETTINGS_PATH.read_text(encoding="utf-8"))
+        saved = {str(row.get("name")): dict(row) for row in rows if isinstance(row, dict)}
+    except (OSError, ValueError, TypeError):
+        pass
+    result = []
+    for name, auth_type in CLOSED_MALL_DEFAULTS:
+        row = saved.get(name, {})
+        result.append({
+            "name": name,
+            "auth_type": auth_type,
+            "login_url": str(row.get("login_url") or "").strip(),
+            "order_url": str(row.get("order_url") or "").strip(),
+            "tracking_url": str(row.get("tracking_url") or "").strip(),
+            "enabled": bool(row.get("enabled", True)),
+        })
+    return result
+
+
+def save_closed_malls(rows: list[dict]) -> None:
+    CLOSED_MALL_SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    CLOSED_MALL_SETTINGS_PATH.write_text(
+        json.dumps(rows, ensure_ascii=False, indent=2), encoding="utf-8",
+    )
+
+
+class ClosedMallSettingsDialog(QDialog):
+    def __init__(self, sites: list[dict], parent=None) -> None:
+        super().__init__(parent)
+        self.sites = [dict(row) for row in sites]
+        self.setWindowTitle("폐쇄몰 사이트 관리")
+        self.resize(1080, 660)
+        title = QLabel("폐쇄몰 사이트 관리"); title.setObjectName("dialogTitle")
+        guide = QLabel("로그인·주문관리·송장등록 주소를 등록하면 메인 화면에서 바로 열 수 있습니다.")
+        guide.setObjectName("dialogGuide")
+        self.table = QTableWidget(len(self.sites), 6)
+        self.table.setHorizontalHeaderLabels(["사용", "판매처", "인증 방식", "로그인 주소", "주문관리 주소", "송장등록 주소"])
+        self.table.verticalHeader().setVisible(False)
+        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        for row_index, site in enumerate(self.sites):
+            enabled = QCheckBox(); enabled.setChecked(bool(site.get("enabled", True)))
+            self.table.setCellWidget(row_index, 0, enabled)
+            name = QTableWidgetItem(str(site.get("name") or "")); name.setFlags(name.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            auth = QTableWidgetItem("휴대폰 인증" if site.get("auth_type") == "phone" else "일반/별도 확인")
+            auth.setFlags(auth.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            self.table.setItem(row_index, 1, name); self.table.setItem(row_index, 2, auth)
+            for column, key in ((3, "login_url"), (4, "order_url"), (5, "tracking_url")):
+                self.table.setItem(row_index, column, QTableWidgetItem(str(site.get(key) or "")))
+        self.table.horizontalHeader().setStretchLastSection(True)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(self.accept); buttons.rejected.connect(self.reject)
+        layout = QVBoxLayout(self); layout.addWidget(title); layout.addWidget(guide); layout.addWidget(self.table, 1); layout.addWidget(buttons)
+
+    def values(self) -> list[dict]:
+        result = []
+        for index, original in enumerate(self.sites):
+            row = dict(original)
+            row["enabled"] = bool(self.table.cellWidget(index, 0).isChecked())
+            for column, key in ((3, "login_url"), (4, "order_url"), (5, "tracking_url")):
+                row[key] = self.table.item(index, column).text().strip()
+            result.append(row)
+        return result
+
+
+class ClosedMallLauncher(QWidget):
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self.sites = load_closed_malls()
+        self.status_labels: dict[str, QLabel] = {}
+        self.grid = QGridLayout()
+        self.grid.setSpacing(12)
+        self.build()
+
+    def build(self) -> None:
+        layout = QVBoxLayout(self); layout.setContentsMargins(0, 0, 0, 0); layout.setSpacing(12)
+        header = QHBoxLayout()
+        title_box = QVBoxLayout()
+        title = QLabel("폐쇄몰 통합 접속"); title.setObjectName("dashboardSection")
+        guide = QLabel("판매처별 주문관리와 송장등록 화면을 한곳에서 엽니다. 휴대폰 인증은 작업자 입력 후 계속 진행합니다.")
+        guide.setObjectName("dashboardHint")
+        title_box.addWidget(title); title_box.addWidget(guide)
+        header.addLayout(title_box); header.addStretch(1)
+        self.open_orders_button = QPushButton("전체 주문관리 열기")
+        self.open_tracking_button = QPushButton("전체 송장등록 열기")
+        self.settings_button = QPushButton("사이트 관리")
+        self.open_orders_button.clicked.connect(lambda: self.open_all("order_url"))
+        self.open_tracking_button.clicked.connect(lambda: self.open_all("tracking_url"))
+        self.settings_button.clicked.connect(self.manage_sites)
+        header.addWidget(self.open_orders_button); header.addWidget(self.open_tracking_button); header.addWidget(self.settings_button)
+        layout.addLayout(header); layout.addLayout(self.grid); layout.addStretch(1)
+        self.refresh_cards()
+
+    def clear_grid(self) -> None:
+        while self.grid.count():
+            item = self.grid.takeAt(0)
+            if item.widget(): item.widget().deleteLater()
+
+    def refresh_cards(self) -> None:
+        self.clear_grid(); self.status_labels = {}
+        enabled_sites = [site for site in self.sites if site.get("enabled", True)]
+        for index, site in enumerate(enabled_sites):
+            card = QFrame(); card.setObjectName("closedMallCard")
+            box = QVBoxLayout(card); box.setContentsMargins(14, 12, 14, 12); box.setSpacing(7)
+            top = QHBoxLayout()
+            name = QLabel(site["name"]); name.setObjectName("closedMallName")
+            auth = QLabel("휴대폰 인증" if site["auth_type"] == "phone" else "일반 로그인")
+            auth.setObjectName("closedMallAuth"); auth.setProperty("phone", site["auth_type"] == "phone")
+            top.addWidget(name); top.addStretch(1); top.addWidget(auth); box.addLayout(top)
+            status = QLabel("주소 설정 필요" if not any(site.get(key) for key in ("login_url", "order_url", "tracking_url")) else "접속 준비")
+            status.setObjectName("closedMallStatus"); box.addWidget(status)
+            self.status_labels[site["name"]] = status
+            actions = QHBoxLayout()
+            for label, key in (("로그인", "login_url"), ("주문관리", "order_url"), ("송장등록", "tracking_url")):
+                button = QPushButton(label); button.setEnabled(bool(site.get(key)))
+                button.clicked.connect(lambda _checked=False, current=site, url_key=key: self.open_site(current, url_key))
+                actions.addWidget(button)
+            box.addLayout(actions)
+            if site["auth_type"] == "phone":
+                done = QPushButton("휴대폰 인증 완료")
+                done.setObjectName("closedMallAuthDone")
+                done.clicked.connect(lambda _checked=False, current=site: self.mark_authenticated(current))
+                box.addWidget(done)
+            self.grid.addWidget(card, index // 4, index % 4)
+
+    def open_site(self, site: dict, key: str) -> bool:
+        url = str(site.get(key) or "").strip()
+        if not url:
+            QMessageBox.information(self, "사이트 주소 필요", f"{site['name']}의 주소를 사이트 관리에서 먼저 등록해 주세요.")
+            return False
+        if not QUrl(url).isValid() or QUrl(url).scheme() not in {"http", "https"}:
+            QMessageBox.warning(self, "사이트 주소 오류", f"{site['name']} 주소가 올바른 http/https 주소가 아닙니다.")
+            return False
+        QDesktopServices.openUrl(QUrl(url))
+        status = self.status_labels.get(site["name"])
+        if status:
+            status.setText("휴대폰 인증 입력 대기" if site["auth_type"] == "phone" else "사이트 열림")
+        return True
+
+    def open_all(self, key: str) -> None:
+        opened = sum(self.open_site(site, key) for site in self.sites if site.get("enabled", True) and site.get(key))
+        if not opened:
+            QMessageBox.information(self, "등록된 주소 없음", "사이트 관리에서 판매처 주소를 먼저 등록해 주세요.")
+
+    def mark_authenticated(self, site: dict) -> None:
+        status = self.status_labels.get(site["name"])
+        if status: status.setText("인증 완료 · 작업 계속 가능")
+
+    def manage_sites(self) -> None:
+        dialog = ClosedMallSettingsDialog(self.sites, self)
+        if dialog.exec() != QDialog.DialogCode.Accepted: return
+        self.sites = dialog.values(); save_closed_malls(self.sites); self.refresh_cards()
 
 
 def create_app_icon() -> QIcon:
@@ -3500,9 +3673,9 @@ class MainWindow(QMainWindow):
 
         header = QHBoxLayout()
         title_box = QVBoxLayout()
-        title = QLabel("REQM 물류 대시보드")
+        title = QLabel("REQM 판매처 접속 관리")
         title.setObjectName("dashboardTitle")
-        hint = QLabel("필요한 업무를 선택하면 해당 작업 화면이 열립니다.")
+        hint = QLabel("폐쇄몰 주문관리와 송장등록 화면을 한곳에서 관리합니다.")
         hint.setObjectName("dashboardHint")
         title_box.addWidget(title)
         title_box.addWidget(hint)
@@ -3548,77 +3721,11 @@ class MainWindow(QMainWindow):
         header.addWidget(self.dashboard_version, 0, Qt.AlignmentFlag.AlignTop)
         layout.addLayout(header)
 
-        stats = QHBoxLayout()
-        stats.setSpacing(10)
+        self.closed_mall_launcher = ClosedMallLauncher(self)
         self.dashboard_status_cards = []
-        for label, value, detail, tone in (
-            ("출고 검토", "0건", "품목·배송정보 확인", "warning"),
-            ("송장 대기", "0건", "위킵 송장 발급 대기", "normal"),
-            ("CS 미답변", "0건", "네이버 문의 동기화 후 표시", "warning"),
-            ("교환 발송 대기", "0건", "새상품 교환 진행", "normal"),
-            ("연동 상태", "확인", "계정 연결 상태 점검", "normal"),
-        ):
-            card = QFrame()
-            card.setObjectName("dashboardStatusCard")
-            card.setProperty("tone", tone)
-            box = QVBoxLayout(card)
-            box.setContentsMargins(13, 10, 13, 10)
-            box.setSpacing(2)
-            name = QLabel(label); name.setObjectName("dashboardStatusName")
-            count = QLabel(value); count.setObjectName("dashboardStatusValue")
-            note = QLabel(detail); note.setObjectName("dashboardStatusDetail")
-            box.addWidget(name); box.addWidget(count); box.addWidget(note)
-            stats.addWidget(card, 1)
-            self.dashboard_status_cards.append(card)
-        layout.addLayout(stats)
-
-        work_title = QLabel("업무 바로가기")
-        work_title.setObjectName("dashboardSection")
-        layout.addWidget(work_title)
-
-        cards = QGridLayout()
-        cards.setSpacing(16)
-        shipment = self.dashboard_card(
-            "📦  출고 파일 변환",
-            "일반·면세점 주문 파일 분석 · 품목 매칭 · 출고 양식 변환",
-        )
-        shipment.clicked.connect(self.show_shipping_workspace)
-        inventory = self.dashboard_card(
-            "▤  재고 조회",
-            "이카운트 품목별 현재고 · 안전재고 실시간 확인",
-        )
-        inventory.clicked.connect(self.open_inventory_preview)
-        as_daily = self.dashboard_card(
-            "🛠  AS 일일 현황",
-            "AS 사이트 접수 조회 · 교환/반품 일일 엑셀 생성",
-        )
-        as_daily.clicked.connect(self.open_as_daily)
-        weekly_inventory = self.dashboard_card(
-            "▦  주간 재고조사",
-            "본사 실재고 입력 · 위킵 엑셀 반영 · 차이 검토 및 결과 생성",
-        )
-        weekly_inventory.clicked.connect(self.open_weekly_inventory)
-        print_order = self.dashboard_card(
-            "▣  인쇄 발주 관리",
-            "발주 정보 입력 · AI/시안 연결 · 등록 미리보기 및 웹 등록",
-        )
-        print_order.clicked.connect(self.open_print_order)
-        cs_management = self.dashboard_card(
-            "▣  CS 관리",
-            "네이버 문의 확인 · 공용 초안 작성 · 승인 후 답변",
-        )
-        cs_management.clicked.connect(self.open_cs_management)
-        card_alignment = Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop
-        cards.addWidget(shipment, 0, 0, card_alignment)
-        cards.addWidget(inventory, 0, 1, card_alignment)
-        cards.addWidget(weekly_inventory, 0, 2, card_alignment)
-        cards.addWidget(print_order, 0, 3, card_alignment)
-        cards.addWidget(cs_management, 1, 0, card_alignment)
-        cards.addWidget(as_daily, 1, 1, card_alignment)
-        cards.setColumnStretch(5, 1)
-        self.dashboard_cards_layout = cards
-        self.dashboard_cards = [shipment, inventory, as_daily, weekly_inventory, print_order, cs_management]
-        layout.addLayout(cards)
+        self.dashboard_cards_layout = self.closed_mall_launcher.grid
+        self.dashboard_cards = []
+        layout.addWidget(self.closed_mall_launcher, 0)
 
         self.calendar_widget = CalendarDropWidget()
         calendar_header = QHBoxLayout()
@@ -3691,10 +3798,12 @@ class MainWindow(QMainWindow):
         side.addWidget(side_brand)
         side.addWidget(side_caption)
         nav_actions = (
-            ("▦  대시보드", self.show_dashboard, True),
+            ("▦  폐쇄몰 접속", self.show_dashboard, True),
             ("▣  출고 관리", self.show_shipping_workspace, False),
             ("▤  송장 관리", self.open_wekeep_tracking, False),
             ("▥  재고 관리", self.open_inventory_preview, False),
+            ("▦  주간 재고조사", self.open_weekly_inventory, False),
+            ("▣  인쇄 발주", self.open_print_order, False),
             ("▣  CS 관리", self.open_cs_management, False),
             ("🛠  AS 관리", self.open_as_daily, False),
         )
