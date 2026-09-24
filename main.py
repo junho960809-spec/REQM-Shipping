@@ -121,7 +121,7 @@ DEFAULT_CONFIG = {
     },
 }
 ADMIN_USER_ID = "c7937d51-1a14-47aa-987e-6254c6c79014"
-APP_VERSION = "1.4.9"
+APP_VERSION = "1.5.0"
 TEST_MODE = os.getenv("REQM_TEST_MODE", "").strip().casefold() in {"1", "true", "yes"}
 UPDATE_BASE_URL = "https://jcslohuraqclhryeqxoc.supabase.co/storage/v1/object/public/reqm-updates"
 UPDATE_MANIFEST_URL = f"{UPDATE_BASE_URL}/manifest.json"
@@ -3489,8 +3489,13 @@ class MainWindow(QMainWindow):
     def build_dashboard_page(self) -> QWidget:
         page = QWidget()
         page.setObjectName("mainContainer")
-        layout = QVBoxLayout(page)
-        layout.setContentsMargins(34, 28, 34, 28)
+        root_layout = QHBoxLayout(page)
+        root_layout.setContentsMargins(0, 0, 0, 0)
+        root_layout.setSpacing(0)
+        content = QWidget()
+        content.setObjectName("dashboardContent")
+        layout = QVBoxLayout(content)
+        layout.setContentsMargins(28, 22, 28, 22)
         layout.setSpacing(14)
 
         header = QHBoxLayout()
@@ -3542,6 +3547,34 @@ class MainWindow(QMainWindow):
         header.addWidget(self.dashboard_update_button, 0, Qt.AlignmentFlag.AlignTop)
         header.addWidget(self.dashboard_version, 0, Qt.AlignmentFlag.AlignTop)
         layout.addLayout(header)
+
+        stats = QHBoxLayout()
+        stats.setSpacing(10)
+        self.dashboard_status_cards = []
+        for label, value, detail, tone in (
+            ("출고 검토", "0건", "품목·배송정보 확인", "warning"),
+            ("송장 대기", "0건", "위킵 송장 발급 대기", "normal"),
+            ("CS 미답변", "0건", "네이버 문의 동기화 후 표시", "warning"),
+            ("교환 발송 대기", "0건", "새상품 교환 진행", "normal"),
+            ("연동 상태", "확인", "계정 연결 상태 점검", "normal"),
+        ):
+            card = QFrame()
+            card.setObjectName("dashboardStatusCard")
+            card.setProperty("tone", tone)
+            box = QVBoxLayout(card)
+            box.setContentsMargins(13, 10, 13, 10)
+            box.setSpacing(2)
+            name = QLabel(label); name.setObjectName("dashboardStatusName")
+            count = QLabel(value); count.setObjectName("dashboardStatusValue")
+            note = QLabel(detail); note.setObjectName("dashboardStatusDetail")
+            box.addWidget(name); box.addWidget(count); box.addWidget(note)
+            stats.addWidget(card, 1)
+            self.dashboard_status_cards.append(card)
+        layout.addLayout(stats)
+
+        work_title = QLabel("업무 바로가기")
+        work_title.setObjectName("dashboardSection")
+        layout.addWidget(work_title)
 
         cards = QGridLayout()
         cards.setSpacing(16)
@@ -3644,6 +3677,51 @@ class MainWindow(QMainWindow):
         self.calendar_events = load_calendar_events()
         self.highlighted_event_dates: set[str] = set()
         self.refresh_calendar_display()
+
+        sidebar = QFrame()
+        sidebar.setObjectName("dashboardSidebar")
+        sidebar.setFixedWidth(188)
+        side = QVBoxLayout(sidebar)
+        side.setContentsMargins(11, 18, 11, 16)
+        side.setSpacing(5)
+        side_brand = QLabel("REQM")
+        side_brand.setObjectName("dashboardSidebarBrand")
+        side_caption = QLabel("업무 메뉴")
+        side_caption.setObjectName("dashboardSidebarCaption")
+        side.addWidget(side_brand)
+        side.addWidget(side_caption)
+        nav_actions = (
+            ("▦  대시보드", self.show_dashboard, True),
+            ("▣  출고 관리", self.show_shipping_workspace, False),
+            ("▤  송장 관리", self.open_wekeep_tracking, False),
+            ("▥  재고 관리", self.open_inventory_preview, False),
+            ("▣  CS 관리", self.open_cs_management, False),
+            ("🛠  AS 관리", self.open_as_daily, False),
+        )
+        self.dashboard_nav_buttons = []
+        for label, action, selected in nav_actions:
+            button = QPushButton(label)
+            button.setObjectName("dashboardNavButton")
+            button.setProperty("selected", selected)
+            button.clicked.connect(action)
+            side.addWidget(button)
+            self.dashboard_nav_buttons.append(button)
+        side.addSpacing(14)
+        system_caption = QLabel("시스템")
+        system_caption.setObjectName("dashboardSidebarCaption")
+        side.addWidget(system_caption)
+        for label, action in (
+            ("◫  DB 관리", self.open_db_manager),
+            ("⚙  연동 설정", self.open_integration_accounts),
+            ("⇧  업데이트", self.check_for_updates),
+        ):
+            button = QPushButton(label)
+            button.setObjectName("dashboardNavButton")
+            button.clicked.connect(action)
+            side.addWidget(button)
+        side.addStretch(1)
+        root_layout.addWidget(sidebar)
+        root_layout.addWidget(content, 1)
         return page
 
     def change_calendar_month(self) -> None:

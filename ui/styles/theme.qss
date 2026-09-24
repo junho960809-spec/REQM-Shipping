@@ -80,6 +80,45 @@ QPushButton#dashboardCard {
 }
 QPushButton#dashboardCard:hover { background: #eaf7f4; border: 2px solid #47b8ab; }
 
+QWidget#dashboardContent { background: #f3f6f7; }
+QFrame#dashboardSidebar {
+    background: #142331;
+    border: none;
+    border-right: 1px solid #263847;
+}
+QLabel#dashboardSidebarBrand {
+    color: #ffffff;
+    font-size: 23px;
+    font-weight: 900;
+    padding: 3px 10px 15px 10px;
+}
+QLabel#dashboardSidebarCaption {
+    color: #8fa2b2;
+    font-size: 11px;
+    font-weight: 700;
+    padding: 8px 10px 4px 10px;
+}
+QPushButton#dashboardNavButton {
+    background: transparent;
+    color: #d8e1e8;
+    border: none;
+    border-radius: 8px;
+    padding: 11px 12px;
+    text-align: left;
+    font-weight: 700;
+}
+QPushButton#dashboardNavButton:hover { background: #233746; color: #ffffff; }
+QPushButton#dashboardNavButton[selected="true"] { background: #e6f2ff; color: #1769c2; }
+QFrame#dashboardStatusCard {
+    background: #ffffff;
+    border: 1px solid #dbe3e8;
+    border-radius: 12px;
+}
+QFrame#dashboardStatusCard[tone="warning"] { border-left: 4px solid #d88920; }
+QLabel#dashboardStatusName { color: #667482; font-size: 11px; font-weight: 700; }
+QLabel#dashboardStatusValue { color: #172431; font-size: 21px; font-weight: 900; }
+QLabel#dashboardStatusDetail { color: #88949f; font-size: 10px; }
+
 QTableWidget {
     background: #ffffff;
     alternate-background-color: #f7faf9;
