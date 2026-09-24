@@ -8,8 +8,11 @@ from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
+    QDialogButtonBox,
+    QFormLayout,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QMessageBox,
     QPushButton,
     QTableWidget,
@@ -38,6 +41,64 @@ class WeKeepSubmissionWorker(QThread):
             self.succeeded.emit(run_wekeep_job(self.job_id, self.db_path))
         except Exception as exc:
             self.failed.emit(self.job_id, str(exc))
+
+
+EDITABLE_ORDER_FIELDS = (
+    ("order_number", "주문번호"),
+    ("channel", "판매처"),
+    ("recipient", "수령인"),
+    ("phone", "연락처"),
+    ("zipcode", "우편번호"),
+    ("address", "주소"),
+    ("message", "배송메시지"),
+    ("product_name", "원본 상품명"),
+    ("options", "원본 옵션"),
+    ("quantity", "주문 수량"),
+)
+
+
+def delivery_group_labels(rows: list[dict]) -> list[str]:
+    """Mark rows sharing one delivery destination without treating them as duplicates."""
+    keys = [(
+        str(row.get("recipient") or "").strip().casefold(),
+        "".join(ch for ch in str(row.get("phone") or "") if ch.isdigit()),
+        str(row.get("zipcode") or "").strip(),
+        " ".join(str(row.get("address") or "").split()).casefold(),
+    ) for row in rows]
+    counts: dict[tuple[str, str, str, str], int] = {}
+    for key in keys:
+        if any(key):
+            counts[key] = counts.get(key, 0) + 1
+    return [f"묶음 {counts[key]}행" if counts.get(key, 0) > 1 else "단일" for key in keys]
+
+
+class OrderInformationDialog(QDialog):
+    def __init__(self, order: dict, parent=None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("출고 주문정보 수정")
+        self.resize(620, 520)
+        title = QLabel("위킵에 전송할 주문정보를 수정합니다")
+        title.setObjectName("dialogTitle")
+        guide = QLabel("수정한 주소·연락처·수량은 현재 출고 작업과 최종 송장 Excel에 반영됩니다.")
+        guide.setWordWrap(True)
+        form = QFormLayout()
+        self.inputs: dict[str, QLineEdit] = {}
+        for key, label in EDITABLE_ORDER_FIELDS:
+            editor = QLineEdit(str(order.get(key) or ""))
+            self.inputs[key] = editor
+            form.addRow(label, editor)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout = QVBoxLayout(self)
+        layout.addWidget(title)
+        layout.addWidget(guide)
+        layout.addLayout(form)
+        layout.addStretch(1)
+        layout.addWidget(buttons)
+
+    def values(self) -> dict[str, str]:
+        return {key: editor.text().strip() for key, editor in self.inputs.items()}
 
 
 class WeKeepTransferDialog(QDialog):
@@ -89,20 +150,26 @@ class WeKeepTransferDialog(QDialog):
         top.addWidget(self.summary)
 
         headers = [
-            "상태", "주문번호", "수령인", "원본 상품", "변환 상품명",
-            "위킵 등록 상품명", "내부 품목코드", "위킵 SKU", "바코드", "수량", "확인 내용",
+            "배송 묶음", "상태", "판매처", "주문번호", "수령인", "연락처", "우편번호", "주소",
+            "원본 상품", "원본 옵션", "변환 상품명", "위킵 등록 상품명",
+            "내부 품목코드", "위킵 SKU", "바코드", "수량", "확인 내용",
         ]
         self.table = QTableWidget(0, len(headers))
         self.table.setHorizontalHeaderLabels(headers)
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.table.setAlternatingRowColors(True)
         self.table.verticalHeader().setVisible(False)
-        self.table.cellDoubleClicked.connect(self.edit_problem_row)
+        self.table.cellDoubleClicked.connect(self.edit_selected_order)
+
+        self.edit_order_button = QPushButton("선택 주문정보 수정")
+        self.edit_product_button = QPushButton("선택 품목 변환 수정")
 
         self.open_button = QPushButton(text("wekeep.preview.submit"))
         self.open_button.setObjectName("primaryButton")
         self.close_button = QPushButton(text("common.close"))
         buttons = QHBoxLayout()
+        buttons.addWidget(self.edit_order_button)
+        buttons.addWidget(self.edit_product_button)
         buttons.addStretch(1)
         buttons.addWidget(self.close_button)
         buttons.addWidget(self.open_button)
@@ -116,6 +183,8 @@ class WeKeepTransferDialog(QDialog):
 
         self.kind.currentIndexChanged.connect(self.refresh)
         self.open_button.clicked.connect(self.open_wekeep)
+        self.edit_order_button.clicked.connect(self.edit_selected_order)
+        self.edit_product_button.clicked.connect(self.edit_selected_product)
         self.close_button.clicked.connect(self.accept)
         self.refresh()
 
@@ -140,13 +209,20 @@ class WeKeepTransferDialog(QDialog):
         self.summary.setText(f"전체 {counts['total']:,}행 · 준비 {counts['ready']:,} · 검토 필요 {counts['review']:,}")
         self.open_button.setEnabled(bool(self.rows) and counts["review"] == 0)
         self.table.setRowCount(len(self.rows))
+        group_labels = delivery_group_labels(self.rows)
         for row_index, row in enumerate(self.rows):
             ready = row.get("state") == "ready"
             values = [
+                group_labels[row_index],
                 "준비 완료" if ready else "검토 필요",
+                row.get("channel", ""),
                 row.get("order_number", ""),
                 row.get("recipient", ""),
+                row.get("phone", ""),
+                row.get("zipcode", ""),
+                row.get("address", ""),
                 row.get("source_product_name", ""),
+                row.get("options", ""),
                 row.get("standard_product_name", "") or row.get("converted_product_name", ""),
                 row.get("wekeep_product_name", ""),
                 row.get("item_code", ""),
@@ -158,10 +234,39 @@ class WeKeepTransferDialog(QDialog):
             color = QColor("#d9ead3") if ready else QColor("#fce5cd")
             for column, value in enumerate(values):
                 item = QTableWidgetItem(str(value))
-                item.setBackground(color)
+                item.setBackground(QColor("#dbeafe") if column == 0 and group_labels[row_index] != "단일" else color)
                 item.setToolTip(str(value))
                 self.table.setItem(row_index, column, item)
         self.table.resizeColumnsToContents()
+
+    def selected_source_index(self) -> int:
+        row_index = self.table.currentRow()
+        if not (0 <= row_index < len(self.rows)):
+            return -1
+        return int(self.rows[row_index].get("source_index", -1))
+
+    def edit_selected_order(self, *_args) -> None:
+        source_index = self.selected_source_index()
+        if not (0 <= source_index < len(self.orders)):
+            QMessageBox.information(self, "주문 선택", "수정할 주문 행을 먼저 선택해 주세요.")
+            return
+        dialog = OrderInformationDialog(self.orders[source_index], self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        self.orders[source_index].update(dialog.values())
+        parent = self.parent()
+        if parent is not None and hasattr(parent, "mark_duplicates"):
+            parent.mark_duplicates(self.orders)
+        self.refresh()
+
+    def edit_selected_product(self) -> None:
+        source_index = self.selected_source_index()
+        parent = self.parent()
+        if parent is None or not hasattr(parent, "edit_match") or not (0 <= source_index < len(self.orders)):
+            QMessageBox.information(self, "품목 선택", "수정할 품목 행을 먼저 선택해 주세요.")
+            return
+        parent.edit_match(source_index, 0)
+        self.refresh()
 
     def edit_problem_row(self, row_index: int, _column_index: int) -> None:
         if not (0 <= row_index < len(self.rows)) or self.rows[row_index].get("state") == "ready":

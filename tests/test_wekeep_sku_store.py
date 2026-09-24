@@ -6,9 +6,19 @@ import unittest
 from pathlib import Path
 
 import wekeep_sku_store as store
+from wekeep_transfer_dialog import delivery_group_labels
 
 
 class WeKeepSkuStoreTests(unittest.TestCase):
+    def test_same_customer_multiple_lines_are_marked_as_one_delivery_group(self) -> None:
+        rows = [
+            {"recipient": "홍길동", "phone": "010-1234-5678", "zipcode": "01234", "address": "서울 1", "item_code": "A"},
+            {"recipient": "홍길동", "phone": "01012345678", "zipcode": "01234", "address": "서울  1", "item_code": "A"},
+            {"recipient": "김철수", "phone": "010-0000-0000", "zipcode": "54321", "address": "부산", "item_code": "B"},
+        ]
+
+        self.assertEqual(delivery_group_labels(rows), ["묶음 2행", "묶음 2행", "단일"])
+
     def test_bundled_mapping_keeps_only_requested_acone_a_variants(self) -> None:
         rows = store.load_wekeep_sku_mappings(local_path=Path("__missing__"))
         by_code = {row["item_code"]: row for row in rows}

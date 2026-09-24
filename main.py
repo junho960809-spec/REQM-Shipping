@@ -121,7 +121,7 @@ DEFAULT_CONFIG = {
     },
 }
 ADMIN_USER_ID = "c7937d51-1a14-47aa-987e-6254c6c79014"
-APP_VERSION = "1.4.8"
+APP_VERSION = "1.4.9"
 TEST_MODE = os.getenv("REQM_TEST_MODE", "").strip().casefold() in {"1", "true", "yes"}
 UPDATE_BASE_URL = "https://jcslohuraqclhryeqxoc.supabase.co/storage/v1/object/public/reqm-updates"
 UPDATE_MANIFEST_URL = f"{UPDATE_BASE_URL}/manifest.json"
@@ -4966,8 +4966,8 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "별칭 일괄 저장 실패", f"현재 파일에는 적용했지만 DB 저장에 실패했습니다.\n{exc}")
 
     def mark_duplicates(self, orders: list[dict[str, str]]) -> None:
-        """합포장은 허용하고, 동일 주문의 동일 상품 행만 중복으로 표시한다."""
-        seen, shipped = set(), set()
+        """Allow repeated lines in the current order file; block only previously shipped lines."""
+        shipped = set()
         try:
             numbers = [r.get("order_number", "") for r in orders if r.get("order_number")]
             if numbers:
@@ -4980,12 +4980,11 @@ class MainWindow(QMainWindow):
                 row["status"] = row.pop("_pre_duplicate_status")
                 row["reason"] = row.pop("_pre_duplicate_reason", "")
             key = self.duplicate_key(row)
-            if key and (key in seen or key in shipped):
+            if key and key in shipped:
                 row["_pre_duplicate_status"] = row.get("status", "")
                 row["_pre_duplicate_reason"] = row.get("reason", "")
                 row["status"] = "duplicate"
-                row["reason"] = "동일 주문·수령정보·상품 행이 현재 파일에서 반복됨" if key in seen else "동일 출고 행이 이전 출고 이력에 있음"
-            if key: seen.add(key)
+                row["reason"] = "동일 출고 행이 이전 출고 이력에 있음"
 
     @staticmethod
     def duplicate_key(row: dict[str, str]) -> str:
