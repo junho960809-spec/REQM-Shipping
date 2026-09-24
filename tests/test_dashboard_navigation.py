@@ -26,6 +26,7 @@ from main import (
 )
 from cs_dialog import CsManagementDialog, MarketplaceSelectionDialog
 from integration_account_dialog import IntegrationAccountDialog
+from print_order_window import PrintOrderWindow
 
 
 class DashboardNavigationTests(unittest.TestCase):
@@ -225,34 +226,23 @@ class DashboardNavigationTests(unittest.TestCase):
         self.assertEqual(self.window.table.item(0, 9).text(), "정확")
 
     def test_inventory_card_opens_preview_dialog(self) -> None:
-        with patch.object(InventoryPreviewDialog, "exec", return_value=0) as opened:
-            self.window.dashboard_nav_buttons[3].click()
-        opened.assert_called_once()
+        self.window.dashboard_nav_buttons[3].click()
+        self.assertIsInstance(self.window.page_stack.currentWidget(), InventoryPreviewDialog)
+        self.assertIs(self.window.page_stack.currentWidget(), self.window.embedded_pages["inventory"])
 
     def test_weekly_inventory_card_opens_dialog(self) -> None:
-        with patch("main.InventoryDialog") as dialog_class:
-            dialog_class.return_value.exec.return_value = 0
-            self.window.dashboard_nav_buttons[4].click()
-        dialog_class.assert_called_once()
-        dialog_class.return_value.exec.assert_called_once()
+        self.window.dashboard_nav_buttons[4].click()
+        self.assertIs(self.window.page_stack.currentWidget(), self.window.embedded_pages["weekly_inventory"])
 
     def test_print_order_card_opens_management_window(self) -> None:
-        with patch("main.PrintOrderWindow") as window_class:
-            print_window = window_class.return_value
-            self.window.dashboard_nav_buttons[5].click()
-        window_class.assert_called_once_with(self.window, catalog_items=[])
-        print_window.show.assert_called_once()
-        print_window.raise_.assert_called_once()
-        print_window.activateWindow.assert_called_once()
+        self.window.dashboard_nav_buttons[5].click()
+        self.assertIsInstance(self.window.page_stack.currentWidget(), PrintOrderWindow)
+        self.assertIs(self.window.page_stack.currentWidget(), self.window.embedded_pages["print_order"])
 
     def test_cs_card_opens_shared_draft_workspace(self) -> None:
-        with patch("main.CsManagementDialog") as dialog_class:
-            dialog = dialog_class.return_value
-            self.window.dashboard_nav_buttons[6].click()
-        dialog_class.assert_called_once_with(self.window, supabase_client=self.window.supabase_client)
-        dialog.show.assert_called_once()
-        dialog.raise_.assert_called_once()
-        dialog.activateWindow.assert_called_once()
+        self.window.dashboard_nav_buttons[6].click()
+        self.assertIsInstance(self.window.page_stack.currentWidget(), CsManagementDialog)
+        self.assertIs(self.window.page_stack.currentWidget(), self.window.embedded_pages["cs"])
 
     def test_cs_dialog_keeps_naver_actions_disabled_before_api_connection(self) -> None:
         dialog = CsManagementDialog()

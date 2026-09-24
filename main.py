@@ -121,7 +121,7 @@ DEFAULT_CONFIG = {
     },
 }
 ADMIN_USER_ID = "c7937d51-1a14-47aa-987e-6254c6c79014"
-APP_VERSION = "1.5.1"
+APP_VERSION = "1.5.2"
 TEST_MODE = os.getenv("REQM_TEST_MODE", "").strip().casefold() in {"1", "true", "yes"}
 UPDATE_BASE_URL = "https://jcslohuraqclhryeqxoc.supabase.co/storage/v1/object/public/reqm-updates"
 UPDATE_MANIFEST_URL = f"{UPDATE_BASE_URL}/manifest.json"
@@ -3276,6 +3276,7 @@ class MainWindow(QMainWindow):
         self.mini_widgets: dict[str, BaseMiniWidget] = {}
         self.print_order_window = None
         self.cs_management_dialog = None
+        self.embedded_pages: dict[str, QWidget] = {}
         self.matcher = None
         self.supabase_client = None
         self.catalog: dict = {}
@@ -3566,7 +3567,14 @@ class MainWindow(QMainWindow):
         self.page_stack = QStackedWidget()
         self.page_stack.addWidget(self.dashboard_page)
         self.page_stack.addWidget(self.work_page)
-        self.setCentralWidget(self.page_stack)
+        shell = QWidget()
+        shell.setObjectName("mainShell")
+        shell_layout = QHBoxLayout(shell)
+        shell_layout.setContentsMargins(0, 0, 0, 0)
+        shell_layout.setSpacing(0)
+        shell_layout.addWidget(self.navigation_sidebar)
+        shell_layout.addWidget(self.page_stack, 1)
+        self.setCentralWidget(shell)
         self.page_stack.setCurrentWidget(self.dashboard_page)
         for button in self.dashboard_cards:
             button.ensurePolished()
@@ -3661,13 +3669,8 @@ class MainWindow(QMainWindow):
 
     def build_dashboard_page(self) -> QWidget:
         page = QWidget()
-        page.setObjectName("mainContainer")
-        root_layout = QHBoxLayout(page)
-        root_layout.setContentsMargins(0, 0, 0, 0)
-        root_layout.setSpacing(0)
-        content = QWidget()
-        content.setObjectName("dashboardContent")
-        layout = QVBoxLayout(content)
+        page.setObjectName("dashboardContent")
+        layout = QVBoxLayout(page)
         layout.setContentsMargins(28, 22, 28, 22)
         layout.setSpacing(14)
 
@@ -3800,12 +3803,12 @@ class MainWindow(QMainWindow):
         nav_actions = (
             ("▦  폐쇄몰 접속", self.show_dashboard, True),
             ("▣  출고 관리", self.show_shipping_workspace, False),
-            ("▤  송장 관리", self.open_wekeep_tracking, False),
-            ("▥  재고 관리", self.open_inventory_preview, False),
-            ("▦  주간 재고조사", self.open_weekly_inventory, False),
-            ("▣  인쇄 발주", self.open_print_order, False),
-            ("▣  CS 관리", self.open_cs_management, False),
-            ("🛠  AS 관리", self.open_as_daily, False),
+            ("▤  송장 관리", self.show_tracking_workspace, False),
+            ("▥  재고 관리", self.show_inventory_workspace, False),
+            ("▦  주간 재고조사", self.show_weekly_inventory_workspace, False),
+            ("▣  인쇄 발주", self.show_print_order_workspace, False),
+            ("▣  CS 관리", self.show_cs_workspace, False),
+            ("🛠  AS 관리", self.show_as_workspace, False),
         )
         self.dashboard_nav_buttons = []
         for label, action, selected in nav_actions:
@@ -3829,8 +3832,7 @@ class MainWindow(QMainWindow):
             button.clicked.connect(action)
             side.addWidget(button)
         side.addStretch(1)
-        root_layout.addWidget(sidebar)
-        root_layout.addWidget(content, 1)
+        self.navigation_sidebar = sidebar
         return page
 
     def change_calendar_month(self) -> None:
@@ -3852,9 +3854,61 @@ class MainWindow(QMainWindow):
         self.refresh_shared_calendar_events()
         self.refresh_calendar_display()
         self.page_stack.setCurrentWidget(self.dashboard_page)
+        self.select_navigation(0)
 
     def show_shipping_workspace(self) -> None:
         self.page_stack.setCurrentWidget(self.work_page)
+        self.select_navigation(1)
+
+    def select_navigation(self, selected_index: int) -> None:
+        for index, button in enumerate(self.dashboard_nav_buttons):
+            button.setProperty("selected", index == selected_index)
+            button.style().unpolish(button)
+            button.style().polish(button)
+
+    def show_embedded_page(self, key: str, factory, navigation_index: int) -> QWidget:
+        page = self.embedded_pages.get(key)
+        if page is None:
+            page = factory()
+            page.setParent(self.page_stack)
+            page.setWindowFlags(Qt.WindowType.Widget)
+            page.setObjectName(f"embedded_{key}")
+            self.page_stack.addWidget(page)
+            self.embedded_pages[key] = page
+        page.show()
+        self.page_stack.setCurrentWidget(page)
+        self.select_navigation(navigation_index)
+        return page
+
+    def show_tracking_workspace(self) -> None:
+        self.show_embedded_page("tracking", lambda: WeKeepTrackingDialog(parent=self), 2)
+
+    def show_inventory_workspace(self) -> None:
+        self.show_embedded_page("inventory", lambda: InventoryPreviewDialog(self), 3)
+
+    def show_weekly_inventory_workspace(self) -> None:
+        self.show_embedded_page(
+            "weekly_inventory",
+            lambda: InventoryDialog(self.catalog.get("items", []) if self.catalog else [], self),
+            4,
+        )
+
+    def show_print_order_workspace(self) -> None:
+        self.show_embedded_page(
+            "print_order",
+            lambda: PrintOrderWindow(self, catalog_items=self.catalog.get("items", []) if self.catalog else []),
+            5,
+        )
+
+    def show_cs_workspace(self) -> None:
+        self.show_embedded_page(
+            "cs",
+            lambda: CsManagementDialog(self, supabase_client=self.supabase_client),
+            6,
+        )
+
+    def show_as_workspace(self) -> None:
+        self.show_embedded_page("as_daily", lambda: AsDailyDialog(self), 7)
 
     def open_inventory_preview(self) -> None:
         InventoryPreviewDialog(self).exec()
