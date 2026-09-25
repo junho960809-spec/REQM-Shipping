@@ -25,7 +25,7 @@ from main import (
     repair_shortcuts_on_startup,
     update_shortcuts_powershell,
 )
-from cs_dialog import CsManagementDialog, MarketplaceSelectionDialog
+from cs_dialog import CsManagementDialog, MarketplaceSelectionDialog, OperatorMemoEditor
 from integration_account_dialog import IntegrationAccountDialog
 from print_order_window import PrintOrderWindow
 
@@ -268,6 +268,38 @@ class DashboardNavigationTests(unittest.TestCase):
         dialog.convert_note()
         self.assertIn("사용과 충전을 즉시 중단", dialog.draft.toPlainText())
         self.assertFalse(dialog.save_button.isEnabled())
+        dialog.close()
+
+    def test_operator_memo_editor_separates_customer_and_internal_content(self) -> None:
+        editor = OperatorMemoEditor()
+        editor.customer_guidance.setPlainText("베이지 색상으로 교환 가능합니다.")
+        editor.customer_requests.setPlainText("제품 사진을 첨부해 주세요.")
+        editor.processing_results.setPlainText("교환 재고를 확보했습니다.")
+        editor.internal_notes.setPlainText("물류팀 확인 완료")
+        saved = editor.toPlainText()
+        self.assertIn("고객 안내: 베이지", saved)
+        self.assertIn("고객 요청: 제품 사진", saved)
+        self.assertIn("처리 결과: 교환 재고", saved)
+        self.assertIn("내부 메모: 물류팀", saved)
+        editor.close()
+
+    def test_operator_memo_editor_loads_legacy_unlabelled_note_as_internal(self) -> None:
+        editor = OperatorMemoEditor()
+        editor.setPlainText("예전에 저장한 형식 없는 작업자 메모")
+        self.assertEqual(editor.internal_notes.toPlainText(), "예전에 저장한 형식 없는 작업자 메모")
+        self.assertFalse(editor.customer_guidance.toPlainText())
+        editor.close()
+
+    def test_separated_customer_guidance_is_added_to_generated_draft(self) -> None:
+        dialog = CsManagementDialog()
+        dialog.load_sample_cases()
+        dialog.operator_note.clear()
+        dialog.operator_note.customer_guidance.setPlainText("회수 접수 후 베이지 색상으로 교환 가능합니다.")
+        dialog.operator_note.internal_notes.setPlainText("물류팀 재고 확인 완료")
+        dialog.convert_note()
+        answer = dialog.draft.toPlainText()
+        self.assertIn("베이지 색상으로 교환", answer)
+        self.assertNotIn("물류팀", answer)
         dialog.close()
 
     def test_cs_dialog_automatically_generates_draft_from_question(self) -> None:

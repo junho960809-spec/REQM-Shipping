@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
     QListWidget,
     QPushButton,
     QSplitter,
+    QTabWidget,
     QTextEdit,
     QVBoxLayout,
     QWidget,
@@ -20,7 +21,7 @@ from PySide6.QtWidgets import (
 
 from cs_repository import CsRepository, DraftConflictError
 from cs_send_policy import evaluate_send_readiness
-from cs_service import transform_operator_note
+from cs_service import parse_operator_note, transform_operator_note
 from naver_commerce_client import NaverCommerceClient, NaverCommerceError
 from naver_credential_store import load_naver_credentials
 from product_knowledge import detect_model
@@ -33,6 +34,65 @@ MARKETPLACES = (
     ("11st", "11번가", "상품 Q&A · 주문 문의", False),
     ("all", "전체 판매처", "연결된 판매처 문의 통합 보기", True),
 )
+
+
+class OperatorMemoEditor(QWidget):
+    """Separate customer-facing notes from internal-only notes."""
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        self.tabs = QTabWidget()
+        self.customer_guidance = self._add_tab(
+            "고객 안내", "답변에 추가할 확정 안내를 입력하세요. 예: 베이지 색상으로 교환 가능합니다."
+        )
+        self.customer_requests = self._add_tab(
+            "고객 요청", "고객이 해야 할 일을 입력하세요. 예: 제품 사진을 AS 신청서에 첨부해 주세요."
+        )
+        self.processing_results = self._add_tab(
+            "처리 결과", "이미 확인하거나 처리한 결과를 입력하세요. 예: 교환 재고를 확보했습니다."
+        )
+        self.internal_notes = self._add_tab(
+            "내부 메모", "작업자끼리만 볼 내용을 입력하세요. 고객 답변에는 포함되지 않습니다."
+        )
+        layout.addWidget(self.tabs)
+
+    def _add_tab(self, title: str, placeholder: str) -> QTextEdit:
+        editor = QTextEdit()
+        editor.setPlaceholderText(placeholder)
+        editor.setMinimumHeight(85)
+        self.tabs.addTab(editor, title)
+        return editor
+
+    @staticmethod
+    def _prefixed_lines(prefix: str, text: str) -> list[str]:
+        return [f"{prefix}: {line.strip()}" for line in text.splitlines() if line.strip()]
+
+    def toPlainText(self) -> str:
+        lines = [
+            *self._prefixed_lines("고객 안내", self.customer_guidance.toPlainText()),
+            *self._prefixed_lines("고객 요청", self.customer_requests.toPlainText()),
+            *self._prefixed_lines("처리 결과", self.processing_results.toPlainText()),
+            *self._prefixed_lines("내부 메모", self.internal_notes.toPlainText()),
+        ]
+        return "\n".join(lines)
+
+    def setPlainText(self, value: str) -> None:
+        parsed = parse_operator_note(value)
+        self.customer_guidance.setPlainText("\n".join(parsed.customer_guidance))
+        self.customer_requests.setPlainText("\n".join(parsed.customer_requests))
+        self.processing_results.setPlainText("\n".join(parsed.processing_results))
+        self.internal_notes.setPlainText("\n".join(parsed.internal_notes))
+
+    def clear(self) -> None:
+        for editor in (
+            self.customer_guidance,
+            self.customer_requests,
+            self.processing_results,
+            self.internal_notes,
+        ):
+            editor.clear()
 
 
 class MarketplaceSelectionDialog(QDialog):
@@ -219,13 +279,7 @@ class CsManagementDialog(QDialog):
         )
         layout.addWidget(self.manual_send_notice)
         layout.addWidget(QLabel("추가 작업자 메모 (선택)"))
-        self.operator_note = QTextEdit()
-        self.operator_note.setPlaceholderText(
-            "예시\n고객 안내: 베이지 색상으로 교환 가능합니다.\n"
-            "고객 요청: 제품 사진을 AS 신청서에 첨부해 주세요.\n"
-            "처리 결과: 교환 재고를 확보했습니다.\n"
-            "내부 메모: 물류팀 확인 완료"
-        )
+        self.operator_note = OperatorMemoEditor()
         layout.addWidget(self.operator_note)
         self.convert_button = QPushButton("문의 분석 및 답변 초안 생성")
         layout.addWidget(self.convert_button)
