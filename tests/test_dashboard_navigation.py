@@ -365,7 +365,7 @@ class DashboardNavigationTests(unittest.TestCase):
         dialog.inquiry_list.item(0).setData(Qt.ItemDataRole.UserRole, case)
         dialog.inquiry_list.setCurrentRow(0)
 
-        self.assertEqual(dialog.current_category, "AS_새상품교환")
+        self.assertEqual(dialog.current_category, "AS_C타입단자불량")
         self.assertIn("분류 오류", dialog.draft_source.text())
         self.assertIn("https://reqm.co.kr/cs/", dialog.draft.toPlainText())
         self.assertNotIn("택배 상자", dialog.draft.toPlainText())

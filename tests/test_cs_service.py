@@ -251,6 +251,36 @@ class CsDraftTransformerTests(unittest.TestCase):
         self.assertEqual(result.category, "배송_오배송파손누락")
         self.assertIn("택배 상자", result.text)
 
+    def test_type_c_connector_defect_has_specific_checks(self) -> None:
+        result = transform_operator_note(question="C타입 연결부위 불량", product_model="QP1000C")
+        self.assertEqual(result.category, "AS_C타입단자불량")
+        self.assertIn("이물질", result.text)
+        self.assertIn("금속 도구나 액체", result.text)
+        self.assertIn("다른 정상 어댑터와 C타입 케이블", result.text)
+        self.assertIn("https://reqm.co.kr/cs/", result.text)
+
+    def test_wireless_charging_defect_has_alignment_checks(self) -> None:
+        result = transform_operator_note(question="무선 충전이 안 돼요", product_model="Q1500")
+        self.assertEqual(result.category, "AS_무선충전불량")
+        self.assertIn("케이스와 금속 부착물", result.text)
+        self.assertIn("충전 코일 중앙", result.text)
+
+    def test_fast_battery_drain_has_usage_check(self) -> None:
+        result = transform_operator_note(question="배터리가 너무 빨리 닳고 금방 방전돼요", product_model="QP2000C")
+        self.assertEqual(result.category, "AS_배터리방전불량")
+        self.assertIn("완전히 충전", result.text)
+        self.assertIn("잔량 변화와 사용 시간", result.text)
+
+    def test_display_failure_has_power_input_check(self) -> None:
+        result = transform_operator_note(question="액정 화면이 안 나와요", product_model="QP1000C")
+        self.assertEqual(result.category, "AS_화면표시불량")
+        self.assertIn("30분 이상 충전", result.text)
+
+    def test_button_failure_warns_against_tools(self) -> None:
+        result = transform_operator_note(question="전원 버튼이 눌리지 않고 불량입니다", product_model="QP1000C")
+        self.assertEqual(result.category, "AS_버튼불량")
+        self.assertIn("도구를 사용하지", result.text)
+
     def test_natural_cancel_wording_is_classified_as_order_cancel(self) -> None:
         result = transform_operator_note(
             question="혹시 아직 출발 안 했으면 취소될까요?",

@@ -117,7 +117,8 @@ def _has_product_defect_signal(source: str) -> bool:
     return any(word in source for word in (
         "제품 불량", "불량", "고장", "작동 안", "작동하지", "충전이 안", "충전 안",
         "충전이 되지", "충전되지",
-        "인식 안", "인식하지", "켜지지", "전원이 안", "접촉 불량",
+        "인식 안", "인식하지", "켜지지", "전원이 안", "접촉 불량", "빨리 닳",
+        "금방 닳", "방전", "화면이 안", "표시가 안", "버튼이 안", "눌리지",
     ))
 
 
@@ -497,15 +498,16 @@ def _transform_policy_answer(
 
     if any(word in source for word in (
         "수리", "고장", "AS", "불량", "충전이 안", "충전 안", "충전이 되지", "충전되지", "작동 안",
-        "인식 안", "켜지지", "전원이 안", "접촉 불량", "파손",
+        "인식 안", "켜지지", "전원이 안", "접촉 불량", "파손", "빨리 닳", "금방 닳", "방전",
+        "화면이 안", "표시가 안", "액정이 안", "버튼이 안", "눌리지",
     )):
         outside_warranty = _purchase_is_outside_warranty(source)
         if outside_warranty:
             return DraftResult(
                 text=compose_customer_reply(
                     direct_answer="문의에 남겨주신 구매일은 1년의 무상 교환 기간이 지나 보상판매 대상으로 안내드립니다",
-                    verified_context=f"{product}이 켜지지 않고 충전되지 않는 증상으로 확인됩니다",
-                    customer_action="먼저 다른 어댑터와 케이블로 C타입 입·출력 포트에 연결해 확인해 주세요",
+                    verified_context=f"문의하신 {product}의 증상은 제품 검수가 필요한 상태입니다",
+                    customer_action="CS 접수 시 구매 정보와 증상이 확인되는 사진 또는 영상을 함께 등록해 주세요",
                     service_policy=(
                         "동일한 증상이 계속되면 https://reqm.co.kr/cs/ 에서 접수해 주세요. 구매일로부터 1년이 지난 제품은 "
                         "불량이 확인되더라도 무상 새제품 교환 대상이 아니며, 불량 제품과 동일한 제품을 30% 할인된 금액으로 "
@@ -516,6 +518,73 @@ def _transform_policy_answer(
                 risk_level="review",
                 requires_approval=True,
                 policy_refs=("무상 교환 1년", "기간 경과 시 동일 제품 30% 보상판매"),
+            )
+        if any(word in source for word in ("C타입", "USB-C", "단자", "포트", "연결부위")):
+            return DraftResult(
+                text=compose_customer_reply(
+                    direct_answer=f"문의하신 {product}의 C타입 연결 단자 접촉 불량 증상은 제품 검수가 필요합니다",
+                    verified_context="케이블을 연결해도 충전이 시작되지 않거나 연결 상태가 반복해서 끊기는 경우 단자 또는 케이블 문제일 수 있습니다",
+                    customer_action=(
+                        "제품 전원을 분리한 상태에서 단자 내부에 이물질이나 변형이 없는지 확인하고, 금속 도구나 액체는 사용하지 마세요. "
+                        "다른 정상 어댑터와 C타입 케이블로 다시 연결해 동일 증상이 발생하는지 확인해 주세요"
+                    ),
+                    service_policy="동일한 증상이 계속되면 " + _exchange_inspection_policy(),
+                ),
+                category="AS_C타입단자불량",
+                risk_level="review",
+                requires_approval=True,
+                policy_refs=("C타입 단자 이물질·변형 확인", "정상 어댑터·케이블 교차 확인", "검수 후 보증기간별 처리"),
+            )
+        if "무선" in source and any(word in source for word in ("충전이 안", "충전 안", "충전이 되지", "충전되지", "인식 안")):
+            return DraftResult(
+                text=compose_customer_reply(
+                    direct_answer=f"문의하신 {product}의 무선충전 불량 여부를 확인하려면 충전 위치와 사용 조건을 먼저 점검해야 합니다",
+                    customer_action=(
+                        "휴대전화 케이스와 금속 부착물을 제거하고 충전 코일 중앙에 맞춰 올린 뒤, 다른 정상 어댑터와 케이블로 확인해 주세요. "
+                        "가능하면 다른 무선충전 지원 기기도 같은 위치에서 확인해 주세요"
+                    ),
+                    service_policy="같은 증상이 반복되면 " + _exchange_inspection_policy(),
+                ),
+                category="AS_무선충전불량",
+                risk_level="review",
+                requires_approval=True,
+                policy_refs=("케이스·금속 부착물 제거", "충전 코일 위치 확인", "어댑터·케이블·기기 교차 확인"),
+            )
+        if any(word in source for word in ("빨리 닳", "금방 닳", "방전", "잔량이 줄", "사용시간")):
+            return DraftResult(
+                text=compose_customer_reply(
+                    direct_answer=f"문의하신 {product}의 배터리 잔량이 빠르게 줄어드는 증상은 완충 후 실제 사용 조건을 기준으로 검수가 필요합니다",
+                    customer_action="제품을 완전히 충전한 뒤 동일한 기기와 케이블 한 조합으로 사용해 잔량 변화와 사용 시간을 확인하고, 해당 과정이 보이는 사진 또는 영상을 준비해 주세요",
+                    service_policy="동일한 급격한 방전 증상이 반복되면 " + _exchange_inspection_policy(),
+                ),
+                category="AS_배터리방전불량",
+                risk_level="review",
+                requires_approval=True,
+                policy_refs=("완충 후 동일 조건 확인", "잔량 변화·사용 시간 확인", "검수 후 보증기간별 처리"),
+            )
+        if any(word in source for word in ("화면이 안", "표시가 안", "액정이 안", "LED가 안", "불이 안")):
+            return DraftResult(
+                text=compose_customer_reply(
+                    direct_answer=f"문의하신 {product}의 화면 또는 표시등이 켜지지 않는 증상은 전원 입력과 표시부 검수가 필요합니다",
+                    customer_action="다른 정상 어댑터와 케이블을 연결해 30분 이상 충전한 뒤 전원 버튼을 눌러 화면 또는 표시등이 켜지는지 확인해 주세요",
+                    service_policy="표시가 계속 나오지 않으면 " + _exchange_inspection_policy(),
+                ),
+                category="AS_화면표시불량",
+                risk_level="review",
+                requires_approval=True,
+                policy_refs=("30분 이상 충전", "정상 어댑터·케이블 확인", "화면·표시등 검수"),
+            )
+        if any(word in source for word in ("버튼이 안", "눌리지", "버튼 불량")):
+            return DraftResult(
+                text=compose_customer_reply(
+                    direct_answer=f"문의하신 {product}의 버튼이 눌리지 않거나 반응하지 않는 증상은 버튼부 검수가 필요합니다",
+                    customer_action="버튼 주변에 이물질이나 외부 충격 흔적이 없는지 확인하고, 무리하게 반복해서 누르거나 도구를 사용하지 마세요",
+                    service_policy="버튼이 계속 반응하지 않으면 " + _exchange_inspection_policy(),
+                ),
+                category="AS_버튼불량",
+                risk_level="review",
+                requires_approval=True,
+                policy_refs=("버튼 주변 이물질·충격 확인", "도구 사용 금지", "버튼부 검수"),
             )
         if any(word in source for word in ("충전도 안", "충전이 안", "충전이 되지", "충전되지", "켜지지", "액정 화면도 안", "전원도 안")):
             return DraftResult(
