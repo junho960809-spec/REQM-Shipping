@@ -152,9 +152,28 @@ def _verified_order_context(order_status: str) -> str:
 def _exchange_inspection_policy() -> str:
     return (
         "https://reqm.co.kr/cs/ 에서 접수해 주세요. 구매일로부터 1년 이내인 제품은 입고 후 검수하며, "
-        "불량 증상이 확인되면 수리 대신 새상품 교환 출고를 진행합니다. 검수 결과 불량 증상이 확인되지 않으면 "
-        "제품은 고객님께 반송되며 배송비가 발생합니다"
+        "불량 증상이 확인되면 무상으로 새상품 교환 출고(새제품 출고)를 진행합니다. 검수 결과 불량 증상이 확인되지 않으면 "
+        "제품은 고객님께 반송되며 배송비가 발생합니다. 구매일로부터 1년이 지난 제품은 불량이 확인되더라도 "
+        "무상 교환 대상이 아니며, 동일 제품을 30% 할인된 금액으로 재구매하는 보상판매 제도로 안내드립니다"
     )
+
+
+def _purchase_is_outside_warranty(source: str, now: datetime | None = None) -> bool:
+    today = (now or datetime.now()).date()
+    full_date = re.search(r"(20\d{2})\s*[.\-/년]\s*(\d{1,2})\s*[.\-/월]\s*(\d{1,2})", source)
+    if full_date:
+        try:
+            purchased = datetime(
+                int(full_date.group(1)), int(full_date.group(2)), int(full_date.group(3))
+            ).date()
+        except ValueError:
+            return False
+        return (today - purchased).days > 365
+    purchase_years = [
+        int(value)
+        for value in re.findall(r"(?:구매|구입|구매일)[^\n]{0,15}?(20\d{2})", source)
+    ]
+    return bool(purchase_years and min(purchase_years) < today.year - 1)
 
 
 def _transform_policy_answer(
@@ -467,25 +486,28 @@ def _transform_policy_answer(
         "수리", "고장", "AS", "불량", "충전이 안", "충전 안", "작동 안",
         "인식 안", "켜지지", "전원이 안", "접촉 불량",
     )):
-        purchase_years = [int(value) for value in re.findall(r"20\d{2}", source)]
-        outside_warranty = bool(purchase_years and min(purchase_years) < datetime.now().year - 1)
+        outside_warranty = _purchase_is_outside_warranty(source)
         if outside_warranty:
             return DraftResult(
                 text=compose_customer_reply(
-                    direct_answer="문의에 남겨주신 구매일은 무상 AS 기간이 지나 신제품 보상판매로 안내할 수 있습니다",
+                    direct_answer="문의에 남겨주신 구매일은 1년의 무상 교환 기간이 지나 보상판매 대상으로 안내드립니다",
                     verified_context=f"{product}이 켜지지 않고 충전되지 않는 증상으로 확인됩니다",
                     customer_action="먼저 다른 어댑터와 케이블로 C타입 입·출력 포트에 연결해 확인해 주세요",
-                    service_policy="동일하면 https://reqm.co.kr/cs/ 에서 접수해 주세요. 무상 AS 기간은 구매일로부터 1년이며, 리큐엠 AS는 수리 대신 새상품 교환 또는 보상판매 방식으로 진행됩니다",
+                    service_policy=(
+                        "동일한 증상이 계속되면 https://reqm.co.kr/cs/ 에서 접수해 주세요. 구매일로부터 1년이 지난 제품은 "
+                        "불량이 확인되더라도 무상 새제품 교환 대상이 아니며, 불량 제품과 동일한 제품을 30% 할인된 금액으로 "
+                        "재구매하는 보상판매 제도로 진행됩니다"
+                    ),
                 ),
                 category="보증기간외_보상판매",
                 risk_level="review",
                 requires_approval=True,
-                policy_refs=("무상 AS 1년", "기간 경과 시 30% 보상판매", "수리 대신 새상품 교환"),
+                policy_refs=("무상 교환 1년", "기간 경과 시 동일 제품 30% 보상판매"),
             )
         if any(word in source for word in ("충전도 안", "충전이 안", "켜지지", "액정 화면도 안", "전원도 안")):
             return DraftResult(
                 text=compose_customer_reply(
-                    direct_answer="동일 증상이 계속되면 제품 검수 후 새상품 교환으로 AS를 진행합니다",
+                    direct_answer="동일 증상이 계속되면 구매일과 제품 검수 결과에 따라 새상품 교환(새제품 출고) 또는 보상판매로 진행합니다",
                     verified_context=f"{product}의 화면·제품 충전·휴대전화 충전이 정상 작동하지 않는 증상으로 확인됩니다",
                     customer_action="먼저 어댑터와 케이블을 다른 제품으로 바꾼 뒤 C타입 입·출력 포트에 연결해 확인해 주세요",
                     service_policy="동일한 경우 " + _exchange_inspection_policy(),
@@ -498,7 +520,7 @@ def _transform_policy_answer(
         model_text = f" {model}" if model else ""
         return DraftResult(
             text=compose_customer_reply(
-                direct_answer=f"리큐엠{model_text} 제품은 수리가 아닌 새상품 교환 방식으로 AS를 진행합니다",
+                direct_answer=f"리큐엠{model_text} 제품은 수리가 아닌 새상품 교환(새제품 출고) 또는 보상판매 방식으로 진행합니다",
                 verified_context="문의하신 증상은 제품 검수가 필요합니다",
                 customer_action="CS 사이트에서 증상과 구매 정보를 입력해 접수해 주세요",
                 service_policy=_exchange_inspection_policy(),
@@ -506,7 +528,7 @@ def _transform_policy_answer(
             category="AS_새상품교환",
             risk_level="review",
             requires_approval=True,
-            policy_refs=("수리 미운영", "구매일 기준 1년", "불량 확인 시 새상품 출고", "불량 미확인 시 반송 배송비 발생"),
+            policy_refs=("수리 미운영", "구매일 기준 1년", "불량 확인 시 무상 새제품 출고", "불량 미확인 시 반송 배송비 발생", "1년 초과 시 동일 제품 30% 보상판매"),
         )
 
     return DraftResult(

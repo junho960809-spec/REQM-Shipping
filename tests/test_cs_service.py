@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import unittest
 
-from cs_service import compose_customer_reply, parse_operator_note, transform_operator_note
+from datetime import datetime
+
+from cs_service import _purchase_is_outside_warranty, compose_customer_reply, parse_operator_note, transform_operator_note
 
 
 class CsDraftTransformerTests(unittest.TestCase):
@@ -128,6 +130,8 @@ class CsDraftTransformerTests(unittest.TestCase):
         self.assertIn("불량 증상이 확인되지 않으면", result.text)
         self.assertIn("반송", result.text)
         self.assertIn("배송비가 발생", result.text)
+        self.assertIn("30% 할인", result.text)
+        self.assertIn("보상판매", result.text)
 
     def test_swelling_answer_finishes_with_as_application_route(self) -> None:
         result = transform_operator_note(question="배터리가 부풀었습니다", product_model="QP1000C")
@@ -156,8 +160,14 @@ class CsDraftTransformerTests(unittest.TestCase):
             question="켜지지 않고 충전도 안 됩니다. 구매 2024.03.10.",
             product_model="QP2000C",
         )
-        self.assertIn("무상 AS 기간은 구매일로부터 1년", result.text)
+        self.assertIn("1년의 무상 교환 기간", result.text)
+        self.assertIn("동일한 제품을 30% 할인", result.text)
         self.assertIn("보상판매", result.text)
+
+    def test_purchase_warranty_uses_exact_purchase_date(self) -> None:
+        now = datetime(2026, 9, 26)
+        self.assertTrue(_purchase_is_outside_warranty("구매일 2025.09.25", now))
+        self.assertFalse(_purchase_is_outside_warranty("구매일 2025.09.27", now))
 
     def test_power_off_question_gives_exact_button_sequence(self) -> None:
         result = transform_operator_note(
