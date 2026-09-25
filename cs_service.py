@@ -4,15 +4,9 @@ from dataclasses import dataclass
 from datetime import datetime
 import re
 
+from product_knowledge import detect_model, discontinued_replacements, get_product_knowledge
 
-DISCONTINUED_MODELS = {
-    "QP1000A": "QP1000C",
-    "QP2000A": "QP2000C",
-    "QPD250": "QPD330",
-    "QPD365": "QPD365-N",
-}
-
-KNOWN_MODELS = (*DISCONTINUED_MODELS, *DISCONTINUED_MODELS.values(), "Q1500", "ACONE", "QM4100", "QMP5")
+DISCONTINUED_MODELS = discontinued_replacements()
 
 
 @dataclass(frozen=True)
@@ -29,9 +23,7 @@ def _combined_text(question: str, operator_note: str) -> str:
 
 
 def _detected_model(text: str, product_model: str, product_name: str = "") -> str:
-    candidates = [product_model.strip().upper(), *KNOWN_MODELS]
-    product_source = f"{text}\n{product_name}".upper()
-    return next((model for model in candidates if model and model in product_source), product_model.strip().upper())
+    return detect_model(product_model, text, product_name) or product_model.strip().upper()
 
 
 def _product_label(product_name: str, model: str) -> str:
@@ -70,6 +62,7 @@ def transform_operator_note(
     product = _product_label(product_name, model)
     is_discontinued = model in DISCONTINUED_MODELS
     order_status = _order_status(product_name)
+    knowledge = get_product_knowledge(model)
 
     if _looks_like_spam(source):
         return DraftResult(
@@ -205,7 +198,9 @@ def transform_operator_note(
             policy_refs=("택배 상자·송장·상품 사진 확인", "확인 후 새상품 교환 또는 누락품 발송"),
         )
 
-    if any(word in source for word in ("전원을 아예", "전원 끄", "전원 종료", "어떻게 꺼")) and model in ("QP1000C", "QP2000C"):
+    if any(word in source for word in (
+        "전원을 아예", "전원 끄", "전원 종료", "어떻게 꺼", "끄는 방법", "끄나요",
+    )) and knowledge and knowledge.supports_power_off_sequence:
         return DraftResult(
             text=(
                 f"안녕하세요 고객님. {model}은 케이블을 모두 분리하면 약 40초 뒤 자동으로 전원이 꺼집니다. "
@@ -244,7 +239,7 @@ def transform_operator_note(
         )
 
     if any(word in source for word in ("중국", "상하이", "비행기", "기내", "3C", "CCC")):
-        capacity = "74Wh" if model == "QP2000C" else "37Wh" if model == "QP1000C" else "제품에 표시된 Wh 용량"
+        capacity = f"{knowledge.capacity_wh}Wh" if knowledge and knowledge.capacity_wh else "제품에 표시된 Wh 용량"
         return DraftResult(
             text=(
                 f"안녕하세요 고객님. {product}의 정격 전력량은 {capacity}이며 일반적인 기내 휴대 가능 범위에 해당합니다. "
@@ -254,11 +249,11 @@ def transform_operator_note(
             category="여행_기내반입",
             risk_level="review",
             requires_approval=True,
-            policy_refs=("QP2000C 74Wh", "QP1000C 37Wh", "항공사·도착 지역 규정 확인"),
+            policy_refs=((f"{model} {capacity}" if model and knowledge and knowledge.capacity_wh else "제품 표시 Wh 확인"), "항공사·도착 지역 규정 확인"),
         )
 
     if any(word in source for word in ("노트북", "갤럭시북", "맥북")):
-        output = "최대 30W" if model == "QPD330" else "해당 제품의 최대 출력"
+        output = f"최대 {knowledge.max_output_w}W" if knowledge and knowledge.max_output_w else "해당 제품의 최대 출력"
         return DraftResult(
             text=(
                 f"안녕하세요 고객님. {product}은 {output} 출력 제품입니다. 갤럭시북은 모델별 권장 충전 출력이 달라 "
@@ -268,7 +263,7 @@ def transform_operator_note(
             category="노트북_호환",
             risk_level="normal",
             requires_approval=True,
-            policy_refs=("QPD330 최대 30W", "기기 권장 출력 확인"),
+            policy_refs=((f"{model} 최대 {knowledge.max_output_w}W" if model and knowledge and knowledge.max_output_w else "제품 최대 출력 확인"), "기기 권장 출력 확인"),
         )
 
     if any(word in source for word in ("계좌", "입금", "케이스", "케이블")) and any(word in source for word in ("구입", "구매", "금액")):
@@ -296,8 +291,8 @@ def transform_operator_note(
         )
 
     if any(word in source for word in ("초고속", "고속충전", "고속 충전", "15W", "25W")):
-        if model == "Q1500":
-            detail = "Q1500은 휴대전화 무선 충전을 최대 15W까지 지원하며, 15W 이상 출력의 어댑터와 케이블을 연결해야 합니다."
+        if model == "Q1500" and knowledge and knowledge.max_output_w:
+            detail = f"Q1500은 휴대전화 무선 충전을 최대 {knowledge.max_output_w}W까지 지원하며, 15W 이상 출력의 어댑터와 케이블을 연결해야 합니다."
         else:
             detail = "무선 충전의 최대 출력은 유선 초고속 충전 출력과 다르며, 휴대전화와 케이스의 무선 충전 규격에 따라 실제 속도가 결정됩니다."
         return DraftResult(

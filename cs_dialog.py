@@ -22,6 +22,7 @@ from cs_repository import CsRepository, DraftConflictError
 from cs_service import transform_operator_note
 from naver_commerce_client import NaverCommerceClient, NaverCommerceError
 from naver_credential_store import load_naver_credentials
+from product_knowledge import detect_model
 
 
 MARKETPLACES = (
@@ -318,9 +319,7 @@ class CsManagementDialog(QDialog):
 
     @staticmethod
     def _model_from_product_name(product_name: str) -> str:
-        upper = product_name.upper()
-        models = ("QP1000A", "QP2000A", "QPD250", "QPD365", "QP1000C", "QP2000C", "QPD330", "QPD365-N", "Q1500", "ACONE", "QM4100", "QMP5")
-        return next((model for model in models if model in upper), "")
+        return detect_model(product_name)
 
     @staticmethod
     def _customer_question(row: dict) -> str:

@@ -26,6 +26,18 @@ class CsDraftTransformerTests(unittest.TestCase):
         self.assertIn("신형 QP1000C 보상판매", result.text)
         self.assertNotIn("새상품 교환 방식으로 AS", result.text)
 
+    def test_old_qpd365_routes_to_exact_renewed_model_name(self) -> None:
+        result = transform_operator_note(question="QPD365 수리 가능한가요?", product_model="QPD365")
+        self.assertIn("신형 QPD365N 보상판매", result.text)
+
+    def test_sales_sku_alias_uses_canonical_qp1000c_policy(self) -> None:
+        result = transform_operator_note(
+            question="전원을 바로 끄는 방법이 있나요?",
+            product_name="[리큐엠] 보조배터리 QP1000C1 네온그린",
+        )
+        self.assertEqual(result.category, "보조배터리_전원종료")
+        self.assertIn("QP1000C", result.text)
+
     def test_current_product_repair_question_routes_to_replacement(self) -> None:
         result = transform_operator_note(
             question="수리가 가능한가요?",
