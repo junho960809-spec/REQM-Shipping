@@ -149,6 +149,14 @@ def _verified_order_context(order_status: str) -> str:
     return f"현재 주문 상태는 {order_status}로 확인됩니다" if order_status else ""
 
 
+def _exchange_inspection_policy() -> str:
+    return (
+        "https://reqm.co.kr/cs/ 에서 접수해 주세요. 구매일로부터 1년 이내인 제품은 입고 후 검수하며, "
+        "불량 증상이 확인되면 수리 대신 새상품 교환 출고를 진행합니다. 검수 결과 불량 증상이 확인되지 않으면 "
+        "제품은 고객님께 반송되며 배송비가 발생합니다"
+    )
+
+
 def _transform_policy_answer(
     *,
     question: str,
@@ -185,7 +193,7 @@ def _transform_policy_answer(
             f"문의하신 {model}는 단종 제품이므로 제품 정보를 확인한 뒤 "
             f"신형 {DISCONTINUED_MODELS[model]} 보상판매 절차로 접수해 주세요: https://reqm.co.kr/cs/"
             if is_discontinued
-            else "제품 상태 사진을 첨부해 AS 신청서를 작성해 주세요. 불량 확인 후 새상품 교환으로 진행합니다: https://reqm.co.kr/cs/"
+            else "제품 상태 사진을 첨부해 CS 신청서를 작성해 주세요. " + _exchange_inspection_policy()
         )
         return DraftResult(
             text=compose_customer_reply(
@@ -407,7 +415,7 @@ def _transform_policy_answer(
             text=compose_customer_reply(
                 direct_answer=f"{product}의 표면 손상은 사진 확인 후 교환 가능 여부를 판단합니다",
                 customer_action="추가로 문지르거나 세정제를 사용하지 말고 벗겨진 부위 사진과 구매일자를 네이버 톡톡으로 보내 주세요",
-                service_policy="제품 불량으로 확인되면 수리 대신 새상품 교환으로 처리합니다",
+                service_policy=_exchange_inspection_policy(),
             ),
             category="외관_손상",
             risk_level="review",
@@ -480,7 +488,7 @@ def _transform_policy_answer(
                     direct_answer="동일 증상이 계속되면 제품 검수 후 새상품 교환으로 AS를 진행합니다",
                     verified_context=f"{product}의 화면·제품 충전·휴대전화 충전이 정상 작동하지 않는 증상으로 확인됩니다",
                     customer_action="먼저 어댑터와 케이블을 다른 제품으로 바꾼 뒤 C타입 입·출력 포트에 연결해 확인해 주세요",
-                    service_policy="동일한 경우 https://reqm.co.kr/cs/ 에서 AS 신청서를 작성해 주세요. 리큐엠 AS는 수리가 아닌 불량 증상 확인 후 새상품으로 교환하는 방식입니다",
+                    service_policy="동일한 경우 " + _exchange_inspection_policy(),
                 ),
                 category="AS_전원충전불량",
                 risk_level="review",
@@ -492,13 +500,13 @@ def _transform_policy_answer(
             text=compose_customer_reply(
                 direct_answer=f"리큐엠{model_text} 제품은 수리가 아닌 새상품 교환 방식으로 AS를 진행합니다",
                 verified_context="문의하신 증상은 제품 검수가 필요합니다",
-                customer_action="https://reqm.co.kr/cs/ 에서 AS 신청서를 작성해 주세요",
-                service_policy="불량 증상 확인 후 새상품 교환 절차를 안내해 드리겠습니다",
+                customer_action="CS 사이트에서 증상과 구매 정보를 입력해 접수해 주세요",
+                service_policy=_exchange_inspection_policy(),
             ),
             category="AS_새상품교환",
             risk_level="review",
             requires_approval=True,
-            policy_refs=("수리 미운영", "교환 조건 확인 후 새상품 교환"),
+            policy_refs=("수리 미운영", "구매일 기준 1년", "불량 확인 시 새상품 출고", "불량 미확인 시 반송 배송비 발생"),
         )
 
     return DraftResult(

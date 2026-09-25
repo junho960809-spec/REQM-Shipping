@@ -124,11 +124,18 @@ class CsDraftTransformerTests(unittest.TestCase):
         result = transform_operator_note(question="충전이 안 되고 전원도 켜지지 않아요", product_model="QP2000C")
         self.assertIn("https://reqm.co.kr/cs/", result.text)
         self.assertIn("새상품", result.text)
+        self.assertIn("구매일로부터 1년 이내", result.text)
+        self.assertIn("불량 증상이 확인되지 않으면", result.text)
+        self.assertIn("반송", result.text)
+        self.assertIn("배송비가 발생", result.text)
 
     def test_swelling_answer_finishes_with_as_application_route(self) -> None:
         result = transform_operator_note(question="배터리가 부풀었습니다", product_model="QP1000C")
         self.assertIn("https://reqm.co.kr/cs/", result.text)
         self.assertIn("새상품 교환", result.text)
+        self.assertIn("구매일로부터 1년 이내", result.text)
+        self.assertIn("반송", result.text)
+        self.assertIn("배송비가 발생", result.text)
 
     def test_galaxy_book_question_explains_qpd330_output_limit(self) -> None:
         result = transform_operator_note(
