@@ -136,6 +136,8 @@ class NaverCommerceClient:
         page: int = 1,
         size: int = 100,
     ) -> list[dict]:
+        if not 10 <= size <= 200:
+            raise ValueError("고객 문의 조회 건수는 10~200 사이여야 합니다.")
         payload = self._request_json("GET", "/v1/pay-user/inquiries", query={
             "startSearchDate": start_date,
             "endSearchDate": end_date,
@@ -144,6 +146,33 @@ class NaverCommerceClient:
             "size": size,
         })
         return list(payload.get("content") or []) if isinstance(payload, dict) else []
+
+    @staticmethod
+    def customer_inquiry_search_period(days: int = 30) -> tuple[str, str]:
+        today = datetime.now(timezone(timedelta(hours=9))).date()
+        return (today - timedelta(days=days)).isoformat(), today.isoformat()
+
+    def answer_customer_inquiry(self, inquiry_no: int | str, answer: str) -> None:
+        if not answer.strip():
+            raise ValueError("전송할 답변이 비어 있습니다.")
+        self._request_json(
+            "POST",
+            f"/v1/pay-merchant/inquiries/{inquiry_no}/answer",
+            json_body={"answerComment": answer.strip()},
+        )
+
+    def product_orders(self, product_order_ids: list[str]) -> list[dict]:
+        ids = [str(value).strip() for value in product_order_ids if str(value).strip()]
+        if not ids:
+            return []
+        if len(ids) > 300:
+            raise ValueError("상품 주문 상세 조회는 한 번에 최대 300건까지 가능합니다.")
+        payload = self._request_json(
+            "POST",
+            "/v1/pay-order/seller/product-orders/query",
+            json_body={"productOrderIds": ids, "quantityClaimCompatibility": True},
+        )
+        return list(payload.get("data") or []) if isinstance(payload, dict) else []
 
     def answer_product_qna(self, question_id: int | str, answer: str) -> None:
         if not answer.strip():

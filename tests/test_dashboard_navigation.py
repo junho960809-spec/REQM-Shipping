@@ -302,6 +302,54 @@ class DashboardNavigationTests(unittest.TestCase):
         )
         dialog.close()
 
+    def test_cs_dialog_syncs_product_and_order_inquiries_together(self) -> None:
+        dialog = CsManagementDialog()
+        dialog.naver_client = Mock()
+        dialog.naver_client.product_qnas.return_value = [{
+            "questionId": 42, "question": "충전이 안 됩니다", "productId": 100,
+            "productName": "리큐엠 QP1000C", "createDate": "2026-09-25T09:00:00+09:00",
+        }]
+        dialog.naver_client.customer_inquiry_search_period.return_value = ("2026-08-26", "2026-09-25")
+        dialog.naver_client.customer_inquiries.return_value = [{
+            "inquiryNo": 77, "title": "배송 문의", "inquiryContent": "언제 출고되나요?",
+            "productOrderIdList": "202609250001", "productNo": 200,
+            "productName": "리큐엠 QPD330", "productOrderOption": "블랙",
+            "inquiryRegistrationDateTime": "2026-09-25T10:00:00+09:00",
+        }]
+        dialog.naver_client.product_orders.return_value = [{"productOrder": {
+            "productOrderId": "202609250001", "productName": "리큐엠 QPD330",
+            "productOption": "블랙", "productOrderStatus": "DELIVERED", "remainQuantity": 1,
+        }}]
+        dialog.repository = Mock()
+        dialog.repository.upsert_cases.return_value = 2
+        dialog.repository.list_cases.return_value = []
+        with patch.object(QMessageBox, "information"), patch.object(QMessageBox, "warning"):
+            dialog.sync_naver_inquiries()
+        cases = dialog.repository.upsert_cases.call_args.args[0]
+        self.assertEqual([case["channel"] for case in cases], ["product_qna", "order_inquiry"])
+        self.assertEqual(cases[1]["product_order_id"], "202609250001")
+        self.assertEqual(cases[1]["product_model"], "QPD330")
+        self.assertEqual(cases[1]["question"], "배송 문의\n\n언제 출고되나요?")
+        self.assertIn("주문상태: 배송 완료", cases[1]["category"])
+        dialog.close()
+
+    def test_cs_dialog_sends_saved_order_inquiry_and_marks_it_complete(self) -> None:
+        dialog = CsManagementDialog()
+        dialog.naver_client = Mock()
+        dialog.repository = Mock()
+        dialog.repository.list_cases.return_value = []
+        dialog.current_case = {"id": "case-2", "external_id": "77", "channel": "order_inquiry"}
+        dialog.current_draft_id = "draft-2"
+        dialog.draft.setPlainText("주문 고객 안내 답변")
+        with patch.object(QMessageBox, "question", return_value=QMessageBox.StandardButton.Yes), \
+                patch.object(QMessageBox, "information"), patch.object(QMessageBox, "warning"):
+            dialog.send_to_naver()
+        dialog.naver_client.answer_customer_inquiry.assert_called_once_with("77", "주문 고객 안내 답변")
+        dialog.repository.mark_sent.assert_called_once_with(
+            case_id="case-2", draft_id="draft-2", external_id="77",
+        )
+        dialog.close()
+
     def test_naver_connection_test_requires_both_credentials(self) -> None:
         with patch("integration_account_dialog.load_integration_credentials", return_value={
             "ecount_user_id": "", "ecount_password": "", "ecount_api_key": "",

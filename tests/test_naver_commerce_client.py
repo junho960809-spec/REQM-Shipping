@@ -41,6 +41,28 @@ class NaverCommerceClientTests(unittest.TestCase):
         self.assertEqual(query["startSearchDate"], "2026-09-01")
         self.assertEqual(query["endSearchDate"], "2026-09-22")
 
+    def test_customer_inquiry_rejects_size_below_naver_minimum(self) -> None:
+        with self.assertRaises(ValueError):
+            self.client.customer_inquiries(start_date="2026-09-01", end_date="2026-09-22", size=1)
+
+    def test_customer_inquiry_answer_uses_answer_comment(self) -> None:
+        self.client.answer_customer_inquiry(1234, "주문 문의 답변")
+        self.client._request_json.assert_called_once_with(
+            "POST",
+            "/v1/pay-merchant/inquiries/1234/answer",
+            json_body={"answerComment": "주문 문의 답변"},
+        )
+
+    def test_product_orders_queries_ids_with_quantity_claim_compatibility(self) -> None:
+        self.client._request_json.return_value = {"data": [{"productOrder": {"productOrderId": "1"}}]}
+        rows = self.client.product_orders(["1", "2"])
+        self.assertEqual(rows[0]["productOrder"]["productOrderId"], "1")
+        self.client._request_json.assert_called_once_with(
+            "POST",
+            "/v1/pay-order/seller/product-orders/query",
+            json_body={"productOrderIds": ["1", "2"], "quantityClaimCompatibility": True},
+        )
+
     def test_product_qna_answer_uses_comment_content(self) -> None:
         self.client.answer_product_qna(42, "안내 답변")
         self.client._request_json.assert_called_once_with(

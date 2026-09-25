@@ -141,7 +141,7 @@ class CsManagementDialog(QDialog):
             self.load_cases()
         if self.supabase_client is not None and self.naver_client is not None:
             self.sync_button.setEnabled(True)
-            self.sync_button.clicked.connect(self.sync_naver_qnas)
+            self.sync_button.clicked.connect(self.sync_naver_inquiries)
 
     def _build_inquiry_list(self) -> QWidget:
         panel = QFrame()
@@ -322,7 +322,28 @@ class CsManagementDialog(QDialog):
         models = ("QP1000A", "QP2000A", "QPD250", "QPD365", "QP1000C", "QP2000C", "QPD330", "QPD365-N", "Q1500", "ACONE", "QM4100", "QMP5")
         return next((model for model in models if model in upper), "")
 
-    def sync_naver_qnas(self) -> None:
+    @staticmethod
+    def _customer_question(row: dict) -> str:
+        title = str(row.get("title") or "").strip()
+        content = str(row.get("inquiryContent") or "").strip()
+        if title and content and title != content:
+            return f"{title}\n\n{content}"
+        return content or title
+
+    @staticmethod
+    def _order_status_label(value: str) -> str:
+        return {
+            "PAYMENT_WAITING": "결제 대기",
+            "PAYED": "결제 완료",
+            "DELIVERING": "배송 중",
+            "DELIVERED": "배송 완료",
+            "PURCHASE_DECIDED": "구매 확정",
+            "EXCHANGED": "교환 완료",
+            "CANCELED": "취소 완료",
+            "RETURNED": "반품 완료",
+        }.get(value, value or "상태 미확인")
+
+    def sync_naver_inquiries(self) -> None:
         if self.naver_client is None:
             return
         self.sync_button.setEnabled(False)
@@ -344,10 +365,72 @@ class CsManagementDialog(QDialog):
                     "status": "unanswered",
                     "source_created_at": row.get("createDate"),
                 })
-            cases = [case for case in cases if case["external_id"]]
+            start_date, end_date = self.naver_client.customer_inquiry_search_period(days=30)
+            customer_inquiries = self.naver_client.customer_inquiries(
+                start_date=start_date,
+                end_date=end_date,
+                answered=False,
+                page=1,
+                size=200,
+            )
+            product_order_ids = []
+            for row in customer_inquiries:
+                product_order_ids.extend(
+                    value.strip()
+                    for value in str(row.get("productOrderIdList") or "").split(",")
+                    if value.strip()
+                )
+            order_details = self.naver_client.product_orders(list(dict.fromkeys(product_order_ids)))
+            orders_by_id = {}
+            for detail in order_details:
+                product_order = detail.get("productOrder") or {}
+                product_order_id = str(product_order.get("productOrderId") or "")
+                if product_order_id:
+                    orders_by_id[product_order_id] = product_order
+            for row in customer_inquiries:
+                row_order_ids = [
+                    value.strip()
+                    for value in str(row.get("productOrderIdList") or "").split(",")
+                    if value.strip()
+                ]
+                matched_orders = [orders_by_id[value] for value in row_order_ids if value in orders_by_id]
+                first_order = matched_orders[0] if matched_orders else {}
+                product_name = str(first_order.get("productName") or row.get("productName") or "")
+                product_option = str(first_order.get("productOption") or row.get("productOrderOption") or "").strip()
+                context_parts = [product_name] if product_name else []
+                if product_option:
+                    context_parts.append(f"옵션: {product_option}")
+                if matched_orders:
+                    statuses = list(dict.fromkeys(
+                        self._order_status_label(str(order.get("productOrderStatus") or ""))
+                        for order in matched_orders
+                    ))
+                    context_parts.append(f"주문상태: {', '.join(statuses)}")
+                    quantities = sum(int(order.get("remainQuantity") or order.get("quantity") or 0) for order in matched_orders)
+                    if quantities:
+                        context_parts.append(f"수량: {quantities}")
+                product_context = " / ".join(context_parts)
+                cases.append({
+                    "channel": "order_inquiry",
+                    "external_id": str(row.get("inquiryNo") or ""),
+                    "question": self._customer_question(row),
+                    "product_order_id": str(row.get("productOrderIdList") or row.get("orderId") or ""),
+                    "product_no": str(row.get("productNo") or ""),
+                    "product_model": self._model_from_product_name(product_context),
+                    "category": product_context or str(row.get("category") or ""),
+                    "risk_level": "normal",
+                    "status": "unanswered",
+                    "source_created_at": row.get("inquiryRegistrationDateTime"),
+                })
+            cases = [case for case in cases if case["external_id"] and case["question"]]
             saved = self.repository.upsert_cases(cases)
             self.load_cases()
-            QMessageBox.information(self, "문의 동기화", f"미답변 상품 Q&A {saved}건을 동기화했습니다.")
+            QMessageBox.information(
+                self,
+                "문의 동기화",
+                f"상품 Q&A {len(qnas)}건과 주문 고객 문의 {len(customer_inquiries)}건을 확인해 "
+                f"총 {saved}건을 동기화했습니다.",
+            )
         except NaverCommerceError as exc:
             trace = f"\nTrace ID: {exc.trace_id}" if exc.trace_id else ""
             QMessageBox.warning(self, "네이버 문의 동기화 실패", f"{exc}{trace}")
@@ -355,6 +438,10 @@ class CsManagementDialog(QDialog):
             QMessageBox.warning(self, "문의 동기화 실패", str(exc))
         finally:
             self.sync_button.setEnabled(True)
+
+    def sync_naver_qnas(self) -> None:
+        """Compatibility entry point retained for older callers."""
+        self.sync_naver_inquiries()
 
     def select_case(self, row: int) -> None:
         item = self.inquiry_list.item(row)
@@ -449,13 +536,12 @@ class CsManagementDialog(QDialog):
         if not answer:
             QMessageBox.information(self, "답변 확인", "전송할 답변을 입력해 주세요.")
             return
-        if self.current_case.get("channel") != "product_qna":
-            QMessageBox.information(self, "전송 불가", "현재는 네이버 상품 Q&A만 전송할 수 있습니다.")
-            return
+        is_product_qna = self.current_case.get("channel") == "product_qna"
+        channel_name = "상품 Q&A" if is_product_qna else "주문 고객 문의"
         confirmed = QMessageBox.question(
             self,
             "네이버 답변 전송",
-            "저장된 공용 초안을 네이버 상품 Q&A에 답변으로 등록할까요?\n전송 후 해당 문의는 완료로 이동합니다.",
+            f"저장된 공용 초안을 네이버 {channel_name}에 답변으로 등록할까요?\n전송 후 해당 문의는 완료로 이동합니다.",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
@@ -464,13 +550,16 @@ class CsManagementDialog(QDialog):
         self.send_button.setEnabled(False)
         try:
             external_id = str(self.current_case.get("external_id") or "")
-            self.naver_client.answer_product_qna(external_id, answer)
+            if is_product_qna:
+                self.naver_client.answer_product_qna(external_id, answer)
+            else:
+                self.naver_client.answer_customer_inquiry(external_id, answer)
             self.repository.mark_sent(
                 case_id=str(self.current_case["id"]),
                 draft_id=self.current_draft_id,
                 external_id=external_id,
             )
-            QMessageBox.information(self, "답변 전송 완료", "네이버 상품 Q&A에 답변을 등록했습니다.")
+            QMessageBox.information(self, "답변 전송 완료", f"네이버 {channel_name}에 답변을 등록했습니다.")
             self.load_cases()
         except NaverCommerceError as exc:
             trace = f"\nTrace ID: {exc.trace_id}" if exc.trace_id else ""
