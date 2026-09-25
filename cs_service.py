@@ -108,9 +108,9 @@ def transform_operator_note(
     if any(word in source for word in ("팽창", "부풀", "스웰링", "연기", "타는 냄새", "스파크")):
         next_step = (
             f"문의하신 {model}는 단종 제품이므로 제품 정보를 확인한 뒤 "
-            f"신형 {DISCONTINUED_MODELS[model]} 보상판매 절차를 안내드리겠습니다."
+            f"신형 {DISCONTINUED_MODELS[model]} 보상판매 절차로 접수해 주세요: https://reqm.co.kr/cs/"
             if is_discontinued
-            else "주문번호와 제품 상태를 확인할 수 있는 사진을 보내주시면 확인 후 새상품 교환 절차를 안내해 드리겠습니다."
+            else "제품 상태 사진을 첨부해 AS 신청서를 작성해 주세요. 불량 확인 후 새상품 교환으로 진행합니다: https://reqm.co.kr/cs/"
         )
         return DraftResult(
             text=compose_customer_reply(
@@ -133,7 +133,7 @@ def transform_operator_note(
                 customer_action="사용 중 휴대전화에 온도 경고나 충전 중단 문구가 표시되는지 확인해 주세요",
                 service_policy=(
                     "해당 문구 없이 느껴지는 발열만으로는 제품 불량으로 판단하기 어려워 교환이 어렵습니다. "
-                    "문구가 표시되거나 충전이 반복해서 중단되면 즉시 사용을 중단하고 사용한 어댑터·케이블 정보와 증상 사진을 네이버 톡톡으로 보내 주세요"
+                    "문구가 표시되거나 충전이 반복해서 중단되면 즉시 사용을 중단하고 어댑터·케이블 정보와 증상 사진을 첨부해 AS를 신청해 주세요: https://reqm.co.kr/cs/"
                 ),
             ),
             category="발열",
@@ -264,9 +264,9 @@ def transform_operator_note(
     if any(word in source for word in ("재입고", "단종", "품절", "언제 들어")) and not is_discontinued:
         color = next((value for value in ("화이트", "네온그린", "핑크", "블랙", "그린") if value in source), "해당 옵션")
         return DraftResult(
-            text=(
-                f"안녕하세요 고객님. 문의하신 {product} {color} 색상의 판매 여부와 재입고 일정은 "
-                "현재 판매 옵션과 입고 일정을 확인한 후 안내가 필요한 내용입니다. 담당 부서 확인 후 정확히 안내드리겠습니다."
+            text=compose_customer_reply(
+                direct_answer=f"{product} {color} 색상의 재입고 일정은 현재 확정된 정보만으로 안내하기 어렵습니다",
+                customer_action="최신 입고 일정 확인이 필요하므로 네이버 톡톡으로 문의해 주세요",
             ),
             category="재고_확인",
             risk_level="review",
@@ -276,9 +276,10 @@ def transform_operator_note(
 
     if any(word in source for word in ("대량구매", "대량 구매", "대량", "제작")):
         return DraftResult(
-            text=(
-                f"안녕하세요 고객님. 문의하신 {product}의 소재 변경 및 대량 제작 가능 여부는 생산 부서 검토가 필요합니다. "
-                "상호명, 담당자 성함과 연락처, 희망 수량, 적용하려는 소재의 사양을 남겨주시면 확인 후 안내드리겠습니다."
+            text=compose_customer_reply(
+                direct_answer=f"{product}의 소재 변경과 대량 제작은 생산 부서 검토가 필요합니다",
+                customer_action="상호명, 담당자 성함과 연락처, 희망 수량, 소재 사양을 네이버 톡톡으로 보내 주세요",
+                service_policy="전달한 조건을 기준으로 제작 가능 여부와 진행 과정을 안내합니다",
             ),
             category="기업_대량구매",
             risk_level="review",
@@ -328,9 +329,10 @@ def transform_operator_note(
 
     if any(word in source for word in ("벗겨", "도색", "코팅", "색상")) and any(word in source for word in ("물티슈", "닦", "벗겨")):
         return DraftResult(
-            text=(
-                f"안녕하세요 고객님. {product}의 표면을 닦은 뒤 색상이 벗겨진 상태로 확인됩니다. "
-                "추가로 문지르거나 세정제를 사용하지 마시고, 벗겨진 부위가 보이는 사진과 구매일자를 네이버 톡톡으로 보내주시면 제품 상태와 교환 가능 여부를 확인해 드리겠습니다."
+            text=compose_customer_reply(
+                direct_answer=f"{product}의 표면 손상은 사진 확인 후 교환 가능 여부를 판단합니다",
+                customer_action="추가로 문지르거나 세정제를 사용하지 말고 벗겨진 부위 사진과 구매일자를 네이버 톡톡으로 보내 주세요",
+                service_policy="제품 불량으로 확인되면 수리 대신 새상품 교환으로 처리합니다",
             ),
             category="외관_손상",
             risk_level="review",
@@ -353,9 +355,10 @@ def transform_operator_note(
 
     if any(word in source for word in ("워치", "WATCH")):
         return DraftResult(
-            text=(
-                f"안녕하세요 고객님. 문의하신 {product}의 갤럭시 워치 충전은 구매 옵션에 포함된 워치 충전 모듈의 종류와 "
-                "갤럭시 워치9에 대한 실제 호환 테스트 결과를 기준으로 안내해야 합니다. 신제품은 규격만으로 정상 충전을 보장하기 어려워 담당 부서의 테스트 여부 확인 후 안내드리겠습니다."
+            text=compose_customer_reply(
+                direct_answer=f"{product}의 워치 충전은 구매 옵션의 충전 모듈과 실제 호환 테스트 결과가 있어야 확정할 수 있습니다",
+                customer_action="사용할 워치의 정확한 모델명과 구매하려는 상품 옵션을 네이버 톡톡으로 보내 주세요",
+                service_policy="확인되지 않은 신제품은 규격만으로 정상 충전을 보장하지 않습니다",
             ),
             category="신제품_호환확인",
             risk_level="review",
@@ -389,7 +392,7 @@ def transform_operator_note(
                     direct_answer="문의에 남겨주신 구매일은 무상 AS 기간이 지나 신제품 보상판매로 안내할 수 있습니다",
                     verified_context=f"{product}이 켜지지 않고 충전되지 않는 증상으로 확인됩니다",
                     customer_action="먼저 다른 어댑터와 케이블로 C타입 입·출력 포트에 연결해 확인해 주세요",
-                    service_policy="동일한 경우 제품 검수가 필요하며, 무상 AS 기간은 구매일로부터 1년입니다. 리큐엠 AS는 수리가 아닌 새상품 교환 방식으로 진행됩니다",
+                    service_policy="동일하면 https://reqm.co.kr/cs/ 에서 접수해 주세요. 무상 AS 기간은 구매일로부터 1년이며, 리큐엠 AS는 수리 대신 새상품 교환 또는 보상판매 방식으로 진행됩니다",
                 ),
                 category="보증기간외_보상판매",
                 risk_level="review",
@@ -424,9 +427,10 @@ def transform_operator_note(
         )
 
     return DraftResult(
-        text=(
-            f"안녕하세요 고객님. 문의하신 {product} 관련 내용은 현재 확인된 상품 정보만으로 바로 확정하기 어려운 사항입니다. "
-            "담당 부서에서 해당 제품의 사양과 운영 기준을 확인한 후 정확히 안내드리겠습니다."
+        text=compose_customer_reply(
+            direct_answer=f"{product} 관련 문의는 현재 확인된 내용만으로 정확한 답변을 확정하기 어렵습니다",
+            customer_action="제품 사진, 사용 환경 또는 확인이 필요한 세부 내용을 네이버 톡톡으로 보내 주세요",
+            service_policy="톡톡에서 상품 정보와 문의 내용을 함께 확인해 한 번에 필요한 처리 방법을 안내합니다",
         ),
         category="일반",
         risk_level="normal",

@@ -117,6 +117,58 @@ class CsRepositoryTests(unittest.TestCase):
         self.assertEqual(result["final_answer"], "작업자가 고친 답변")
         case_query.eq.assert_called_once_with("product_model", "QPD330")
 
+    def test_does_not_reuse_answer_from_different_inquiry_category(self) -> None:
+        client = Mock()
+        case_query = Mock()
+        draft_query = Mock()
+        case_query.select.return_value = case_query
+        case_query.eq.return_value = case_query
+        case_query.execute.return_value = SimpleNamespace(data=[{"id": "case-1"}])
+        draft_query.select.return_value = draft_query
+        draft_query.in_.return_value = draft_query
+        draft_query.order.return_value = draft_query
+        draft_query.limit.return_value = draft_query
+        draft_query.execute.return_value = SimpleNamespace(data=[{
+            "generated_draft": "자동 초안",
+            "final_answer": "배송 답변",
+            "knowledge_refs": ["category:주문_배송조회", "주문상태:배송 중", "실제 주문 상태 기준 배송 안내"],
+        }])
+        client.table.side_effect = lambda name: case_query if name == "cs_cases" else draft_query
+        repository = CsRepository(client)
+
+        result = repository.find_reusable_answer(
+            product_model="QP1000C",
+            knowledge_refs=["category:주문_취소", "주문상태:배송 중", "주문 상태에 따른 취소·반품 구분"],
+        )
+
+        self.assertIsNone(result)
+
+    def test_does_not_reuse_order_answer_from_different_order_status(self) -> None:
+        client = Mock()
+        case_query = Mock()
+        draft_query = Mock()
+        case_query.select.return_value = case_query
+        case_query.eq.return_value = case_query
+        case_query.execute.return_value = SimpleNamespace(data=[{"id": "case-1"}])
+        draft_query.select.return_value = draft_query
+        draft_query.in_.return_value = draft_query
+        draft_query.order.return_value = draft_query
+        draft_query.limit.return_value = draft_query
+        draft_query.execute.return_value = SimpleNamespace(data=[{
+            "generated_draft": "자동 초안",
+            "final_answer": "배송 중 답변",
+            "knowledge_refs": ["category:주문_배송조회", "주문상태:배송 중", "실제 주문 상태 기준 배송 안내"],
+        }])
+        client.table.side_effect = lambda name: case_query if name == "cs_cases" else draft_query
+        repository = CsRepository(client)
+
+        result = repository.find_reusable_answer(
+            product_model="QP1000C",
+            knowledge_refs=["category:주문_배송조회", "주문상태:배송 완료", "실제 주문 상태 기준 배송 안내"],
+        )
+
+        self.assertIsNone(result)
+
 
 if __name__ == "__main__":
     unittest.main()

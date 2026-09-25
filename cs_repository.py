@@ -105,15 +105,27 @@ class CsRepository:
             .execute()
         )
         requested = {str(value).strip() for value in knowledge_refs if str(value).strip()}
-        best: tuple[int, dict] | None = None
+        requested_categories = {value for value in requested if value.startswith("category:")}
+        requested_statuses = {value for value in requested if value.startswith("주문상태:")}
+        best: tuple[float, dict] | None = None
         for row in draft_response.data or []:
             generated = str(row.get("generated_draft") or "").strip()
             final = str(row.get("final_answer") or "").strip()
             if not final or final == generated:
                 continue
             refs = {str(value).strip() for value in (row.get("knowledge_refs") or []) if str(value).strip()}
-            score = len(requested & refs)
-            if score and (best is None or score > best[0]):
+            if requested_categories and not requested_categories.issubset(refs):
+                continue
+            row_statuses = {value for value in refs if value.startswith("주문상태:")}
+            if requested_statuses and row_statuses != requested_statuses:
+                continue
+            comparable_requested = requested - requested_statuses
+            comparable_refs = refs - row_statuses
+            overlap = len(comparable_requested & comparable_refs)
+            union = len(comparable_requested | comparable_refs)
+            score = overlap / union if union else 0.0
+            minimum_overlap = 2 if len(comparable_requested) > 1 else 1
+            if overlap >= minimum_overlap and score >= 0.6 and (best is None or score > best[0]):
                 best = (score, row)
         return best[1] if best else None
 

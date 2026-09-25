@@ -85,8 +85,19 @@ class CsDraftTransformerTests(unittest.TestCase):
     def test_unknown_question_requests_only_required_context(self) -> None:
         result = transform_operator_note(question="사용 방법을 알려주세요.", product_name="리큐엠 충전기")
         self.assertIn("리큐엠 충전기", result.text)
-        self.assertIn("담당 부서", result.text)
+        self.assertIn("네이버 톡톡", result.text)
+        self.assertIn("처리 방법", result.text)
         self.assertNotIn("제품 모델과 구매 정보", result.text)
+
+    def test_defect_answer_finishes_with_as_application_route(self) -> None:
+        result = transform_operator_note(question="충전이 안 되고 전원도 켜지지 않아요", product_model="QP2000C")
+        self.assertIn("https://reqm.co.kr/cs/", result.text)
+        self.assertIn("새상품", result.text)
+
+    def test_swelling_answer_finishes_with_as_application_route(self) -> None:
+        result = transform_operator_note(question="배터리가 부풀었습니다", product_model="QP1000C")
+        self.assertIn("https://reqm.co.kr/cs/", result.text)
+        self.assertIn("새상품 교환", result.text)
 
     def test_galaxy_book_question_explains_qpd330_output_limit(self) -> None:
         result = transform_operator_note(

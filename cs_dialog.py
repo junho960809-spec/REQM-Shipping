@@ -492,7 +492,7 @@ class CsManagementDialog(QDialog):
                 QMessageBox.information(self, "문의 분석", str(exc))
             return
         self.current_generated_draft = result.text
-        self.current_policy_refs = list(result.policy_refs)
+        self.current_policy_refs = [f"category:{result.category}", *result.policy_refs]
         learned = self.repository.find_reusable_answer(
             product_model=str((self.current_case or {}).get("product_model") or ""),
             knowledge_refs=self.current_policy_refs,
