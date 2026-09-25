@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
 )
 
 from cs_repository import CsRepository, DraftConflictError
+from cs_send_policy import evaluate_send_readiness
 from cs_service import transform_operator_note
 from naver_commerce_client import NaverCommerceClient, NaverCommerceError
 from naver_credential_store import load_naver_credentials
@@ -86,6 +87,8 @@ class CsManagementDialog(QDialog):
         self.current_draft_id = ""
         self.current_generated_draft = ""
         self.current_policy_refs: list[str] = []
+        self.current_category = ""
+        self.current_risk_level = "normal"
         self.current_marketplace = "naver"
         self._loaded_cases: list[dict] = []
         self.setWindowTitle("CS 관리")
@@ -208,6 +211,13 @@ class CsManagementDialog(QDialog):
         self.reply_basis.setMaximumHeight(92)
         self.reply_basis.setPlaceholderText("제품 정보와 CS 운영 기준이 표시됩니다.")
         layout.addWidget(self.reply_basis)
+        self.manual_send_notice = QLabel("수동 전송 모드 · 자동 전송은 사용하지 않습니다.")
+        self.manual_send_notice.setWordWrap(True)
+        self.manual_send_notice.setStyleSheet(
+            "background:#f4f4f4;color:#444;border:1px solid #d6d6d6;"
+            "border-radius:8px;padding:7px 10px;font-weight:700;"
+        )
+        layout.addWidget(self.manual_send_notice)
         layout.addWidget(QLabel("추가 작업자 메모 (선택)"))
         self.operator_note = QTextEdit()
         self.operator_note.setPlaceholderText("자동 분석에 추가할 내용이 있을 때만 입력하세요.")
@@ -223,7 +233,7 @@ class CsManagementDialog(QDialog):
         layout.addWidget(self.draft, 1)
         actions = QHBoxLayout()
         self.save_button = QPushButton("초안 저장")
-        self.send_button = QPushButton("승인 후 네이버 전송")
+        self.send_button = QPushButton("검토 완료 후 수동 전송")
         self.save_button.setEnabled(False)
         self.send_button.setEnabled(False)
         self.save_button.setToolTip("CS 공용 테이블 적용 후 사용할 수 있습니다.")
@@ -506,6 +516,7 @@ class CsManagementDialog(QDialog):
             self.save_button.setEnabled(False)
             self.analysis_summary.setText("분석 전 · 문의를 선택하면 유형과 주의 수준이 표시됩니다.")
             self.reply_basis.clear()
+            self.manual_send_notice.setText("수동 전송 모드 · 자동 전송은 사용하지 않습니다.")
             return
         self.current_case = case
         self.question.setPlainText(str(case.get("question") or ""))
@@ -530,19 +541,27 @@ class CsManagementDialog(QDialog):
         self.draft_source.setText("저장된 공용 최종 답변" if latest else "문의 분석 결과")
         if latest:
             saved_refs = [str(value) for value in (latest.get("knowledge_refs") or [])]
+            self.current_category = self._analysis_category(saved_refs)
+            self.current_risk_level = self._analysis_risk(saved_refs, str(case.get("risk_level") or "normal"))
             self._show_analysis(
-                category=self._analysis_category(saved_refs),
-                risk_level=self._analysis_risk(saved_refs, str(case.get("risk_level") or "normal")),
+                category=self.current_category,
+                risk_level=self.current_risk_level,
                 policy_refs=saved_refs,
             )
         self.save_button.setEnabled(not bool(case.get("_sample")))
-        self.send_button.setEnabled(bool(self.current_draft_id) and self.naver_client is not None)
+        self.send_button.setEnabled(
+            bool(self.current_draft_id) and self.naver_client is not None and self._update_send_readiness()
+        )
         if latest is None:
             self._generate_draft(show_error=False)
 
     def _draft_changed(self) -> None:
         if hasattr(self, "send_button"):
             self.send_button.setEnabled(False)
+        if hasattr(self, "manual_send_notice"):
+            self.manual_send_notice.setText(
+                "수동 전송 모드 · 답변이 수정되었습니다. 수정 내용을 저장한 뒤 수동 전송할 수 있습니다."
+            )
 
     def convert_note(self) -> None:
         self._generate_draft(show_error=True)
@@ -560,6 +579,8 @@ class CsManagementDialog(QDialog):
                 QMessageBox.information(self, "문의 분석", str(exc))
             return
         self.current_generated_draft = result.text
+        self.current_category = result.category
+        self.current_risk_level = result.risk_level
         self.current_policy_refs = [f"category:{result.category}", f"risk:{result.risk_level}", *result.policy_refs]
         self._show_analysis(
             category=result.category,
@@ -576,6 +597,17 @@ class CsManagementDialog(QDialog):
         else:
             self.draft.setPlainText(result.text)
             self.draft_source.setText("상품 정보와 CS 정책으로 자동 생성")
+        self._update_send_readiness()
+
+    def _update_send_readiness(self) -> bool:
+        readiness = evaluate_send_readiness(
+            answer=self.draft.toPlainText(),
+            category=self.current_category,
+            risk_level=self.current_risk_level,
+        )
+        prefix = "전송 준비 완료" if readiness.allowed else "전송 전 확인 필요"
+        self.manual_send_notice.setText(f"수동 전송 모드 · {prefix}\n{readiness.message}")
+        return readiness.allowed
 
     def save_shared_draft(self) -> None:
         if not self.current_case or self.current_case.get("_sample"):
@@ -598,7 +630,9 @@ class CsManagementDialog(QDialog):
             return
         self.current_draft_version = int(saved.get("version") or self.current_draft_version + 1)
         self.current_draft_id = str(saved.get("id") or "")
-        self.send_button.setEnabled(bool(self.current_draft_id) and self.naver_client is not None)
+        self.send_button.setEnabled(
+            bool(self.current_draft_id) and self.naver_client is not None and self._update_send_readiness()
+        )
         QMessageBox.information(self, "초안 저장", "공용 초안을 저장했습니다.")
 
     def send_to_naver(self) -> None:
@@ -608,12 +642,15 @@ class CsManagementDialog(QDialog):
         if not answer:
             QMessageBox.information(self, "답변 확인", "전송할 답변을 입력해 주세요.")
             return
+        if not self._update_send_readiness():
+            QMessageBox.information(self, "전송 전 확인", "필수 안내를 보완한 뒤 초안을 다시 저장해 주세요.")
+            return
         is_product_qna = self.current_case.get("channel") == "product_qna"
         channel_name = "상품 Q&A" if is_product_qna else "주문 고객 문의"
         confirmed = QMessageBox.question(
             self,
             "네이버 답변 전송",
-            f"저장된 공용 초안을 네이버 {channel_name}에 답변으로 등록할까요?\n전송 후 해당 문의는 완료로 이동합니다.",
+            f"자동 전송이 아닌 작업자 수동 전송입니다.\n저장된 답변을 네이버 {channel_name}에 등록할까요?\n전송 후 해당 문의는 완료로 이동합니다.",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )

@@ -277,6 +277,8 @@ class DashboardNavigationTests(unittest.TestCase):
         self.assertIn("안전_팽창", dialog.analysis_summary.text())
         self.assertIn("긴급 안전", dialog.analysis_summary.text())
         self.assertIn("즉시 사용 중단", dialog.reply_basis.toPlainText())
+        self.assertIn("수동 전송 모드", dialog.manual_send_notice.text())
+        self.assertEqual(dialog.send_button.text(), "검토 완료 후 수동 전송")
         dialog.close()
 
     def test_cs_dialog_splits_order_context_into_readable_fields(self) -> None:
