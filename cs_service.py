@@ -113,6 +113,14 @@ def _looks_like_spam(source: str) -> bool:
     return sum(marker in source for marker in markers) >= 2
 
 
+def _has_product_defect_signal(source: str) -> bool:
+    return any(word in source for word in (
+        "제품 불량", "불량", "고장", "작동 안", "작동하지", "충전이 안", "충전 안",
+        "충전이 되지", "충전되지",
+        "인식 안", "인식하지", "켜지지", "전원이 안", "접촉 불량",
+    ))
+
+
 def _order_status(product_name: str) -> str:
     match = re.search(r"주문상태:\s*([^/\n]+)", product_name)
     return match.group(1).strip() if match else ""
@@ -322,7 +330,8 @@ def _transform_policy_answer(
             policy_refs=("네이버 반품비용 산정 내역 확인", "할인·쿠폰·배송비 확인 후 안내"),
         )
 
-    if any(word in source for word in ("단순 변심", "반품하고", "반품 요청", "교환하고", "교환 요청")):
+    if any(word in source for word in ("단순 변심", "반품하고", "반품 요청", "교환하고", "교환 요청")) \
+            and not _has_product_defect_signal(source):
         return DraftResult(
             text=compose_customer_reply(
                 direct_answer="네이버 주문 상세에서 교환 또는 반품 요청을 접수해 주세요",
@@ -335,7 +344,11 @@ def _transform_policy_answer(
             policy_refs=(f"주문상태:{order_status or '미확인'}", "네이버 주문 상세에서 교환·반품 접수"),
         )
 
-    if any(word in source for word in ("누락", "빠져", "다른 상품", "오배송", "잘못 왔", "파손")):
+    delivery_mismatch = any(word in source for word in ("누락", "빠져", "다른 상품", "오배송", "잘못 왔"))
+    shipping_damage = "파손" in source and any(
+        word in source for word in ("배송", "택배", "도착", "수령", "받았", "받아", "왔어요", "개봉")
+    )
+    if delivery_mismatch or shipping_damage:
         return DraftResult(
             text=compose_customer_reply(
                 direct_answer="구성품 누락·오배송·파손은 확인 후 새상품 교환 또는 누락 구성품 발송으로 처리해 드립니다",
@@ -483,8 +496,8 @@ def _transform_policy_answer(
         )
 
     if any(word in source for word in (
-        "수리", "고장", "AS", "불량", "충전이 안", "충전 안", "작동 안",
-        "인식 안", "켜지지", "전원이 안", "접촉 불량",
+        "수리", "고장", "AS", "불량", "충전이 안", "충전 안", "충전이 되지", "충전되지", "작동 안",
+        "인식 안", "켜지지", "전원이 안", "접촉 불량", "파손",
     )):
         outside_warranty = _purchase_is_outside_warranty(source)
         if outside_warranty:
@@ -504,7 +517,7 @@ def _transform_policy_answer(
                 requires_approval=True,
                 policy_refs=("무상 교환 1년", "기간 경과 시 동일 제품 30% 보상판매"),
             )
-        if any(word in source for word in ("충전도 안", "충전이 안", "켜지지", "액정 화면도 안", "전원도 안")):
+        if any(word in source for word in ("충전도 안", "충전이 안", "충전이 되지", "충전되지", "켜지지", "액정 화면도 안", "전원도 안")):
             return DraftResult(
                 text=compose_customer_reply(
                     direct_answer="동일 증상이 계속되면 구매일과 제품 검수 결과에 따라 새상품 교환(새제품 출고) 또는 보상판매로 진행합니다",

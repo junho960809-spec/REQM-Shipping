@@ -232,6 +232,25 @@ class CsDraftTransformerTests(unittest.TestCase):
         self.assertIn("택배 상자", result.text)
         self.assertIn("새상품 교환", result.text)
 
+    def test_product_defect_exchange_request_routes_to_as(self) -> None:
+        result = transform_operator_note(
+            question="제품 불량이라 교환 요청합니다. 충전이 되지 않아요.",
+            product_model="QP1000C",
+        )
+        self.assertEqual(result.category, "AS_전원충전불량")
+        self.assertIn("https://reqm.co.kr/cs/", result.text)
+        self.assertNotIn("네이버 주문 상세에서 교환", result.text)
+
+    def test_product_damage_without_delivery_context_routes_to_as(self) -> None:
+        result = transform_operator_note(question="사용하던 제품이 파손됐어요", product_model="QPD330")
+        self.assertEqual(result.category, "AS_새상품교환")
+        self.assertNotIn("택배 상자", result.text)
+
+    def test_shipping_damage_still_routes_to_delivery_review(self) -> None:
+        result = transform_operator_note(question="택배를 받아보니 제품이 파손되어 왔어요", product_model="QPD330")
+        self.assertEqual(result.category, "배송_오배송파손누락")
+        self.assertIn("택배 상자", result.text)
+
     def test_natural_cancel_wording_is_classified_as_order_cancel(self) -> None:
         result = transform_operator_note(
             question="혹시 아직 출발 안 했으면 취소될까요?",
