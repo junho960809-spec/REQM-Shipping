@@ -342,6 +342,36 @@ class DashboardNavigationTests(unittest.TestCase):
         self.assertIn("작업자가 수정한 답변", dialog.draft_source.text())
         dialog.close()
 
+    def test_cs_dialog_replaces_saved_delivery_answer_when_defect_category_changed(self) -> None:
+        dialog = CsManagementDialog()
+        dialog.repository = Mock()
+        dialog.repository.latest_draft.return_value = {
+            "id": "draft-1",
+            "version": 1,
+            "operator_note": "",
+            "generated_draft": "오배송 자동 답변",
+            "final_answer": "택배 상자와 송장 사진을 보내 주세요.",
+            "knowledge_refs": ["category:배송_오배송파손누락", "risk:review"],
+        }
+        case = {
+            "id": "case-1",
+            "channel": "product_qna",
+            "question": "C타입 연결부위 불량",
+            "product_model": "QP1000C",
+            "category": "리큐엠 QP1000C",
+        }
+        dialog.inquiry_list.clear()
+        dialog.inquiry_list.addItem("제품 불량 문의")
+        dialog.inquiry_list.item(0).setData(Qt.ItemDataRole.UserRole, case)
+        dialog.inquiry_list.setCurrentRow(0)
+
+        self.assertEqual(dialog.current_category, "AS_새상품교환")
+        self.assertIn("분류 오류", dialog.draft_source.text())
+        self.assertIn("https://reqm.co.kr/cs/", dialog.draft.toPlainText())
+        self.assertNotIn("택배 상자", dialog.draft.toPlainText())
+        self.assertFalse(dialog.send_button.isEnabled())
+        dialog.close()
+
     def test_cs_dialog_sends_saved_product_qna_and_marks_it_complete(self) -> None:
         dialog = CsManagementDialog()
         dialog.naver_client = Mock()

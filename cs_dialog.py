@@ -576,6 +576,7 @@ class CsManagementDialog(QDialog):
         )
         self.draft.setPlainText(str(latest.get("final_answer") or "") if latest else "")
         self.draft_source.setText("저장된 공용 최종 답변" if latest else "문의 분석 결과")
+        classification_changed = False
         if latest:
             saved_refs = [str(value) for value in (latest.get("knowledge_refs") or [])]
             self.current_category = self._analysis_category(saved_refs)
@@ -585,9 +586,37 @@ class CsManagementDialog(QDialog):
                 risk_level=self.current_risk_level,
                 policy_refs=saved_refs,
             )
+            fresh_result = transform_operator_note(
+                question=self.question.toPlainText(),
+                operator_note=self.operator_note.toPlainText(),
+                product_model=str(case.get("product_model") or ""),
+                product_name=str(case.get("category") or ""),
+            )
+            if fresh_result.category != self.current_category:
+                classification_changed = True
+                self.current_generated_draft = fresh_result.text
+                self.current_category = fresh_result.category
+                self.current_risk_level = fresh_result.risk_level
+                self.current_policy_refs = [
+                    f"category:{fresh_result.category}",
+                    f"risk:{fresh_result.risk_level}",
+                    *fresh_result.policy_refs,
+                ]
+                self.draft.setPlainText(fresh_result.text)
+                self.draft_source.setText(
+                    "기존 저장 답변의 분류 오류를 감지해 새 초안으로 교체 · 검토 후 저장 필요"
+                )
+                self._show_analysis(
+                    category=fresh_result.category,
+                    risk_level=fresh_result.risk_level,
+                    policy_refs=self.current_policy_refs,
+                )
         self.save_button.setEnabled(not bool(case.get("_sample")))
         self.send_button.setEnabled(
-            bool(self.current_draft_id) and self.naver_client is not None and self._update_send_readiness()
+            not classification_changed
+            and bool(self.current_draft_id)
+            and self.naver_client is not None
+            and self._update_send_readiness()
         )
         if latest is None:
             self._generate_draft(show_error=False)
