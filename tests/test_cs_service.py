@@ -102,6 +102,78 @@ class CsDraftTransformerTests(unittest.TestCase):
         self.assertIn("https://reqm.co.kr/cs/", result.text)
         self.assertNotIn("제품 모델", result.text)
 
+    def test_shipping_answer_uses_actual_delivered_status(self) -> None:
+        result = transform_operator_note(
+            question="언제 배송되나요?",
+            product_model="QP1000C",
+            product_name="리큐엠 QP1000C / 옵션: 화이트 / 주문상태: 배송 완료 / 수량: 1",
+        )
+        self.assertEqual(result.category, "주문_배송조회")
+        self.assertIn("배송 완료 상태", result.text)
+        self.assertNotIn("주문번호", result.text)
+
+    def test_address_change_after_shipping_explains_carrier_route(self) -> None:
+        result = transform_operator_note(
+            question="배송지 변경해 주세요",
+            product_model="QPD330",
+            product_name="리큐엠 QPD330 / 주문상태: 배송 중 / 수량: 1",
+        )
+        self.assertEqual(result.category, "주문_배송지변경")
+        self.assertIn("택배사", result.text)
+        self.assertIn("배송지를 변경하기 어렵", result.text)
+
+    def test_cancel_after_delivery_routes_to_return(self) -> None:
+        result = transform_operator_note(
+            question="주문 취소 가능한가요?",
+            product_model="QP2000C",
+            product_name="리큐엠 QP2000C / 주문상태: 배송 완료 / 수량: 1",
+        )
+        self.assertEqual(result.category, "주문_취소")
+        self.assertIn("반품 요청", result.text)
+
+    def test_swelling_has_priority_over_travel_question(self) -> None:
+        result = transform_operator_note(
+            question="비행기에 가져가려는데 배터리가 부풀었어요",
+            product_model="QP1000C",
+        )
+        self.assertEqual(result.category, "안전_팽창")
+        self.assertIn("즉시 중단", result.text)
+
+    def test_wrong_item_routes_to_photo_based_exchange_review(self) -> None:
+        result = transform_operator_note(
+            question="주문한 것과 다른 상품이 왔어요",
+            product_model="QPD330",
+        )
+        self.assertEqual(result.category, "배송_오배송파손누락")
+        self.assertIn("택배 상자", result.text)
+        self.assertIn("새상품 교환", result.text)
+
+    def test_natural_cancel_wording_is_classified_as_order_cancel(self) -> None:
+        result = transform_operator_note(
+            question="혹시 아직 출발 안 했으면 취소될까요?",
+            product_name="리큐엠 보조배터리 / 주문상태: 결제 완료 / 수량: 1",
+        )
+        self.assertEqual(result.category, "주문_취소")
+        self.assertIn("취소 요청", result.text)
+
+    def test_arrival_guarantee_delay_is_classified_as_delivery(self) -> None:
+        result = transform_operator_note(
+            question="내일도착보장 제품이 아직 도착 안 했습니다",
+            product_name="리큐엠 충전기 / 주문상태: 배송 중 / 수량: 1",
+        )
+        self.assertEqual(result.category, "주문_배송조회")
+        self.assertIn("도착 예정일이 지났", result.text)
+
+    def test_return_amount_question_is_not_misclassified_as_product_as(self) -> None:
+        result = transform_operator_note(
+            question="무료교환반품인데 반품 예정 금액은 왜 다르죠?",
+            product_model="QP1000C",
+            product_name="리큐엠 QP1000C / 주문상태: 배송 완료 / 수량: 1",
+        )
+        self.assertEqual(result.category, "주문_반품환불금액")
+        self.assertIn("할인", result.text)
+        self.assertNotIn("AS 신청서", result.text)
+
 
 if __name__ == "__main__":
     unittest.main()

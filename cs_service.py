@@ -46,6 +46,11 @@ def _looks_like_spam(source: str) -> bool:
     return sum(marker in source for marker in markers) >= 2
 
 
+def _order_status(product_name: str) -> str:
+    match = re.search(r"주문상태:\s*([^/\n]+)", product_name)
+    return match.group(1).strip() if match else ""
+
+
 def transform_operator_note(
     *,
     question: str,
@@ -64,6 +69,7 @@ def transform_operator_note(
     model = _detected_model(source, product_model, product_name)
     product = _product_label(product_name, model)
     is_discontinued = model in DISCONTINUED_MODELS
+    order_status = _order_status(product_name)
 
     if _looks_like_spam(source):
         return DraftResult(
@@ -72,6 +78,131 @@ def transform_operator_note(
             risk_level="blocked",
             requires_approval=True,
             policy_refs=("광고성 문의는 답변하지 않고 작업자 확인",),
+        )
+
+    # Safety reports always take precedence over compatibility, travel, and order questions.
+    if any(word in source for word in ("팽창", "부풀", "스웰링", "연기", "타는 냄새", "스파크")):
+        next_step = (
+            f"문의하신 {model}는 단종 제품이므로 제품 정보를 확인한 뒤 "
+            f"신형 {DISCONTINUED_MODELS[model]} 보상판매 절차를 안내드리겠습니다."
+            if is_discontinued
+            else "주문번호와 제품 상태를 확인할 수 있는 사진을 보내주시면 확인 후 새상품 교환 절차를 안내해 드리겠습니다."
+        )
+        return DraftResult(
+            text=(
+                "안녕하세요 고객님. 제품이 부풀거나 이상 증상이 있는 경우 안전을 위해 사용과 충전을 즉시 중단해 주세요. "
+                "제품을 누르거나 분해하지 마시고 화기나 고온의 장소에서 멀리 보관해 주세요. "
+                + next_step
+            ),
+            category="안전_팽창",
+            risk_level="urgent",
+            requires_approval=True,
+            policy_refs=("즉시 사용 중단", "수리 대신 새상품 교환", "단종 모델은 보상판매"),
+        )
+
+    if any(word in source for word in ("발열", "뜨거", "열이", "온도")):
+        return DraftResult(
+            text=(
+                f"안녕하세요 고객님. {product}도 전자기기이므로 충전 또는 사용 중 일정한 열이 발생할 수 있습니다. "
+                "사용 중 휴대전화에 온도 경고나 충전 중단 문구가 표시되었는지 확인 부탁드립니다. "
+                "해당 문구가 확인되거나 충전이 반복해서 중단된다면 즉시 사용을 중단하고, 사용한 어댑터와 케이블 정보 및 증상 사진을 네이버 톡톡으로 보내주시면 확인해 드리겠습니다."
+            ),
+            category="발열",
+            risk_level="review",
+            requires_approval=True,
+            policy_refs=("전자기기 열 발생 가능", "온도 경고·충전 중단 확인"),
+        )
+
+    if any(word in source for word in (
+        "언제 출고", "언제 배송", "언제 도착", "배송 언제", "출고 언제", "송장", "배송조회",
+        "도착보장", "아직 도착", "배송 지연", "배송이 늦", "도착 안", "도착안",
+    )):
+        is_delayed = any(word in source for word in ("도착보장", "아직 도착", "배송 지연", "배송이 늦", "도착 안", "도착안"))
+        if is_delayed and order_status != "배송 완료":
+            detail = "도착 예정일이 지났는데 아직 받지 못하신 내용으로 확인됩니다. 현재 배송조회에 표시된 택배 이동 내역을 확인한 뒤 지연 또는 분실 여부를 확인해 안내드리겠습니다."
+        elif order_status == "배송 완료":
+            detail = "현재 주문은 배송 완료 상태입니다. 네이버 주문 상세의 배송조회에서 수령 장소를 먼저 확인해 주세요. 수령하지 못하셨다면 배송조회에 표시된 택배사로 확인 부탁드립니다."
+        elif order_status == "배송 중":
+            detail = "현재 주문은 배송 중입니다. 네이버 주문 상세의 배송조회에서 택배사 이동 내역과 예상 도착 정보를 확인하실 수 있습니다."
+        elif order_status == "결제 완료":
+            detail = "현재 주문은 결제 완료 상태로 출고 준비 중입니다. 송장이 등록되면 네이버 주문 상세에서 배송조회가 가능합니다."
+        elif order_status == "구매 확정":
+            detail = "현재 주문은 배송 후 구매 확정된 상태입니다. 상품을 받지 못하셨다면 주문 상세의 배송 이력과 수령 장소를 확인해 주세요."
+        else:
+            detail = "주문 상세에 송장이 등록되면 네이버에서 배송조회가 가능합니다. 정확한 출고 여부는 주문 상태를 확인한 후 안내드리겠습니다."
+        return DraftResult(
+            text=f"안녕하세요 고객님. 문의하신 주문의 배송 상태를 확인했습니다. {detail}",
+            category="주문_배송조회",
+            risk_level="normal",
+            requires_approval=True,
+            policy_refs=(f"주문상태:{order_status or '미확인'}", "실제 주문 상태 기준 배송 안내"),
+        )
+
+    if any(word in source for word in ("주소 변경", "배송지 변경", "주소를 바", "배송지를 바")):
+        if order_status in ("배송 중", "배송 완료", "구매 확정"):
+            detail = "이미 출고가 진행되어 판매자가 배송지를 변경하기 어렵습니다. 배송조회에 표시된 택배사로 배송 가능 여부를 확인해 주세요."
+        else:
+            detail = "출고 전이라면 변경 가능 여부를 확인할 수 있습니다. 변경할 배송지는 공개 문의에 남기지 말고 네이버 톡톡으로 보내 주세요."
+        return DraftResult(
+            text=f"안녕하세요 고객님. 문의하신 주문은 현재 {order_status or '상태 확인이 필요한'} 상태입니다. {detail}",
+            category="주문_배송지변경",
+            risk_level="review",
+            requires_approval=True,
+            policy_refs=(f"주문상태:{order_status or '미확인'}", "개인정보는 공개 문의에 작성 금지"),
+        )
+
+    if any(word in source for word in ("주문 취소", "취소해", "취소 가능", "취소될", "취소하고", "취소 요청")):
+        if order_status == "취소 완료":
+            detail = "현재 주문은 취소 완료 상태입니다. 환불 진행 내용은 네이버 주문 상세에서 확인해 주세요."
+        elif order_status in ("배송 중", "배송 완료", "구매 확정"):
+            detail = "이미 출고가 진행되어 주문 취소로 처리하기 어렵습니다. 네이버 주문 상세에서 반품 요청을 접수해 주세요."
+        else:
+            detail = "네이버 주문 상세에서 취소 요청을 접수해 주세요. 출고 처리 시점에 따라 취소 또는 반품 절차로 진행될 수 있습니다."
+        return DraftResult(
+            text=f"안녕하세요 고객님. 문의하신 주문의 상태를 확인했습니다. {detail}",
+            category="주문_취소",
+            risk_level="review",
+            requires_approval=True,
+            policy_refs=(f"주문상태:{order_status or '미확인'}", "주문 상태에 따른 취소·반품 구분"),
+        )
+
+    if any(word in source for word in ("반품", "환불")) and any(
+        word in source for word in ("금액", "예상액", "배송비", "무료", "차감", "왜")
+    ):
+        return DraftResult(
+            text=(
+                "안녕하세요 고객님. 반품 예정 금액은 상품 결제금액에서 주문에 적용된 할인, 쿠폰 반환 조건, "
+                "반품 배송비 등이 반영되어 네이버에서 계산됩니다. 네이버 주문 상세의 반품비용 내역을 확인해 주세요. "
+                "표시된 차감 사유와 실제 주문 조건이 다르다면 해당 주문의 결제·반품 내역을 확인한 후 안내드리겠습니다."
+            ),
+            category="주문_반품환불금액",
+            risk_level="review",
+            requires_approval=True,
+            policy_refs=("네이버 반품비용 산정 내역 확인", "할인·쿠폰·배송비 확인 후 안내"),
+        )
+
+    if any(word in source for word in ("단순 변심", "반품하고", "반품 요청", "교환하고", "교환 요청")):
+        return DraftResult(
+            text=(
+                f"안녕하세요 고객님. 문의하신 주문은 현재 {order_status or '상태 확인이 필요한'} 상태입니다. "
+                "네이버 주문 상세에서 교환 또는 반품 요청을 접수해 주세요. 상품 사용 여부와 회수 상태를 확인한 후 네이버에 표시된 절차에 따라 처리됩니다."
+            ),
+            category="주문_교환반품",
+            risk_level="review",
+            requires_approval=True,
+            policy_refs=(f"주문상태:{order_status or '미확인'}", "네이버 주문 상세에서 교환·반품 접수"),
+        )
+
+    if any(word in source for word in ("누락", "빠져", "다른 상품", "오배송", "잘못 왔", "파손")):
+        return DraftResult(
+            text=(
+                f"안녕하세요 고객님. {product}의 구성품 누락·오배송·파손 문의로 확인됩니다. "
+                "받으신 상품 전체와 택배 상자, 송장, 문제가 확인되는 부분을 함께 촬영해 네이버 톡톡으로 보내주시면 확인 후 새상품 교환 또는 누락 구성품 발송 절차를 안내해 드리겠습니다."
+            ),
+            category="배송_오배송파손누락",
+            risk_level="review",
+            requires_approval=True,
+            policy_refs=("택배 상자·송장·상품 사진 확인", "확인 후 새상품 교환 또는 누락품 발송"),
         )
 
     if any(word in source for word in ("전원을 아예", "전원 끄", "전원 종료", "어떻게 꺼")) and model in ("QP1000C", "QP2000C"):
@@ -189,38 +320,6 @@ def transform_operator_note(
             policy_refs=("신제품은 실제 호환 테스트 결과 확인",),
         )
 
-    if any(word in source for word in ("팽창", "부풀", "스웰링", "연기", "타는 냄새", "스파크")):
-        next_step = (
-            f"문의하신 {model}는 단종 제품이므로 제품 정보를 확인한 뒤 "
-            f"신형 {DISCONTINUED_MODELS[model]} 보상판매 절차를 안내드리겠습니다."
-            if is_discontinued
-            else "주문번호와 제품 상태를 확인할 수 있는 사진을 보내주시면 확인 후 새상품 교환 절차를 안내해 드리겠습니다."
-        )
-        return DraftResult(
-            text=(
-                "안녕하세요 고객님. 제품이 부풀거나 이상 증상이 있는 경우 안전을 위해 사용과 충전을 즉시 중단해 주세요. "
-                "제품을 누르거나 분해하지 마시고 화기나 고온의 장소에서 멀리 보관해 주세요. "
-                + next_step
-            ),
-            category="안전_팽창",
-            risk_level="urgent",
-            requires_approval=True,
-            policy_refs=("즉시 사용 중단", "수리 대신 새상품 교환", "단종 모델은 보상판매"),
-        )
-
-    if any(word in source for word in ("발열", "뜨거", "열이", "온도")):
-        return DraftResult(
-            text=(
-                f"안녕하세요 고객님. {product}도 전자기기이므로 충전 또는 사용 중 일정한 열이 발생할 수 있습니다. "
-                "사용 중 휴대전화에 온도 경고나 충전 중단 문구가 표시되었는지 확인 부탁드립니다. "
-                "해당 문구가 확인되거나 충전이 반복해서 중단된다면 즉시 사용을 중단하고, 사용한 어댑터와 케이블 정보 및 증상 사진을 네이버 톡톡으로 보내주시면 확인해 드리겠습니다."
-            ),
-            category="발열",
-            risk_level="review",
-            requires_approval=True,
-            policy_refs=("전자기기 열 발생 가능", "온도 경고·충전 중단 확인"),
-        )
-
     if is_discontinued:
         replacement = DISCONTINUED_MODELS[model]
         return DraftResult(
@@ -236,7 +335,7 @@ def transform_operator_note(
         )
 
     if any(word in source for word in (
-        "수리", "고장", "AS", "교환", "불량", "충전이 안", "충전 안", "작동 안",
+        "수리", "고장", "AS", "불량", "충전이 안", "충전 안", "작동 안",
         "인식 안", "켜지지", "전원이 안", "접촉 불량",
     )):
         purchase_years = [int(value) for value in re.findall(r"20\d{2}", source)]
