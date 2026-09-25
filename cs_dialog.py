@@ -627,10 +627,14 @@ class CsManagementDialog(QDialog):
         learned = self.repository.find_reusable_answer(
             product_model=str((self.current_case or {}).get("product_model") or ""),
             knowledge_refs=self.current_policy_refs,
+            question=self.question.toPlainText(),
         )
         if learned:
             self.draft.setPlainText(str(learned.get("final_answer") or result.text))
-            self.draft_source.setText("같은 제품·문의 유형에서 작업자가 수정한 답변 반영")
+            score = round(float(learned.get("_reuse_score") or 0.0) * 100)
+            self.draft_source.setText(
+                f"유사 문의에서 작업자가 수정한 답변 제안 · 일치도 {score}% · 전송 전 확인 필요"
+            )
         else:
             self.draft.setPlainText(result.text)
             self.draft_source.setText("상품 정보와 CS 정책으로 자동 생성")

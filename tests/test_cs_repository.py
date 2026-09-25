@@ -89,18 +89,20 @@ class CsRepositoryTests(unittest.TestCase):
         draft_query = Mock()
         case_query.select.return_value = case_query
         case_query.eq.return_value = case_query
-        case_query.execute.return_value = SimpleNamespace(data=[{"id": "case-1"}])
+        case_query.execute.return_value = SimpleNamespace(data=[{"id": "case-1", "question": "노트북 충전 가능한가요?"}])
         draft_query.select.return_value = draft_query
         draft_query.in_.return_value = draft_query
         draft_query.order.return_value = draft_query
         draft_query.limit.return_value = draft_query
         draft_query.execute.return_value = SimpleNamespace(data=[
             {
+                "case_id": "case-1",
                 "generated_draft": "자동 초안",
                 "final_answer": "작업자가 고친 답변",
                 "knowledge_refs": ["QPD330 최대 30W", "기기 권장 출력 확인"],
             },
             {
+                "case_id": "case-1",
                 "generated_draft": "수정 없는 답변",
                 "final_answer": "수정 없는 답변",
                 "knowledge_refs": ["QPD330 최대 30W"],
@@ -112,6 +114,7 @@ class CsRepositoryTests(unittest.TestCase):
         result = repository.find_reusable_answer(
             product_model="QPD330",
             knowledge_refs=["QPD330 최대 30W", "기기 권장 출력 확인"],
+            question="노트북을 충전할 수 있나요?",
         )
 
         self.assertEqual(result["final_answer"], "작업자가 고친 답변")
@@ -123,7 +126,7 @@ class CsRepositoryTests(unittest.TestCase):
         draft_query = Mock()
         case_query.select.return_value = case_query
         case_query.eq.return_value = case_query
-        case_query.execute.return_value = SimpleNamespace(data=[{"id": "case-1"}])
+        case_query.execute.return_value = SimpleNamespace(data=[{"id": "case-1", "question": "배송 조회는 어디서 하나요?"}])
         draft_query.select.return_value = draft_query
         draft_query.in_.return_value = draft_query
         draft_query.order.return_value = draft_query
@@ -149,7 +152,7 @@ class CsRepositoryTests(unittest.TestCase):
         draft_query = Mock()
         case_query.select.return_value = case_query
         case_query.eq.return_value = case_query
-        case_query.execute.return_value = SimpleNamespace(data=[{"id": "case-1"}])
+        case_query.execute.return_value = SimpleNamespace(data=[{"id": "case-1", "question": "배송은 언제 오나요?"}])
         draft_query.select.return_value = draft_query
         draft_query.in_.return_value = draft_query
         draft_query.order.return_value = draft_query
@@ -168,6 +171,36 @@ class CsRepositoryTests(unittest.TestCase):
         )
 
         self.assertIsNone(result)
+
+    def test_prefers_worker_answer_from_more_similar_question(self) -> None:
+        client = Mock()
+        case_query = Mock()
+        draft_query = Mock()
+        case_query.select.return_value = case_query
+        case_query.eq.return_value = case_query
+        case_query.execute.return_value = SimpleNamespace(data=[
+            {"id": "heat", "question": "충전 중 제품이 뜨거운데 괜찮나요?"},
+            {"id": "noise", "question": "충전할 때 소리가 나는데 괜찮나요?"},
+        ])
+        draft_query.select.return_value = draft_query
+        draft_query.in_.return_value = draft_query
+        draft_query.order.return_value = draft_query
+        draft_query.limit.return_value = draft_query
+        common_refs = ["category:발열", "risk:review", "전자기기 발열 안내"]
+        draft_query.execute.return_value = SimpleNamespace(data=[
+            {"case_id": "noise", "generated_draft": "자동", "final_answer": "소음 답변", "knowledge_refs": common_refs},
+            {"case_id": "heat", "generated_draft": "자동", "final_answer": "발열 답변", "knowledge_refs": common_refs},
+        ])
+        client.table.side_effect = lambda name: case_query if name == "cs_cases" else draft_query
+
+        result = CsRepository(client).find_reusable_answer(
+            product_model="QPD330",
+            knowledge_refs=common_refs,
+            question="제품이 충전하면서 너무 뜨거워요",
+        )
+
+        self.assertEqual(result["final_answer"], "발열 답변")
+        self.assertGreater(result["_question_similarity"], 0.3)
 
 
 if __name__ == "__main__":

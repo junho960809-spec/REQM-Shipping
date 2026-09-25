@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import re
 from datetime import datetime, timezone
+from difflib import SequenceMatcher
 
 
 class DraftConflictError(RuntimeError):
@@ -83,17 +85,39 @@ class CsRepository:
         }).execute()
         return saved
 
-    def find_reusable_answer(self, *, product_model: str, knowledge_refs: list[str]) -> dict | None:
-        """Find a worker-edited answer for the same product and policy type."""
+    @staticmethod
+    def _question_similarity(left: str, right: str) -> float:
+        def normalize(value: str) -> str:
+            return " ".join(re.findall(r"[0-9A-Za-z가-힣]+", value.lower()))
+
+        normalized_left = normalize(left)
+        normalized_right = normalize(right)
+        if not normalized_left or not normalized_right:
+            return 0.0
+        sequence_score = SequenceMatcher(None, normalized_left, normalized_right).ratio()
+        left_tokens = set(normalized_left.split())
+        right_tokens = set(normalized_right.split())
+        token_score = len(left_tokens & right_tokens) / len(left_tokens | right_tokens)
+        return max(sequence_score, token_score)
+
+    def find_reusable_answer(
+        self, *, product_model: str, knowledge_refs: list[str], question: str = ""
+    ) -> dict | None:
+        """Find a worker-edited answer for a similar question with matching policy context."""
         if self.client is None or not product_model.strip() or not knowledge_refs:
             return None
         case_response = (
             self.client.table("cs_cases")
-            .select("id")
+            .select("id,question")
             .eq("product_model", product_model.strip().upper())
             .execute()
         )
         case_ids = [str(row.get("id") or "") for row in (case_response.data or []) if row.get("id")]
+        case_questions = {
+            str(row.get("id")): str(row.get("question") or "")
+            for row in (case_response.data or [])
+            if row.get("id")
+        }
         if not case_ids:
             return None
         draft_response = (
@@ -123,10 +147,21 @@ class CsRepository:
             comparable_refs = refs - row_statuses
             overlap = len(comparable_requested & comparable_refs)
             union = len(comparable_requested | comparable_refs)
-            score = overlap / union if union else 0.0
+            policy_score = overlap / union if union else 0.0
             minimum_overlap = 2 if len(comparable_requested) > 1 else 1
-            if overlap >= minimum_overlap and score >= 0.6 and (best is None or score > best[0]):
-                best = (score, row)
+            if overlap < minimum_overlap or policy_score < 0.6:
+                continue
+            source_question = case_questions.get(str(row.get("case_id") or ""), "")
+            question_score = self._question_similarity(question, source_question) if question.strip() else 0.0
+            if question.strip() and question_score < 0.3:
+                continue
+            score = policy_score if not question.strip() else (policy_score * 0.65) + (question_score * 0.35)
+            if best is None or score > best[0]:
+                candidate = dict(row)
+                candidate["_reuse_score"] = score
+                candidate["_question_similarity"] = question_score
+                candidate["_source_question"] = source_question
+                best = (score, candidate)
         return best[1] if best else None
 
     def mark_sent(self, *, case_id: str, draft_id: str, external_id: str) -> None:
