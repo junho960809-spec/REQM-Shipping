@@ -8,6 +8,7 @@ from unittest.mock import Mock, patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication, QDialog, QFrame, QMessageBox
 
 from main import (
@@ -273,6 +274,31 @@ class DashboardNavigationTests(unittest.TestCase):
         dialog = CsManagementDialog()
         dialog.load_sample_cases()
         self.assertIn("사용과 충전을 즉시 중단", dialog.draft.toPlainText())
+        self.assertIn("안전_팽창", dialog.analysis_summary.text())
+        self.assertIn("긴급 안전", dialog.analysis_summary.text())
+        self.assertIn("즉시 사용 중단", dialog.reply_basis.toPlainText())
+        dialog.close()
+
+    def test_cs_dialog_splits_order_context_into_readable_fields(self) -> None:
+        dialog = CsManagementDialog()
+        dialog.inquiry_list.clear()
+        case = {
+            "_sample": True,
+            "id": "sample-order",
+            "channel": "order_inquiry",
+            "question": "배송 상태를 알려주세요",
+            "product_order_id": "202609250001",
+            "product_model": "QPD330",
+            "category": "리큐엠 QPD330 / 옵션: 블랙 / 주문상태: 배송 중 / 수량: 2",
+        }
+        dialog.inquiry_list.addItem("주문 문의")
+        dialog.inquiry_list.item(0).setData(Qt.ItemDataRole.UserRole, case)
+        dialog.inquiry_list.setCurrentRow(0)
+        context = dialog.order_context.toPlainText()
+        self.assertIn("상품명: 리큐엠 QPD330", context)
+        self.assertIn("옵션: 블랙", context)
+        self.assertIn("주문상태: 배송 중", context)
+        self.assertIn("수량: 2", context)
         dialog.close()
 
     def test_cs_dialog_applies_worker_edited_answer_for_matching_case(self) -> None:

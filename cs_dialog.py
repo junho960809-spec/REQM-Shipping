@@ -195,6 +195,19 @@ class CsManagementDialog(QDialog):
         heading = QLabel("답변 검토 및 전송")
         heading.setObjectName("csPanelTitle")
         layout.addWidget(heading)
+        self.analysis_summary = QLabel("분석 전 · 문의를 선택하면 유형과 주의 수준이 표시됩니다.")
+        self.analysis_summary.setWordWrap(True)
+        self.analysis_summary.setStyleSheet(
+            "background:#eef4ff;color:#174ea6;border:1px solid #c9daf8;"
+            "border-radius:8px;padding:8px 10px;font-weight:700;"
+        )
+        layout.addWidget(self.analysis_summary)
+        layout.addWidget(QLabel("답변 판단 근거"))
+        self.reply_basis = QTextEdit()
+        self.reply_basis.setReadOnly(True)
+        self.reply_basis.setMaximumHeight(92)
+        self.reply_basis.setPlaceholderText("제품 정보와 CS 운영 기준이 표시됩니다.")
+        layout.addWidget(self.reply_basis)
         layout.addWidget(QLabel("추가 작업자 메모 (선택)"))
         self.operator_note = QTextEdit()
         self.operator_note.setPlaceholderText("자동 분석에 추가할 내용이 있을 때만 입력하세요.")
@@ -251,7 +264,10 @@ class CsManagementDialog(QDialog):
         for case in cases:
             channel = "상품 Q&A" if case.get("channel") == "product_qna" else "주문 고객 문의"
             question = str(case.get("question") or "문의 내용 없음").replace("\n", " ")
-            label = f"[{channel}] {question}\n{case.get('product_model') or '모델 미확인'}"
+            product_context = str(case.get("category") or "")
+            order_status = self._context_value(product_context, "주문상태")
+            status_text = f" · {order_status}" if order_status else ""
+            label = f"[{channel}] {question}\n{case.get('product_model') or '모델 미확인'}{status_text}"
             self.inquiry_list.addItem(label)
             item = self.inquiry_list.item(self.inquiry_list.count() - 1)
             item.setData(Qt.ItemDataRole.UserRole, case)
@@ -328,6 +344,46 @@ class CsManagementDialog(QDialog):
         if title and content and title != content:
             return f"{title}\n\n{content}"
         return content or title
+
+    @staticmethod
+    def _context_value(product_context: str, label: str) -> str:
+        prefix = f"{label}:"
+        for part in product_context.split("/"):
+            value = part.strip()
+            if value.startswith(prefix):
+                return value[len(prefix):].strip()
+        return ""
+
+    @staticmethod
+    def _analysis_category(refs: list[str]) -> str:
+        prefix = "category:"
+        return next((value[len(prefix):] for value in refs if value.startswith(prefix)), "분석 결과 없음")
+
+    @staticmethod
+    def _analysis_risk(refs: list[str], fallback: str = "normal") -> str:
+        prefix = "risk:"
+        return next((value[len(prefix):] for value in refs if value.startswith(prefix)), fallback)
+
+    def _show_analysis(self, *, category: str, risk_level: str, policy_refs: list[str]) -> None:
+        risk_name = {"urgent": "긴급 안전", "review": "검토 필요", "blocked": "답변 보류"}.get(
+            risk_level, "일반 검토"
+        )
+        colors = {
+            "urgent": ("#fff0f0", "#a61b1b", "#f2b8b5"),
+            "review": ("#fff8e6", "#8a5700", "#ecd49a"),
+            "blocked": ("#f3f3f3", "#555555", "#cccccc"),
+        }
+        background, foreground, border = colors.get(risk_level, ("#eef4ff", "#174ea6", "#c9daf8"))
+        self.analysis_summary.setText(f"분석 유형  ·  {category}    |    주의 수준  ·  {risk_name}")
+        self.analysis_summary.setStyleSheet(
+            f"background:{background};color:{foreground};border:1px solid {border};"
+            "border-radius:8px;padding:8px 10px;font-weight:700;"
+        )
+        visible_refs = [
+            value for value in policy_refs
+            if not value.startswith("category:") and not value.startswith("risk:")
+        ]
+        self.reply_basis.setPlainText("\n".join(f"• {value}" for value in visible_refs) or "• 작업자 확인 필요")
 
     @staticmethod
     def _order_status_label(value: str) -> str:
@@ -448,6 +504,8 @@ class CsManagementDialog(QDialog):
         if not isinstance(case, dict):
             self.current_case = None
             self.save_button.setEnabled(False)
+            self.analysis_summary.setText("분석 전 · 문의를 선택하면 유형과 주의 수준이 표시됩니다.")
+            self.reply_basis.clear()
             return
         self.current_case = case
         self.question.setPlainText(str(case.get("question") or ""))
@@ -455,7 +513,10 @@ class CsManagementDialog(QDialog):
             f"주문번호: {case.get('product_order_id') or '미확인'}\n"
             f"판매처: {self._marketplace_name(self.current_marketplace)}\n"
             f"제품 모델: {case.get('product_model') or '미확인'}\n"
-            f"상품명: {case.get('category') or '미확인'}\n"
+            f"상품명: {str(case.get('category') or '미확인').split(' / ')[0]}\n"
+            f"옵션: {self._context_value(str(case.get('category') or ''), '옵션') or '미확인'}\n"
+            f"주문상태: {self._context_value(str(case.get('category') or ''), '주문상태') or '미확인'}\n"
+            f"수량: {self._context_value(str(case.get('category') or ''), '수량') or '미확인'}\n"
             f"채널: {case.get('channel') or '미확인'}"
         )
         latest = None if case.get("_sample") else self.repository.latest_draft(str(case.get("id") or ""))
@@ -467,6 +528,13 @@ class CsManagementDialog(QDialog):
         )
         self.draft.setPlainText(str(latest.get("final_answer") or "") if latest else "")
         self.draft_source.setText("저장된 공용 최종 답변" if latest else "문의 분석 결과")
+        if latest:
+            saved_refs = [str(value) for value in (latest.get("knowledge_refs") or [])]
+            self._show_analysis(
+                category=self._analysis_category(saved_refs),
+                risk_level=self._analysis_risk(saved_refs, str(case.get("risk_level") or "normal")),
+                policy_refs=saved_refs,
+            )
         self.save_button.setEnabled(not bool(case.get("_sample")))
         self.send_button.setEnabled(bool(self.current_draft_id) and self.naver_client is not None)
         if latest is None:
@@ -492,7 +560,12 @@ class CsManagementDialog(QDialog):
                 QMessageBox.information(self, "문의 분석", str(exc))
             return
         self.current_generated_draft = result.text
-        self.current_policy_refs = [f"category:{result.category}", *result.policy_refs]
+        self.current_policy_refs = [f"category:{result.category}", f"risk:{result.risk_level}", *result.policy_refs]
+        self._show_analysis(
+            category=result.category,
+            risk_level=result.risk_level,
+            policy_refs=self.current_policy_refs,
+        )
         learned = self.repository.find_reusable_answer(
             product_model=str((self.current_case or {}).get("product_model") or ""),
             knowledge_refs=self.current_policy_refs,
