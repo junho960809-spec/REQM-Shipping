@@ -2,10 +2,21 @@ from __future__ import annotations
 
 import unittest
 
-from cs_service import transform_operator_note
+from cs_service import compose_customer_reply, transform_operator_note
 
 
 class CsDraftTransformerTests(unittest.TestCase):
+    def test_reply_composer_keeps_direct_answer_before_context_and_action(self) -> None:
+        reply = compose_customer_reply(
+            direct_answer="바로 교환 절차를 안내해 드립니다",
+            verified_context="현재 주문은 배송 완료 상태입니다",
+            customer_action="제품 사진을 보내 주세요",
+            service_policy="수리가 아닌 새상품 교환으로 진행합니다",
+        )
+        self.assertLess(reply.index("바로 교환"), reply.index("배송 완료"))
+        self.assertLess(reply.index("배송 완료"), reply.index("제품 사진"))
+        self.assertLess(reply.index("제품 사진"), reply.index("새상품 교환"))
+
     def test_swelling_requires_stop_and_new_product_exchange(self) -> None:
         result = transform_operator_note(
             question="배터리가 부풀었어요. 어떻게 하죠?",
@@ -53,6 +64,8 @@ class CsDraftTransformerTests(unittest.TestCase):
             product_model="QPD330",
         )
         self.assertIn("온도 경고나 충전 중단 문구", result.text)
+        self.assertIn("발열만으로는", result.text)
+        self.assertIn("교환이 어렵", result.text)
 
     def test_question_creates_swelling_draft_without_operator_note(self) -> None:
         result = transform_operator_note(

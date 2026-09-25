@@ -43,6 +43,37 @@ def _order_status(product_name: str) -> str:
     return match.group(1).strip() if match else ""
 
 
+def _sentence(value: str) -> str:
+    value = re.sub(r"\s+", " ", value).strip()
+    if not value:
+        return ""
+    return value if value.endswith((".", "!", "?")) else value + "."
+
+
+def compose_customer_reply(
+    *,
+    direct_answer: str,
+    verified_context: str = "",
+    customer_action: str = "",
+    service_policy: str = "",
+    closing: str = "",
+) -> str:
+    """Build a customer reply in a stable, non-repetitive order."""
+    sections = [
+        "안녕하세요 고객님.",
+        _sentence(direct_answer),
+        _sentence(verified_context),
+        _sentence(customer_action),
+        _sentence(service_policy),
+        _sentence(closing),
+    ]
+    return " ".join(section for section in sections if section)
+
+
+def _verified_order_context(order_status: str) -> str:
+    return f"현재 주문 상태는 {order_status}로 확인됩니다" if order_status else ""
+
+
 def transform_operator_note(
     *,
     question: str,
@@ -82,10 +113,11 @@ def transform_operator_note(
             else "주문번호와 제품 상태를 확인할 수 있는 사진을 보내주시면 확인 후 새상품 교환 절차를 안내해 드리겠습니다."
         )
         return DraftResult(
-            text=(
-                "안녕하세요 고객님. 제품이 부풀거나 이상 증상이 있는 경우 안전을 위해 사용과 충전을 즉시 중단해 주세요. "
-                "제품을 누르거나 분해하지 마시고 화기나 고온의 장소에서 멀리 보관해 주세요. "
-                + next_step
+            text=compose_customer_reply(
+                direct_answer="제품이 부푼 경우 안전을 위해 사용과 충전을 즉시 중단해 주세요",
+                verified_context=_verified_order_context(order_status),
+                customer_action="제품을 누르거나 분해하지 마시고 화기나 고온의 장소에서 멀리 보관해 주세요",
+                service_policy=next_step,
             ),
             category="안전_팽창",
             risk_level="urgent",
@@ -95,10 +127,14 @@ def transform_operator_note(
 
     if any(word in source for word in ("발열", "뜨거", "열이", "온도")):
         return DraftResult(
-            text=(
-                f"안녕하세요 고객님. {product}도 전자기기이므로 충전 또는 사용 중 일정한 열이 발생할 수 있습니다. "
-                "사용 중 휴대전화에 온도 경고나 충전 중단 문구가 표시되었는지 확인 부탁드립니다. "
-                "해당 문구가 확인되거나 충전이 반복해서 중단된다면 즉시 사용을 중단하고, 사용한 어댑터와 케이블 정보 및 증상 사진을 네이버 톡톡으로 보내주시면 확인해 드리겠습니다."
+            text=compose_customer_reply(
+                direct_answer=f"{product}도 전자기기이므로 충전 또는 사용 중 일정한 열이 발생하는 것은 자연스러운 현상입니다",
+                verified_context=_verified_order_context(order_status),
+                customer_action="사용 중 휴대전화에 온도 경고나 충전 중단 문구가 표시되는지 확인해 주세요",
+                service_policy=(
+                    "해당 문구 없이 느껴지는 발열만으로는 제품 불량으로 판단하기 어려워 교환이 어렵습니다. "
+                    "문구가 표시되거나 충전이 반복해서 중단되면 즉시 사용을 중단하고 사용한 어댑터·케이블 정보와 증상 사진을 네이버 톡톡으로 보내 주세요"
+                ),
             ),
             category="발열",
             risk_level="review",
@@ -124,7 +160,10 @@ def transform_operator_note(
         else:
             detail = "주문 상세에 송장이 등록되면 네이버에서 배송조회가 가능합니다. 정확한 출고 여부는 주문 상태를 확인한 후 안내드리겠습니다."
         return DraftResult(
-            text=f"안녕하세요 고객님. 문의하신 주문의 배송 상태를 확인했습니다. {detail}",
+            text=compose_customer_reply(
+                direct_answer=detail,
+                verified_context=_verified_order_context(order_status),
+            ),
             category="주문_배송조회",
             risk_level="normal",
             requires_approval=True,
@@ -137,7 +176,10 @@ def transform_operator_note(
         else:
             detail = "출고 전이라면 변경 가능 여부를 확인할 수 있습니다. 변경할 배송지는 공개 문의에 남기지 말고 네이버 톡톡으로 보내 주세요."
         return DraftResult(
-            text=f"안녕하세요 고객님. 문의하신 주문은 현재 {order_status or '상태 확인이 필요한'} 상태입니다. {detail}",
+            text=compose_customer_reply(
+                direct_answer=detail,
+                verified_context=_verified_order_context(order_status),
+            ),
             category="주문_배송지변경",
             risk_level="review",
             requires_approval=True,
@@ -152,7 +194,10 @@ def transform_operator_note(
         else:
             detail = "네이버 주문 상세에서 취소 요청을 접수해 주세요. 출고 처리 시점에 따라 취소 또는 반품 절차로 진행될 수 있습니다."
         return DraftResult(
-            text=f"안녕하세요 고객님. 문의하신 주문의 상태를 확인했습니다. {detail}",
+            text=compose_customer_reply(
+                direct_answer=detail,
+                verified_context=_verified_order_context(order_status),
+            ),
             category="주문_취소",
             risk_level="review",
             requires_approval=True,
@@ -163,10 +208,11 @@ def transform_operator_note(
         word in source for word in ("금액", "예상액", "배송비", "무료", "차감", "왜")
     ):
         return DraftResult(
-            text=(
-                "안녕하세요 고객님. 반품 예정 금액은 상품 결제금액에서 주문에 적용된 할인, 쿠폰 반환 조건, "
-                "반품 배송비 등이 반영되어 네이버에서 계산됩니다. 네이버 주문 상세의 반품비용 내역을 확인해 주세요. "
-                "표시된 차감 사유와 실제 주문 조건이 다르다면 해당 주문의 결제·반품 내역을 확인한 후 안내드리겠습니다."
+            text=compose_customer_reply(
+                direct_answer="반품 예정 금액은 상품 결제금액에서 주문 할인, 쿠폰 반환 조건과 반품 배송비 등이 반영되어 네이버에서 계산됩니다",
+                verified_context=_verified_order_context(order_status),
+                customer_action="네이버 주문 상세의 반품비용 내역을 확인해 주세요",
+                service_policy="표시된 차감 사유와 실제 주문 조건이 다르면 해당 주문의 결제·반품 내역을 확인한 후 안내드리겠습니다",
             ),
             category="주문_반품환불금액",
             risk_level="review",
@@ -176,9 +222,10 @@ def transform_operator_note(
 
     if any(word in source for word in ("단순 변심", "반품하고", "반품 요청", "교환하고", "교환 요청")):
         return DraftResult(
-            text=(
-                f"안녕하세요 고객님. 문의하신 주문은 현재 {order_status or '상태 확인이 필요한'} 상태입니다. "
-                "네이버 주문 상세에서 교환 또는 반품 요청을 접수해 주세요. 상품 사용 여부와 회수 상태를 확인한 후 네이버에 표시된 절차에 따라 처리됩니다."
+            text=compose_customer_reply(
+                direct_answer="네이버 주문 상세에서 교환 또는 반품 요청을 접수해 주세요",
+                verified_context=_verified_order_context(order_status),
+                service_policy="상품 사용 여부와 회수 상태를 확인한 후 네이버에 표시된 절차에 따라 처리됩니다",
             ),
             category="주문_교환반품",
             risk_level="review",
@@ -188,9 +235,10 @@ def transform_operator_note(
 
     if any(word in source for word in ("누락", "빠져", "다른 상품", "오배송", "잘못 왔", "파손")):
         return DraftResult(
-            text=(
-                f"안녕하세요 고객님. {product}의 구성품 누락·오배송·파손 문의로 확인됩니다. "
-                "받으신 상품 전체와 택배 상자, 송장, 문제가 확인되는 부분을 함께 촬영해 네이버 톡톡으로 보내주시면 확인 후 새상품 교환 또는 누락 구성품 발송 절차를 안내해 드리겠습니다."
+            text=compose_customer_reply(
+                direct_answer="구성품 누락·오배송·파손은 확인 후 새상품 교환 또는 누락 구성품 발송으로 처리해 드립니다",
+                verified_context=f"대상 제품은 {product}입니다" if product else "",
+                customer_action="받으신 상품 전체와 택배 상자, 송장, 문제가 확인되는 부분을 함께 촬영해 네이버 톡톡으로 보내 주세요",
             ),
             category="배송_오배송파손누락",
             risk_level="review",
@@ -318,10 +366,10 @@ def transform_operator_note(
     if is_discontinued:
         replacement = DISCONTINUED_MODELS[model]
         return DraftResult(
-            text=(
-                f"안녕하세요 고객님. 문의하신 {model}는 판매가 종료된 단종 제품입니다. "
-                f"현재는 수리나 동일 모델 교환 대신 신형 {replacement} 보상판매로 안내드리고 있습니다. "
-                "구매 정보와 제품 상태를 확인한 후 적용 가능한 절차를 안내해 드리겠습니다."
+            text=compose_customer_reply(
+                direct_answer=f"{model}는 판매가 종료되어 수리나 동일 모델 교환 대신 신형 {replacement} 보상판매로 안내드립니다",
+                verified_context=_verified_order_context(order_status),
+                customer_action="구매 정보와 제품 상태를 보내주시면 적용 가능한 보상판매 절차를 확인해 드리겠습니다",
             ),
             category="단종_보상판매",
             risk_level="review",
@@ -337,10 +385,11 @@ def transform_operator_note(
         outside_warranty = bool(purchase_years and min(purchase_years) < datetime.now().year - 1)
         if outside_warranty:
             return DraftResult(
-                text=(
-                    f"안녕하세요 고객님. {product}이 켜지지 않고 충전도 되지 않는 증상으로 확인됩니다. 먼저 다른 어댑터와 케이블을 이용해 C타입 입·출력 포트에 연결하여 확인해 주세요. "
-                    "동일한 경우 제품 검수가 필요합니다. 무상 AS 기간은 구매일로부터 1년이며, 문의에 남겨주신 구매일은 무상 기간이 지난 것으로 확인되어 신제품 보상판매로 안내해 드릴 수 있습니다. "
-                    "리큐엠 AS는 수리가 아닌 새상품 교환 방식으로 진행됩니다."
+                text=compose_customer_reply(
+                    direct_answer="문의에 남겨주신 구매일은 무상 AS 기간이 지나 신제품 보상판매로 안내할 수 있습니다",
+                    verified_context=f"{product}이 켜지지 않고 충전되지 않는 증상으로 확인됩니다",
+                    customer_action="먼저 다른 어댑터와 케이블로 C타입 입·출력 포트에 연결해 확인해 주세요",
+                    service_policy="동일한 경우 제품 검수가 필요하며, 무상 AS 기간은 구매일로부터 1년입니다. 리큐엠 AS는 수리가 아닌 새상품 교환 방식으로 진행됩니다",
                 ),
                 category="보증기간외_보상판매",
                 risk_level="review",
@@ -349,11 +398,11 @@ def transform_operator_note(
             )
         if any(word in source for word in ("충전도 안", "충전이 안", "켜지지", "액정 화면도 안", "전원도 안")):
             return DraftResult(
-                text=(
-                    f"안녕하세요 고객님. {product}의 화면이 켜지지 않고 보조배터리 자체 충전과 휴대전화 충전이 모두 되지 않는 증상으로 확인됩니다. "
-                    "먼저 사용 중인 어댑터와 케이블을 다른 제품으로 바꾼 뒤 C타입 입·출력 포트에 연결해 확인해 주세요. "
-                    "동일한 경우 제품 검수가 필요하므로 아래 AS 신청서를 작성해 주세요. 리큐엠 AS는 수리가 아닌, 불량 증상 확인 후 새상품으로 교환하는 방식입니다. "
-                    "https://reqm.co.kr/cs/"
+                text=compose_customer_reply(
+                    direct_answer="동일 증상이 계속되면 제품 검수 후 새상품 교환으로 AS를 진행합니다",
+                    verified_context=f"{product}의 화면·제품 충전·휴대전화 충전이 정상 작동하지 않는 증상으로 확인됩니다",
+                    customer_action="먼저 어댑터와 케이블을 다른 제품으로 바꾼 뒤 C타입 입·출력 포트에 연결해 확인해 주세요",
+                    service_policy="동일한 경우 https://reqm.co.kr/cs/ 에서 AS 신청서를 작성해 주세요. 리큐엠 AS는 수리가 아닌 불량 증상 확인 후 새상품으로 교환하는 방식입니다",
                 ),
                 category="AS_전원충전불량",
                 risk_level="review",
@@ -362,10 +411,11 @@ def transform_operator_note(
             )
         model_text = f" {model}" if model else ""
         return DraftResult(
-            text=(
-                f"안녕하세요 고객님. 리큐엠{model_text} 제품은 수리가 아닌 새상품 교환 방식으로 AS를 진행하고 있습니다. "
-                "문의해 주신 증상은 제품 검수가 필요합니다. 아래 AS 신청서를 작성해 주시면 불량 증상 확인 후 새상품 교환 절차를 안내해 드리겠습니다. "
-                "https://reqm.co.kr/cs/"
+            text=compose_customer_reply(
+                direct_answer=f"리큐엠{model_text} 제품은 수리가 아닌 새상품 교환 방식으로 AS를 진행합니다",
+                verified_context="문의하신 증상은 제품 검수가 필요합니다",
+                customer_action="https://reqm.co.kr/cs/ 에서 AS 신청서를 작성해 주세요",
+                service_policy="불량 증상 확인 후 새상품 교환 절차를 안내해 드리겠습니다",
             ),
             category="AS_새상품교환",
             risk_level="review",
