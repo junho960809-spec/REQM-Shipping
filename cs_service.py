@@ -18,6 +18,81 @@ class DraftResult:
     policy_refs: tuple[str, ...]
 
 
+@dataclass(frozen=True)
+class OperatorMemoSections:
+    customer_guidance: tuple[str, ...] = ()
+    customer_requests: tuple[str, ...] = ()
+    processing_results: tuple[str, ...] = ()
+    internal_notes: tuple[str, ...] = ()
+
+
+MEMO_SECTION_PREFIXES = {
+    "고객 안내": "customer_guidance",
+    "고객안내": "customer_guidance",
+    "고객 요청": "customer_requests",
+    "고객요청": "customer_requests",
+    "처리 결과": "processing_results",
+    "처리결과": "processing_results",
+    "내부 메모": "internal_notes",
+    "내부메모": "internal_notes",
+    "내부 확인": "internal_notes",
+    "내부확인": "internal_notes",
+}
+
+
+def parse_operator_note(operator_note: str) -> OperatorMemoSections:
+    sections: dict[str, list[str]] = {
+        "customer_guidance": [],
+        "customer_requests": [],
+        "processing_results": [],
+        "internal_notes": [],
+    }
+    for raw_line in operator_note.splitlines():
+        line = raw_line.strip().lstrip("-• ").strip()
+        if not line:
+            continue
+        matched = False
+        for prefix, target in MEMO_SECTION_PREFIXES.items():
+            marker = prefix + ":"
+            if line.startswith(marker):
+                content = line[len(marker):].strip()
+                if content:
+                    sections[target].append(content)
+                matched = True
+                break
+        if not matched:
+            # Unlabelled notes remain internal classification context for safety.
+            sections["internal_notes"].append(line)
+    return OperatorMemoSections(**{key: tuple(value) for key, value in sections.items()})
+
+
+def _apply_operator_memo(result: DraftResult, operator_note: str) -> DraftResult:
+    memo = parse_operator_note(operator_note)
+    if not result.text or not any((memo.customer_guidance, memo.customer_requests, memo.processing_results)):
+        return result
+    additions: list[str] = []
+    additions.extend(_sentence(value) for value in memo.customer_guidance)
+    additions.extend(f"처리 결과: {_sentence(value)}" for value in memo.processing_results)
+    additions.extend(f"확인을 위해 {_sentence(value)}" for value in memo.customer_requests)
+    additions = [value for value in additions if value]
+    if not additions:
+        return result
+    reflected = []
+    if memo.customer_guidance:
+        reflected.append("고객 안내")
+    if memo.processing_results:
+        reflected.append("처리 결과")
+    if memo.customer_requests:
+        reflected.append("고객 요청")
+    return DraftResult(
+        text=f"{result.text.rstrip()} {' '.join(additions)}",
+        category=result.category,
+        risk_level=result.risk_level,
+        requires_approval=result.requires_approval,
+        policy_refs=(*result.policy_refs, f"작업자 메모 반영: {', '.join(reflected)}"),
+    )
+
+
 def _combined_text(question: str, operator_note: str) -> str:
     return f"{question}\n{operator_note}".upper()
 
@@ -74,7 +149,7 @@ def _verified_order_context(order_status: str) -> str:
     return f"현재 주문 상태는 {order_status}로 확인됩니다" if order_status else ""
 
 
-def transform_operator_note(
+def _transform_policy_answer(
     *,
     question: str,
     operator_note: str = "",
@@ -437,3 +512,19 @@ def transform_operator_note(
         requires_approval=True,
         policy_refs=("작업자 확인 필요",),
     )
+
+
+def transform_operator_note(
+    *,
+    question: str,
+    operator_note: str = "",
+    product_model: str = "",
+    product_name: str = "",
+) -> DraftResult:
+    result = _transform_policy_answer(
+        question=question,
+        operator_note=operator_note,
+        product_model=product_model,
+        product_name=product_name,
+    )
+    return _apply_operator_memo(result, operator_note)

@@ -2,10 +2,41 @@ from __future__ import annotations
 
 import unittest
 
-from cs_service import compose_customer_reply, transform_operator_note
+from cs_service import compose_customer_reply, parse_operator_note, transform_operator_note
 
 
 class CsDraftTransformerTests(unittest.TestCase):
+    def test_structured_operator_memo_adds_only_customer_facing_sections(self) -> None:
+        result = transform_operator_note(
+            question="충전이 안 됩니다",
+            product_model="QP1000C",
+            operator_note=(
+                "고객 안내: 베이지 색상으로 교환 가능합니다.\n"
+                "고객 요청: 제품 사진을 AS 신청서에 첨부해 주세요.\n"
+                "처리 결과: 교환 재고를 확보했습니다.\n"
+                "내부 메모: 물류팀 김대리 확인 완료"
+            ),
+        )
+        self.assertIn("베이지 색상으로 교환 가능", result.text)
+        self.assertIn("처리 결과: 교환 재고", result.text)
+        self.assertIn("제품 사진을 AS 신청서", result.text)
+        self.assertNotIn("김대리", result.text)
+        self.assertIn("작업자 메모 반영", result.policy_refs[-1])
+
+    def test_unlabelled_operator_note_remains_internal_context(self) -> None:
+        result = transform_operator_note(
+            question="충전이 안 됩니다",
+            product_model="QP1000C",
+            operator_note="팀장 승인 후 베이지 재고 확인",
+        )
+        self.assertNotIn("팀장 승인", result.text)
+        self.assertNotIn("베이지 재고 확인", result.text)
+
+    def test_operator_memo_parser_keeps_internal_notes_separate(self) -> None:
+        memo = parse_operator_note("고객 안내: 교환 가능\n내부 확인: 재고팀 전달\n형식 없는 메모")
+        self.assertEqual(memo.customer_guidance, ("교환 가능",))
+        self.assertEqual(memo.internal_notes, ("재고팀 전달", "형식 없는 메모"))
+
     def test_reply_composer_keeps_direct_answer_before_context_and_action(self) -> None:
         reply = compose_customer_reply(
             direct_answer="바로 교환 절차를 안내해 드립니다",

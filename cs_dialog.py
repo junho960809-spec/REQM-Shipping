@@ -220,7 +220,12 @@ class CsManagementDialog(QDialog):
         layout.addWidget(self.manual_send_notice)
         layout.addWidget(QLabel("추가 작업자 메모 (선택)"))
         self.operator_note = QTextEdit()
-        self.operator_note.setPlaceholderText("자동 분석에 추가할 내용이 있을 때만 입력하세요.")
+        self.operator_note.setPlaceholderText(
+            "예시\n고객 안내: 베이지 색상으로 교환 가능합니다.\n"
+            "고객 요청: 제품 사진을 AS 신청서에 첨부해 주세요.\n"
+            "처리 결과: 교환 재고를 확보했습니다.\n"
+            "내부 메모: 물류팀 확인 완료"
+        )
         layout.addWidget(self.operator_note)
         self.convert_button = QPushButton("문의 분석 및 답변 초안 생성")
         layout.addWidget(self.convert_button)
